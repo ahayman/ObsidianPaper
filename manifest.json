@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-paper",
+  "name": "Paper",
+  "version": "0.1.0",
+  "minAppVersion": "1.0.0",
+  "description": "Handwrite notes with Apple Pencil in Obsidian",
+  "author": "Aaron Hayman",
+  "authorUrl": "https://github.com/aaronhayman",
+  "isDesktopOnly": false
+}
