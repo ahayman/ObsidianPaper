@@ -391,9 +391,13 @@ export class PaperView extends TextFileView {
 
         const world = this.camera.screenToWorld(point.x, point.y);
         const style = this.getCurrentStyle();
+        const styleName = this.getCurrentStyleName();
+        const baseStyle = this.document.styles[styleName];
+        const overrides = baseStyle ? computeStyleOverrides(baseStyle, style) : undefined;
         this.strokeBuilder = new StrokeBuilder(
-          this.getCurrentStyleName(),
+          styleName,
           { smoothing: style.smoothing },
+          overrides,
         );
         this.strokeBuilder.addPoint({ ...point, x: world.x, y: world.y });
       },
@@ -574,4 +578,22 @@ export class PaperView extends TextFileView {
     this.requestStaticRender();
     this.requestSave();
   }
+}
+
+function computeStyleOverrides(
+  base: PenStyle,
+  current: PenStyle
+): Partial<PenStyle> | undefined {
+  const overrides: Partial<PenStyle> = {};
+  let has = false;
+
+  if (current.pen !== base.pen) { overrides.pen = current.pen; has = true; }
+  if (current.color !== base.color) { overrides.color = current.color; has = true; }
+  if (current.width !== base.width) { overrides.width = current.width; has = true; }
+  if (current.opacity !== base.opacity) { overrides.opacity = current.opacity; has = true; }
+  if (current.smoothing !== base.smoothing) { overrides.smoothing = current.smoothing; has = true; }
+  if (current.pressureCurve !== base.pressureCurve) { overrides.pressureCurve = current.pressureCurve; has = true; }
+  if (current.tiltSensitivity !== base.tiltSensitivity) { overrides.tiltSensitivity = current.tiltSensitivity; has = true; }
+
+  return has ? overrides : undefined;
 }
