@@ -18,6 +18,11 @@ export default class PaperPlugin extends Plugin {
     this.registerView(VIEW_TYPE_PAPER, (leaf) => {
       const view = new PaperView(leaf);
       view.setSettings(this.settings);
+      view.onSettingsChange = (changes) => {
+        Object.assign(this.settings, changes);
+        void this.saveSettings();
+        this.notifySettingsListeners();
+      };
       return view;
     });
     this.registerExtensions([PAPER_EXTENSION], VIEW_TYPE_PAPER);

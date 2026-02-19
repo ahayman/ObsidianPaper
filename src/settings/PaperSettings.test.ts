@@ -89,6 +89,9 @@ describe("PaperSettings", () => {
         defaultFolder: "Papers/",
         fileNameTemplate: "Note",
         defaultFormat: "paper.md",
+        penPresets: [],
+        activePresetId: null,
+        toolbarPosition: "bottom",
       };
       const result = mergeSettings(custom);
       expect(result).toEqual(custom);

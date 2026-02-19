@@ -10,6 +10,7 @@ import type {
   PageMargins,
 } from "../types";
 import { PAGE_SIZE_PRESETS, PPI, CM_PER_INCH } from "../types";
+import type { PenPreset, ToolbarPosition } from "../view/toolbar/ToolbarTypes";
 
 export type PaperFormat = "paper" | "paper.md";
 
@@ -61,7 +62,55 @@ export interface PaperSettings {
   defaultFolder: string;
   fileNameTemplate: string;
   defaultFormat: PaperFormat;
+
+  // Toolbar
+  penPresets: PenPreset[];
+  activePresetId: string | null;
+  toolbarPosition: ToolbarPosition;
 }
+
+export const DEFAULT_PRESETS: PenPreset[] = [
+  {
+    id: "preset-ballpoint-black",
+    name: "Ballpoint (Black)",
+    penType: "ballpoint",
+    colorId: "ink-black",
+    width: 2,
+    smoothing: 0.3,
+  },
+  {
+    id: "preset-ballpoint-blue",
+    name: "Ballpoint (Blue)",
+    penType: "ballpoint",
+    colorId: "ink-blue",
+    width: 2,
+    smoothing: 0.3,
+  },
+  {
+    id: "preset-felt-red",
+    name: "Felt tip (Red)",
+    penType: "felt-tip",
+    colorId: "ink-red",
+    width: 3,
+    smoothing: 0.5,
+  },
+  {
+    id: "preset-pencil",
+    name: "Pencil (Gray)",
+    penType: "pencil",
+    colorId: "ink-gray",
+    width: 3,
+    smoothing: 0.4,
+  },
+  {
+    id: "preset-highlighter-yellow",
+    name: "Highlighter (#FFE066)",
+    penType: "highlighter",
+    colorId: "#FFE066",
+    width: 24,
+    smoothing: 0.8,
+  },
+];
 
 export const DEFAULT_SETTINGS: PaperSettings = {
   defaultPenType: "ballpoint",
@@ -101,6 +150,10 @@ export const DEFAULT_SETTINGS: PaperSettings = {
   defaultFolder: "",
   fileNameTemplate: "Untitled Paper",
   defaultFormat: "paper",
+
+  penPresets: DEFAULT_PRESETS,
+  activePresetId: "preset-ballpoint-black",
+  toolbarPosition: "top",
 };
 
 /**

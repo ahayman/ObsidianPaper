@@ -150,8 +150,21 @@ export class InputManager {
     return target !== null && this.el.contains(target);
   }
 
+  /**
+   * Check if the event target is within an interactive overlay (toolbar, popover)
+   * that should receive pen events as normal clicks, not drawing strokes.
+   */
+  private isInteractiveOverlay(e: PointerEvent): boolean {
+    const target = e.target as Element | null;
+    if (!target) return false;
+    return target.closest(".paper-toolbar, .paper-popover, .paper-popover__backdrop") !== null;
+  }
+
   private handleDocPointerDown(e: PointerEvent): void {
     if (e.pointerType !== "pen") return;
+
+    // Let interactive overlays (toolbar, popover) handle pen taps as normal clicks
+    if (this.isInteractiveOverlay(e)) return;
 
     // Only handle if the event target is within our container
     if (!this.isWithinElement(e)) return;
@@ -174,7 +187,7 @@ export class InputManager {
     if (e.pointerType !== "pen") return;
     if (e.pointerId !== this.drawPointerId) {
       // Hover detection: pen hovering (pressure === 0, not drawing)
-      if (this.drawPointerId === null && e.pressure === 0 && this.isWithinElement(e)) {
+      if (this.drawPointerId === null && e.pressure === 0 && this.isWithinElement(e) && !this.isInteractiveOverlay(e)) {
         const rect = this.el.getBoundingClientRect();
         this.callbacks.onHover?.(
           e.clientX - rect.left,

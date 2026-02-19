@@ -11,8 +11,8 @@ import { serializeDocument, deserializeDocument, precompressStroke } from "../do
 import { getPenConfig } from "../stroke/PenConfigs";
 import { findHitStrokes } from "../eraser/StrokeEraser";
 import { ThemeDetector } from "../color/ThemeDetector";
-import { ToolPalette } from "./ToolPalette";
-import type { ActiveTool, ToolPaletteCallbacks } from "./ToolPalette";
+import { Toolbar } from "./toolbar/Toolbar";
+import type { ActiveTool, ToolbarCallbacks, ToolbarQueries, ToolbarState } from "./toolbar/ToolbarTypes";
 import type { PaperSettings } from "../settings/PaperSettings";
 import { DEFAULT_SETTINGS, resolvePageSize, resolveMargins } from "../settings/PaperSettings";
 import { HoverCursor } from "../input/HoverCursor";
@@ -35,7 +35,7 @@ export class PaperView extends TextFileView {
   private spatialIndex = new SpatialIndex();
   private resizeObserver: ResizeObserver | null = null;
   private themeDetector: ThemeDetector | null = null;
-  private toolPalette: ToolPalette | null = null;
+  private toolbar: Toolbar | null = null;
   private hoverCursor: HoverCursor | null = null;
   private pinchBaseZoom: number | null = null;
   private settings: PaperSettings = DEFAULT_SETTINGS;
@@ -55,10 +55,16 @@ export class PaperView extends TextFileView {
   private currentPenType: PenType = "ballpoint";
   private currentColorId = "ink-black";
   private currentWidth = 2;
+  private currentSmoothing = 0.5;
   private currentNibAngle = Math.PI / 6;
   private currentNibThickness = 0.25;
   private currentNibPressure = 0.5;
   private useBarrelRotation = true;
+
+  /**
+   * Callback for persisting settings changes (presets, toolbar position) back to the plugin.
+   */
+  onSettingsChange: ((changes: Partial<PaperSettings>) => void) | null = null;
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
@@ -89,7 +95,7 @@ export class PaperView extends TextFileView {
         this.renderer.invalidateCache();
         this.requestStaticRender();
       }
-      this.toolPalette?.setDarkMode(isDark);
+      this.toolbar?.setDarkMode(isDark);
     });
     this.themeDetector.start();
 
@@ -108,21 +114,26 @@ export class PaperView extends TextFileView {
     // Setup input handling
     this.inputManager = new InputManager(container, this.createInputCallbacks());
 
-    // Create tool palette
-    this.toolPalette = new ToolPalette(
+    // Create toolbar
+    this.toolbar = new Toolbar(
       container,
-      this.createToolPaletteCallbacks(),
+      this.createToolbarCallbacks(),
+      this.createToolbarQueries(),
       {
         activeTool: this.activeTool,
+        activePresetId: this.settings.activePresetId,
         penType: this.currentPenType,
         colorId: this.currentColorId,
         width: this.currentWidth,
+        smoothing: this.currentSmoothing,
         nibAngle: this.currentNibAngle,
         nibThickness: this.currentNibThickness,
         nibPressure: this.currentNibPressure,
-      }
+      },
+      this.settings.penPresets,
+      this.settings.toolbarPosition,
+      this.themeDetector.isDarkMode
     );
-    this.toolPalette.setDarkMode(this.themeDetector.isDarkMode);
 
     // Hover cursor
     this.hoverCursor = new HoverCursor(container);
@@ -152,8 +163,8 @@ export class PaperView extends TextFileView {
     this.themeDetector = null;
     this.inputManager?.destroy();
     this.inputManager = null;
-    this.toolPalette?.destroy();
-    this.toolPalette = null;
+    this.toolbar?.destroy();
+    this.toolbar = null;
     this.hoverCursor?.destroy();
     this.hoverCursor = null;
     this.renderer?.destroy();
@@ -209,18 +220,42 @@ export class PaperView extends TextFileView {
 
   setSettings(settings: PaperSettings): void {
     this.settings = settings;
-    this.currentPenType = settings.defaultPenType;
-    this.currentColorId = settings.defaultColorId;
-    this.currentWidth = settings.defaultWidth;
-    this.currentNibAngle = settings.defaultNibAngle;
-    this.currentNibThickness = settings.defaultNibThickness;
-    this.currentNibPressure = settings.defaultNibPressure;
     this.useBarrelRotation = settings.useBarrelRotation;
-    this.toolPalette?.setPenType(settings.defaultPenType);
-    this.toolPalette?.setWidth(settings.defaultWidth);
-    this.toolPalette?.setNibAngle(settings.defaultNibAngle);
-    this.toolPalette?.setNibThickness(settings.defaultNibThickness);
-    this.toolPalette?.setNibPressure(settings.defaultNibPressure);
+
+    // If there's an active preset, load its values
+    if (settings.activePresetId) {
+      const preset = settings.penPresets.find((p) => p.id === settings.activePresetId);
+      if (preset) {
+        this.currentPenType = preset.penType;
+        this.currentColorId = preset.colorId;
+        this.currentWidth = preset.width;
+        this.currentSmoothing = preset.smoothing;
+        if (preset.nibAngle !== undefined) this.currentNibAngle = preset.nibAngle;
+        if (preset.nibThickness !== undefined) this.currentNibThickness = preset.nibThickness;
+        if (preset.nibPressure !== undefined) this.currentNibPressure = preset.nibPressure;
+      }
+    } else {
+      this.currentPenType = settings.defaultPenType;
+      this.currentColorId = settings.defaultColorId;
+      this.currentWidth = settings.defaultWidth;
+      this.currentSmoothing = settings.defaultSmoothing;
+      this.currentNibAngle = settings.defaultNibAngle;
+      this.currentNibThickness = settings.defaultNibThickness;
+      this.currentNibPressure = settings.defaultNibPressure;
+    }
+
+    this.toolbar?.setState({
+      penType: this.currentPenType,
+      colorId: this.currentColorId,
+      width: this.currentWidth,
+      smoothing: this.currentSmoothing,
+      nibAngle: this.currentNibAngle,
+      nibThickness: this.currentNibThickness,
+      nibPressure: this.currentNibPressure,
+      activePresetId: settings.activePresetId,
+    });
+    this.toolbar?.updatePresets(settings.penPresets, settings.activePresetId);
+    this.toolbar?.setPosition(settings.toolbarPosition);
   }
 
   onResize(): void {
@@ -271,6 +306,7 @@ export class PaperView extends TextFileView {
     }
 
     this.renderer?.renderStaticLayer(this.document, this.pageLayout, this.spatialIndex);
+    this.toolbar?.refreshUndoRedo();
     this.requestSave();
   }
 
@@ -312,6 +348,7 @@ export class PaperView extends TextFileView {
     }
 
     this.renderer?.renderStaticLayer(this.document, this.pageLayout, this.spatialIndex);
+    this.toolbar?.refreshUndoRedo();
     this.requestSave();
   }
 
@@ -508,7 +545,7 @@ export class PaperView extends TextFileView {
       color: this.currentColorId,
       width: this.currentWidth,
       opacity: penConfig.baseOpacity,
-      smoothing: penConfig.smoothing,
+      smoothing: this.currentSmoothing,
       pressureCurve: penConfig.pressureCurve,
       tiltSensitivity: penConfig.tiltSensitivity,
     };
@@ -525,43 +562,48 @@ export class PaperView extends TextFileView {
     return "_default";
   }
 
-  // ─── Tool Palette ───────────────────────────────────────────────
+  // ─── Toolbar ────────────────────────────────────────────────────
 
-  private createToolPaletteCallbacks(): ToolPaletteCallbacks {
+  private createToolbarCallbacks(): ToolbarCallbacks {
     return {
       onToolChange: (tool: ActiveTool) => {
         this.activeTool = tool;
       },
-      onPenTypeChange: (penType: PenType) => {
-        this.currentPenType = penType;
-        const config = getPenConfig(penType);
-        this.currentWidth = config.baseWidth;
-        this.toolPalette?.setWidth(config.baseWidth);
-        // Reset nib to defaults when switching pen types
-        if (config.nibAngle !== null) {
-          this.currentNibAngle = this.settings.defaultNibAngle;
-          this.currentNibThickness = this.settings.defaultNibThickness;
-          this.currentNibPressure = this.settings.defaultNibPressure;
-          this.toolPalette?.setNibAngle(this.currentNibAngle);
-          this.toolPalette?.setNibThickness(this.currentNibThickness);
-          this.toolPalette?.setNibPressure(this.currentNibPressure);
-        }
+      onPenSettingsChange: (state: ToolbarState) => {
+        this.currentPenType = state.penType;
+        this.currentColorId = state.colorId;
+        this.currentWidth = state.width;
+        this.currentSmoothing = state.smoothing;
+        this.currentNibAngle = state.nibAngle;
+        this.currentNibThickness = state.nibThickness;
+        this.currentNibPressure = state.nibPressure;
       },
-      onColorChange: (colorId: string) => {
-        this.currentColorId = colorId;
+      onUndo: () => {
+        this.undo();
       },
-      onWidthChange: (width: number) => {
-        this.currentWidth = width;
+      onRedo: () => {
+        this.redo();
       },
-      onNibAngleChange: (angle: number) => {
-        this.currentNibAngle = angle;
+      onAddPage: () => {
+        this.addPage();
       },
-      onNibThicknessChange: (thickness: number) => {
-        this.currentNibThickness = thickness;
+      onPresetSave: (presets, activePresetId) => {
+        this.settings.penPresets = presets;
+        this.settings.activePresetId = activePresetId;
+        this.onSettingsChange?.({ penPresets: presets, activePresetId });
       },
-      onNibPressureChange: (pressure: number) => {
-        this.currentNibPressure = pressure;
+      onPositionChange: (position) => {
+        this.settings.toolbarPosition = position;
+        this.onSettingsChange?.({ toolbarPosition: position });
       },
+    };
+  }
+
+  private createToolbarQueries(): ToolbarQueries {
+    return {
+      canUndo: () => this.undoManager.canUndo(),
+      canRedo: () => this.undoManager.canRedo(),
+      pageCount: () => this.document.pages.length,
     };
   }
 
@@ -578,6 +620,7 @@ export class PaperView extends TextFileView {
     return {
       onStrokeStart: (point: StrokePoint) => {
         this.hoverCursor?.hide();
+        this.toolbar?.notifyStrokeStart();
         if (this.activeTool === "eraser") return;
 
         const world = this.camera.screenToWorld(point.x, point.y);
@@ -643,6 +686,7 @@ export class PaperView extends TextFileView {
       },
 
       onStrokeEnd: (point: StrokePoint) => {
+        this.toolbar?.notifyStrokeEnd();
         if (!this.strokeBuilder) return;
 
         const world = this.camera.screenToWorld(point.x, point.y);
@@ -670,6 +714,7 @@ export class PaperView extends TextFileView {
 
             precompressStroke(stroke);
             this.renderer?.clearActiveLayer();
+            this.toolbar?.refreshUndoRedo();
             this.requestSave();
           });
         } else {
@@ -780,6 +825,7 @@ export class PaperView extends TextFileView {
       this.undoManager.pushRemoveStrokes(removedEntries);
     }
 
+    this.toolbar?.refreshUndoRedo();
     this.requestStaticRender();
     this.requestSave();
   }
