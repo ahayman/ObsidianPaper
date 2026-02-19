@@ -37,10 +37,14 @@ export class PaperView extends TextFileView {
   private themeDetector: ThemeDetector | null = null;
   private toolPalette: ToolPalette | null = null;
   private hoverCursor: HoverCursor | null = null;
-  private pinchBaseZoom = 1;
+  private pinchBaseZoom: number | null = null;
   private settings: PaperSettings = DEFAULT_SETTINGS;
   private staticRafId: number | null = null;
   private precompressTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  // Container size tracking for resize anchoring
+  private cssWidth = 0;
+  private cssHeight = 0;
 
   // Page layout
   private pageLayout: PageRect[] = [];
@@ -92,6 +96,8 @@ export class PaperView extends TextFileView {
     // Initial resize
     const rect = container.getBoundingClientRect();
     if (rect.width > 0 && rect.height > 0) {
+      this.cssWidth = rect.width;
+      this.cssHeight = rect.height;
       this.renderer.resize(rect.width, rect.height);
     }
 
@@ -429,8 +435,25 @@ export class PaperView extends TextFileView {
   }
 
   private handleResize(width: number, height: number): void {
+    // Preserve the world-space center point during resize
+    const oldWidth = this.cssWidth;
+    const oldHeight = this.cssHeight;
+    this.cssWidth = width;
+    this.cssHeight = height;
+
+    if (oldWidth > 0 && oldHeight > 0) {
+      // Compute world center before resize
+      const centerWorldX = this.camera.x + oldWidth / (2 * this.camera.zoom);
+      const centerWorldY = this.camera.y + oldHeight / (2 * this.camera.zoom);
+
+      // Adjust camera so the same world point stays at screen center
+      this.camera.x = centerWorldX - width / (2 * this.camera.zoom);
+      this.camera.y = centerWorldY - height / (2 * this.camera.zoom);
+    }
+
     this.renderer?.resize(width, height);
     this.updateZoomLimits();
+    this.camera.clampPan(width, height);
     this.renderer?.renderStaticLayer(this.document, this.pageLayout, this.spatialIndex);
   }
 
@@ -639,10 +662,12 @@ export class PaperView extends TextFileView {
         this.requestSave();
       },
 
-      onPinchMove: (centerX: number, centerY: number, scale: number) => {
-        if (this.pinchBaseZoom === 1) {
+      onPinchMove: (centerX: number, centerY: number, scale: number, panDx: number, panDy: number) => {
+        if (this.pinchBaseZoom === null) {
           this.pinchBaseZoom = this.camera.zoom;
         }
+        // Apply pan first, then zoom
+        this.camera.pan(panDx, panDy);
         const newZoom = this.pinchBaseZoom * scale;
         this.camera.zoomAt(centerX, centerY, newZoom);
         const rect = this.contentEl.getBoundingClientRect();
@@ -651,7 +676,7 @@ export class PaperView extends TextFileView {
       },
 
       onPinchEnd: () => {
-        this.pinchBaseZoom = 1;
+        this.pinchBaseZoom = null;
         this.requestSave();
       },
 

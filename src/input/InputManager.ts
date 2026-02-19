@@ -2,6 +2,12 @@ import type { StrokePoint } from "../types";
 
 export type PointerAction = "draw" | "pan" | "zoom" | "none";
 
+// Minimum screen-space movement before a tap becomes a drag (squared for fast comparison)
+const TAP_MOVE_THRESHOLD_SQ = 10 * 10; // 10px
+
+// Minimum pinch distance or center movement change before pinch activates (screen px)
+const PINCH_ACTIVATE_THRESHOLD = 8;
+
 export interface InputCallbacks {
   onStrokeStart: (point: StrokePoint) => void;
   onStrokeMove: (points: StrokePoint[], predicted: StrokePoint[]) => void;
@@ -10,7 +16,7 @@ export interface InputCallbacks {
   onPanStart: () => void;
   onPanMove: (dx: number, dy: number) => void;
   onPanEnd: () => void;
-  onPinchMove: (centerX: number, centerY: number, scale: number) => void;
+  onPinchMove: (centerX: number, centerY: number, scale: number, panDx: number, panDy: number) => void;
   onPinchEnd: () => void;
   onTwoFingerTap: () => void;
   onThreeFingerTap: () => void;
@@ -40,12 +46,16 @@ export class InputManager {
   private drawPointerId: number | null = null;
   private activeTouches = new Map<number, ActiveTouch>();
   private initialPinchDistance: number | null = null;
-  private initialPinchZoom = 1;
+  private lastPinchCenterX = 0;
+  private lastPinchCenterY = 0;
+  private isPinchActive = false;
   private isPanning = false;
   private lastPanX = 0;
   private lastPanY = 0;
   private touchStartTime = 0;
   private touchStartCount = 0;
+  private touchStartX = 0;
+  private touchStartY = 0;
   private touchMoved = false;
 
   // Bound handlers for cleanup
@@ -248,14 +258,19 @@ export class InputManager {
         this.isPanning = true;
         this.lastPanX = e.clientX;
         this.lastPanY = e.clientY;
+        this.touchStartX = e.clientX;
+        this.touchStartY = e.clientY;
         this.callbacks.onPanStart();
       } else if (this.activeTouches.size === 2) {
-        // Start pinch
+        // Start pinch — record initial state but don't activate yet
         const touches = Array.from(this.activeTouches.values());
         this.initialPinchDistance = this.touchDistance(
           touches[0],
           touches[1]
         );
+        this.lastPinchCenterX = (touches[0].x + touches[1].x) / 2;
+        this.lastPinchCenterY = (touches[0].y + touches[1].y) / 2;
+        this.isPinchActive = false;
       }
     }
   }
@@ -276,7 +291,15 @@ export class InputManager {
     if (e.pointerType === "touch" && this.activeTouches.has(e.pointerId)) {
       if (this.penActive) return; // Palm rejection
 
-      this.touchMoved = true;
+      // Track movement for tap detection (require meaningful displacement)
+      if (!this.touchMoved) {
+        const dx = e.clientX - this.touchStartX;
+        const dy = e.clientY - this.touchStartY;
+        if (dx * dx + dy * dy > TAP_MOVE_THRESHOLD_SQ) {
+          this.touchMoved = true;
+        }
+      }
+
       this.activeTouches.set(e.pointerId, {
         id: e.pointerId,
         x: e.clientX,
@@ -293,12 +316,34 @@ export class InputManager {
         this.callbacks.onPanMove(dx, dy);
       } else if (touches.length >= 2 && this.initialPinchDistance !== null) {
         const currentDistance = this.touchDistance(touches[0], touches[1]);
+
+        // Don't activate pinch until distance changes meaningfully
+        if (!this.isPinchActive) {
+          const distDelta = Math.abs(currentDistance - this.initialPinchDistance);
+          const centerX = (touches[0].x + touches[1].x) / 2;
+          const centerY = (touches[0].y + touches[1].y) / 2;
+          const centerDx = centerX - this.lastPinchCenterX;
+          const centerDy = centerY - this.lastPinchCenterY;
+          const centerDist = Math.sqrt(centerDx * centerDx + centerDy * centerDy);
+
+          if (distDelta > PINCH_ACTIVATE_THRESHOLD || centerDist > PINCH_ACTIVATE_THRESHOLD) {
+            this.isPinchActive = true;
+          } else {
+            return; // Below threshold — don't fire pinch
+          }
+        }
+
         const scale = currentDistance / this.initialPinchDistance;
 
         const centerX = (touches[0].x + touches[1].x) / 2;
         const centerY = (touches[0].y + touches[1].y) / 2;
 
-        this.callbacks.onPinchMove(centerX, centerY, scale);
+        const panDx = centerX - this.lastPinchCenterX;
+        const panDy = centerY - this.lastPinchCenterY;
+        this.lastPinchCenterX = centerX;
+        this.lastPinchCenterY = centerY;
+
+        this.callbacks.onPinchMove(centerX, centerY, scale, panDx, panDy);
       }
     }
 
@@ -352,12 +397,19 @@ export class InputManager {
         }
         if (this.initialPinchDistance !== null) {
           this.initialPinchDistance = null;
-          this.callbacks.onPinchEnd();
+          if (this.isPinchActive) {
+            this.isPinchActive = false;
+            this.callbacks.onPinchEnd();
+          }
         }
         this.touchStartCount = 0;
       } else if (this.activeTouches.size === 1) {
         // Went from pinch back to single touch → resume panning
         this.initialPinchDistance = null;
+        if (this.isPinchActive) {
+          this.isPinchActive = false;
+          this.callbacks.onPinchEnd();
+        }
         const remaining = Array.from(this.activeTouches.values())[0];
         this.lastPanX = remaining.x;
         this.lastPanY = remaining.y;
@@ -383,6 +435,7 @@ export class InputManager {
       if (this.activeTouches.size === 0) {
         this.isPanning = false;
         this.initialPinchDistance = null;
+        this.isPinchActive = false;
         this.touchStartCount = 0;
       }
     }
