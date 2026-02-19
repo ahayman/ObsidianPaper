@@ -2,6 +2,67 @@
  * Mock implementation of the Obsidian API for testing
  */
 
+/**
+ * Augment HTMLElement with Obsidian's DOM helper methods.
+ * These are added to all elements in the real Obsidian environment.
+ */
+function augmentElement(el: HTMLElement): HTMLElement {
+  if (!(el as any)._augmented) {
+    (el as any)._augmented = true;
+    (el as any).empty = function () {
+      while (this.firstChild) this.removeChild(this.firstChild);
+    };
+    (el as any).createEl = function (
+      tag: string,
+      opts?: {
+        cls?: string;
+        text?: string;
+        type?: string;
+        value?: string;
+        attr?: Record<string, string>;
+      }
+    ) {
+      const child = document.createElement(tag);
+      augmentElement(child);
+      if (opts?.cls) {
+        for (const c of opts.cls.split(" ")) child.classList.add(c);
+      }
+      if (opts?.text) child.textContent = opts.text;
+      if (opts?.type) (child as HTMLInputElement).type = opts.type;
+      if (opts?.value) (child as HTMLInputElement).value = opts.value;
+      if (opts?.attr) {
+        for (const [k, v] of Object.entries(opts.attr)) {
+          child.setAttribute(k, v);
+        }
+      }
+      this.appendChild(child);
+      return child;
+    };
+    (el as any).addClass = function (cls: string) {
+      this.classList.add(cls);
+    };
+    (el as any).removeClass = function (cls: string) {
+      this.classList.remove(cls);
+    };
+    (el as any).toggleClass = function (cls: string, force: boolean) {
+      this.classList.toggle(cls, force);
+    };
+    (el as any).toggleVisibility = function (visible: boolean) {
+      this.style.display = visible ? "" : "none";
+    };
+    (el as any).setCssProps = function (props: Record<string, string>) {
+      for (const [k, v] of Object.entries(props)) {
+        this.style.setProperty(k, v);
+      }
+    };
+  }
+  return el;
+}
+
+function createAugmentedDiv(): HTMLElement {
+  return augmentElement(document.createElement("div"));
+}
+
 export class App {
   vault = new Vault();
   workspace = new Workspace();
@@ -19,11 +80,13 @@ export class Vault {
   rename = jest.fn();
   getMarkdownFiles = jest.fn(() => []);
   getAllLoadedFiles = jest.fn(() => []);
+  getRoot = jest.fn(() => new TFolder("/"));
 }
 
 export class Workspace {
-  getLeaf = jest.fn(() => new WorkspaceLeaf());
+  getLeaf = jest.fn((_newLeaf?: boolean) => new WorkspaceLeaf());
   getActiveFile = jest.fn();
+  getActiveViewOfType = jest.fn(() => null);
   on = jest.fn();
 }
 
@@ -43,8 +106,60 @@ export class Plugin {
   addCommand = jest.fn();
   addSettingTab = jest.fn();
   registerEvent = jest.fn();
+  registerView = jest.fn();
+  registerExtensions = jest.fn();
+  registerMarkdownPostProcessor = jest.fn();
+  registerEditorExtension = jest.fn();
   loadData = jest.fn(() => Promise.resolve(null));
   saveData = jest.fn(() => Promise.resolve());
+}
+
+export class TextFileView {
+  app: App;
+  file: TFile | null = null;
+  contentEl: HTMLElement;
+  data: string = "";
+
+  constructor(leaf: WorkspaceLeaf) {
+    this.app = new App();
+    this.contentEl = createAugmentedDiv();
+  }
+
+  getViewType(): string {
+    return "";
+  }
+
+  getDisplayText(): string {
+    return "";
+  }
+
+  getIcon(): string {
+    return "document";
+  }
+
+  getViewData(): string {
+    return this.data;
+  }
+
+  setViewData(data: string, clear: boolean): void {
+    this.data = data;
+  }
+
+  clear(): void {
+    this.data = "";
+  }
+
+  requestSave(): void {}
+
+  onOpen(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  onClose(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  onResize(): void {}
 }
 
 export interface PluginManifest {
@@ -64,7 +179,7 @@ export class PluginSettingTab {
 
   constructor(app: App, plugin: Plugin) {
     this.app = app;
-    this.containerEl = document.createElement("div");
+    this.containerEl = createAugmentedDiv();
   }
 
   display(): void {}
@@ -109,6 +224,10 @@ export class Setting {
   }
 
   setDesc(desc: string): this {
+    return this;
+  }
+
+  setHeading(): this {
     return this;
   }
 

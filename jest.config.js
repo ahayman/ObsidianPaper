@@ -5,7 +5,7 @@ module.exports = {
   roots: ["<rootDir>/src"],
   testMatch: ["**/__tests__/**/*.ts?(x)", "**/?(*.)+(spec|test).ts?(x)"],
   transform: {
-    "^.+\\.tsx?$": [
+    "^.+\\.[jt]sx?$": [
       "ts-jest",
       {
         tsconfig: "tsconfig.json",
@@ -25,6 +25,9 @@ module.exports = {
   coverageDirectory: "coverage",
   coverageReporters: ["text", "lcov", "html"],
   moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
+  transformIgnorePatterns: [
+    "node_modules/(?!(rbush|quickselect)/)",
+  ],
   clearMocks: true,
   restoreMocks: true,
 };

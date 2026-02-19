@@ -24,4 +24,30 @@ describe("PaperPlugin", () => {
   it("should unload without error", () => {
     expect(() => plugin.onunload()).not.toThrow();
   });
+
+  it("should register the paper view on load", async () => {
+    await plugin.onload();
+    expect(plugin.registerView).toHaveBeenCalledWith(
+      "paper-view",
+      expect.any(Function)
+    );
+  });
+
+  it("should register .paper extension on load", async () => {
+    await plugin.onload();
+    expect(plugin.registerExtensions).toHaveBeenCalledWith(
+      ["paper"],
+      "paper-view"
+    );
+  });
+
+  it("should add create-paper command on load", async () => {
+    await plugin.onload();
+    expect(plugin.addCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "create-paper",
+        name: "Create new handwriting note",
+      })
+    );
+  });
 });
