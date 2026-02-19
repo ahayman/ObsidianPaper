@@ -4,6 +4,7 @@ import { UndoManager } from "./UndoManager";
 function makeStroke(id: string): Stroke {
   return {
     id,
+    pageIndex: 0,
     style: "_default",
     bbox: [0, 0, 100, 100],
     pointCount: 5,

@@ -3,51 +3,62 @@ import { decodePoints } from "../document/PointEncoder";
 import { generateOutline } from "../stroke/OutlineGenerator";
 import { resolveColor } from "../color/ColorPalette";
 import { getPenConfig } from "../stroke/PenConfigs";
+import { computePageLayout, getDocumentBounds } from "../document/PageLayout";
 
 /**
  * Export a PaperDocument to SVG format.
- * Each stroke is rendered as a filled <path> element.
+ * Each page is rendered as a clipped group with strokes inside.
  */
 export function exportToSvg(doc: PaperDocument, isDarkMode: boolean): string {
-  if (doc.strokes.length === 0) {
-    return buildSvg(0, 0, 100, 100, [], isDarkMode, doc.canvas.backgroundColor);
+  const pageLayout = computePageLayout(doc.pages, doc.layoutDirection);
+
+  if (pageLayout.length === 0 && doc.strokes.length === 0) {
+    return buildSvg(0, 0, 100, 100, [], isDarkMode);
   }
 
-  // Compute content bounding box from all strokes
-  const contentBbox = computeContentBbox(doc.strokes);
+  // Compute viewBox from page layout bounds
+  const bounds = getDocumentBounds(pageLayout);
   const padding = 20;
-  const minX = contentBbox[0] - padding;
-  const minY = contentBbox[1] - padding;
-  const width = contentBbox[2] - contentBbox[0] + padding * 2;
-  const height = contentBbox[3] - contentBbox[1] + padding * 2;
+  const minX = bounds.minX - padding;
+  const minY = bounds.minY - padding;
+  const width = (bounds.maxX - bounds.minX) + padding * 2;
+  const height = (bounds.maxY - bounds.minY) + padding * 2;
 
-  // Generate SVG path elements for each stroke
-  const pathElements: string[] = [];
-  for (const stroke of doc.strokes) {
-    const style = resolveStyle(stroke, doc.styles);
-    const pathEl = strokeToSvgPath(stroke, style, isDarkMode);
-    if (pathEl) {
-      pathElements.push(pathEl);
+  // Generate SVG elements: page backgrounds + clipped stroke groups
+  const elements: string[] = [];
+
+  const paperBg = isDarkMode ? "#1e1e1e" : "#fffff8";
+
+  for (const pageRect of pageLayout) {
+    // Page background rect
+    elements.push(
+      `  <rect x="${round(pageRect.x)}" y="${round(pageRect.y)}" width="${round(pageRect.width)}" height="${round(pageRect.height)}" fill="${escapeXml(paperBg)}"/>`
+    );
+
+    // Clip definition ID
+    const clipId = `page-clip-${pageRect.pageIndex}`;
+    elements.push(
+      `  <clipPath id="${clipId}">`,
+      `    <rect x="${round(pageRect.x)}" y="${round(pageRect.y)}" width="${round(pageRect.width)}" height="${round(pageRect.height)}"/>`,
+      `  </clipPath>`
+    );
+
+    // Strokes for this page, clipped
+    const pageStrokes = doc.strokes.filter(s => s.pageIndex === pageRect.pageIndex);
+    if (pageStrokes.length > 0) {
+      elements.push(`  <g clip-path="url(#${clipId})">`);
+      for (const stroke of pageStrokes) {
+        const style = resolveStyle(stroke, doc.styles);
+        const pathEl = strokeToSvgPath(stroke, style, isDarkMode);
+        if (pathEl) {
+          elements.push(`  ${pathEl}`);
+        }
+      }
+      elements.push(`  </g>`);
     }
   }
 
-  return buildSvg(minX, minY, width, height, pathElements, isDarkMode, doc.canvas.backgroundColor);
-}
-
-function computeContentBbox(strokes: readonly Stroke[]): [number, number, number, number] {
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-
-  for (const stroke of strokes) {
-    if (stroke.bbox[0] < minX) minX = stroke.bbox[0];
-    if (stroke.bbox[1] < minY) minY = stroke.bbox[1];
-    if (stroke.bbox[2] > maxX) maxX = stroke.bbox[2];
-    if (stroke.bbox[3] > maxY) maxY = stroke.bbox[3];
-  }
-
-  return [minX, minY, maxX, maxY];
+  return buildSvg(minX, minY, width, height, elements, isDarkMode);
 }
 
 function strokeToSvgPath(
@@ -64,7 +75,6 @@ function strokeToSvgPath(
   const color = resolveColor(style.color, isDarkMode);
   const penConfig = getPenConfig(style.pen);
 
-  // Build SVG path data from outline polygon
   const d = outlineToPathData(outline);
 
   const attrs: string[] = [`d="${d}"`, `fill="${escapeXml(color)}"`];
@@ -96,18 +106,17 @@ function buildSvg(
   minY: number,
   width: number,
   height: number,
-  pathElements: string[],
-  isDarkMode: boolean,
-  backgroundColor: string
+  elements: string[],
+  isDarkMode: boolean
 ): string {
-  const bgColor = backgroundColor || (isDarkMode ? "#1e1e1e" : "#ffffff");
+  const deskBg = isDarkMode ? "#111111" : "#e8e8e8";
   const viewBox = `${round(minX)} ${round(minY)} ${round(width)} ${round(height)}`;
 
   const lines: string[] = [
     `<?xml version="1.0" encoding="UTF-8"?>`,
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" width="${round(width)}" height="${round(height)}">`,
-    `  <rect x="${round(minX)}" y="${round(minY)}" width="${round(width)}" height="${round(height)}" fill="${escapeXml(bgColor)}"/>`,
-    ...pathElements,
+    `  <rect x="${round(minX)}" y="${round(minY)}" width="${round(width)}" height="${round(height)}" fill="${escapeXml(deskBg)}"/>`,
+    ...elements,
     `</svg>`,
   ];
 

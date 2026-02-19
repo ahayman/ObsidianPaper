@@ -3,15 +3,68 @@ import type { CameraState } from "../types";
 export const MIN_ZOOM = 0.1;
 export const MAX_ZOOM = 5.0;
 
+const PAN_MARGIN = 20; // world units that must remain visible
+
 export class Camera {
   x: number;
   y: number;
   zoom: number;
 
+  private minZoom = MIN_ZOOM;
+  private maxZoom = MAX_ZOOM;
+  private docBounds: { minX: number; minY: number; maxX: number; maxY: number } | null = null;
+
   constructor(state?: Partial<CameraState>) {
     this.x = state?.x ?? 0;
     this.y = state?.y ?? 0;
-    this.zoom = Camera.clampZoom(state?.zoom ?? 1.0);
+    this.zoom = this.clampZoom(state?.zoom ?? 1.0);
+  }
+
+  /**
+   * Set dynamic zoom limits (recalculated on resize / page size change).
+   */
+  setZoomLimits(min: number, max: number): void {
+    this.minZoom = min;
+    this.maxZoom = max;
+    this.zoom = this.clampZoom(this.zoom);
+  }
+
+  /**
+   * Store the document bounding box for pan clamping.
+   */
+  setDocumentBounds(bounds: { minX: number; minY: number; maxX: number; maxY: number }): void {
+    this.docBounds = bounds;
+  }
+
+  /**
+   * Clamp camera position so at least PAN_MARGIN world units of document bounds
+   * remain visible on screen.
+   */
+  clampPan(screenWidth: number, screenHeight: number): void {
+    if (!this.docBounds) return;
+
+    const viewWidth = screenWidth / this.zoom;
+    const viewHeight = screenHeight / this.zoom;
+
+    // Camera x,y is the top-left corner in world space
+    // Visible world rect: [x, y, x + viewWidth, y + viewHeight]
+    //
+    // Constraint: document right edge must be at least PAN_MARGIN past screen left edge
+    //   docBounds.maxX >= x + PAN_MARGIN  →  x <= docBounds.maxX - PAN_MARGIN
+    // Constraint: document left edge must be at least PAN_MARGIN before screen right edge
+    //   docBounds.minX <= x + viewWidth - PAN_MARGIN  →  x >= docBounds.minX - viewWidth + PAN_MARGIN
+
+    const minX = this.docBounds.minX - viewWidth + PAN_MARGIN;
+    const maxX = this.docBounds.maxX - PAN_MARGIN;
+    const minY = this.docBounds.minY - viewHeight + PAN_MARGIN;
+    const maxY = this.docBounds.maxY - PAN_MARGIN;
+
+    if (minX <= maxX) {
+      this.x = Math.min(maxX, Math.max(minX, this.x));
+    }
+    if (minY <= maxY) {
+      this.y = Math.min(maxY, Math.max(minY, this.y));
+    }
   }
 
   /**
@@ -47,7 +100,7 @@ export class Camera {
    * This keeps the world point under the cursor/finger stationary.
    */
   zoomAt(screenX: number, screenY: number, newZoom: number): void {
-    newZoom = Camera.clampZoom(newZoom);
+    newZoom = this.clampZoom(newZoom);
 
     // World point under the screen position before zoom
     const worldBefore = this.screenToWorld(screenX, screenY);
@@ -116,7 +169,19 @@ export class Camera {
   setState(state: CameraState): void {
     this.x = state.x;
     this.y = state.y;
-    this.zoom = Camera.clampZoom(state.zoom);
+    this.zoom = this.clampZoom(state.zoom);
+  }
+
+  getMinZoom(): number {
+    return this.minZoom;
+  }
+
+  getMaxZoom(): number {
+    return this.maxZoom;
+  }
+
+  clampZoom(zoom: number): number {
+    return Math.min(this.maxZoom, Math.max(this.minZoom, zoom));
   }
 
   static clampZoom(zoom: number): number {

@@ -15,6 +15,7 @@ function makeStroke(
   const computedBbox = bbox ?? computeBBox(points);
   return {
     id,
+    pageIndex: 0,
     style: "_default",
     bbox: computedBbox,
     pointCount: points.length,

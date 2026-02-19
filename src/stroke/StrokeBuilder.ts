@@ -22,14 +22,17 @@ export class StrokeBuilder {
   private yFilter: OneEuroFilter;
   private pressureFilter: EMAFilter;
   private style: string;
+  private pageIndex: number;
   private styleOverrides?: Partial<PenStyle>;
 
   constructor(
     style: string,
+    pageIndex: number,
     config?: Partial<StrokeBuilderConfig>,
     styleOverrides?: Partial<PenStyle>
   ) {
     this.style = style;
+    this.pageIndex = pageIndex;
     this.styleOverrides = styleOverrides;
 
     const cfg = { ...DEFAULT_BUILDER_CONFIG, ...config };
@@ -93,6 +96,7 @@ export class StrokeBuilder {
 
     const stroke: Stroke = {
       id: generateStrokeId(),
+      pageIndex: this.pageIndex,
       style: this.style,
       bbox,
       pointCount: this.points.length,

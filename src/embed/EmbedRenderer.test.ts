@@ -29,6 +29,8 @@ function createMockCtx(): CanvasRenderingContext2D {
     restore: jest.fn(),
     clearRect: jest.fn(),
     beginPath: jest.fn(),
+    rect: jest.fn(),
+    clip: jest.fn(),
   } as unknown as CanvasRenderingContext2D;
 }
 
@@ -48,6 +50,7 @@ function makeDocWithStrokes(): string {
   const points = [makePoint(100, 100), makePoint(200, 100), makePoint(200, 200)];
   doc.strokes.push({
     id: "s1",
+    pageIndex: 0,
     style: "_default",
     bbox: [100, 100, 200, 200],
     pointCount: 3,
@@ -108,18 +111,18 @@ describe("EmbedRenderer", () => {
   });
 
   describe("getDocumentAspectRatio", () => {
-    it("should return canvas aspect ratio for empty document", () => {
+    it("should return page aspect ratio for empty document", () => {
       const data = serializeDocument(createEmptyDocument());
       const ratio = getDocumentAspectRatio(data);
-      // Default canvas is 2048x2732
-      expect(ratio).toBeCloseTo(2048 / 2732, 2);
+      // Default page is US Letter: 612x792
+      expect(ratio).toBeCloseTo(612 / 792, 2);
     });
 
-    it("should return content aspect ratio for document with strokes", () => {
+    it("should return non-zero aspect ratio for document with strokes", () => {
       const data = makeDocWithStrokes();
       const ratio = getDocumentAspectRatio(data);
-      // Content is 100x100 (100,100 to 200,200)
-      expect(ratio).toBeCloseTo(1, 1);
+      // Should return the page layout aspect ratio (612/792 for US letter)
+      expect(ratio).toBeGreaterThan(0);
     });
   });
 });

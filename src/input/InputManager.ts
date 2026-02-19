@@ -98,6 +98,24 @@ export class InputManager {
     this.el.addEventListener("contextmenu", this.boundContextMenu);
   }
 
+  /**
+   * Convert the current pen stroke into a pan gesture.
+   * Called when stroke starts outside all pages.
+   */
+  switchToPan(startPoint: StrokePoint): void {
+    // Cancel any in-progress stroke
+    if (this.drawPointerId !== null) {
+      this.callbacks.onStrokeCancel();
+      // Keep drawPointerId so we continue tracking this pointer
+    }
+
+    // Begin pan tracking from the given point
+    this.isPanning = true;
+    this.lastPanX = startPoint.x;
+    this.lastPanY = startPoint.y;
+    this.callbacks.onPanStart();
+  }
+
   destroy(): void {
     // Remove document-level listeners
     document.removeEventListener("pointerdown", this.boundDocDown, true);

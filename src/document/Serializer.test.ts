@@ -9,11 +9,10 @@ describe("Serializer", () => {
       const json = serializeDocument(doc);
       const restored = deserializeDocument(json);
 
-      expect(restored.version).toBe(1);
-      expect(restored.canvas.width).toBe(doc.canvas.width);
-      expect(restored.canvas.height).toBe(doc.canvas.height);
-      expect(restored.canvas.backgroundColor).toBe(doc.canvas.backgroundColor);
-      expect(restored.canvas.paperType).toBe(doc.canvas.paperType);
+      expect(restored.version).toBe(3);
+      expect(restored.pages[0].size.width).toBe(doc.pages[0].size.width);
+      expect(restored.pages[0].size.height).toBe(doc.pages[0].size.height);
+      expect(restored.pages[0].paperType).toBe(doc.pages[0].paperType);
       expect(restored.channels).toEqual(doc.channels);
       expect(restored.strokes).toEqual([]);
       expect(restored.styles._default).toBeDefined();
@@ -23,6 +22,7 @@ describe("Serializer", () => {
       const doc = createEmptyDocument();
       const stroke: Stroke = {
         id: "s12345",
+        pageIndex: 0,
         style: "_default",
         bbox: [100, 200, 350, 280],
         pointCount: 3,
@@ -45,6 +45,7 @@ describe("Serializer", () => {
       const doc = createEmptyDocument();
       const stroke: Stroke = {
         id: "s1",
+        pageIndex: 0,
         style: "_default",
         styleOverrides: { width: 5.0 },
         bbox: [0, 0, 100, 100],
@@ -63,6 +64,7 @@ describe("Serializer", () => {
       const doc = createEmptyDocument();
       const stroke: Stroke = {
         id: "s1",
+        pageIndex: 0,
         style: "_default",
         bbox: [0, 0, 100, 100],
         pointCount: 1,
@@ -117,31 +119,33 @@ describe("Serializer", () => {
   describe("deserialize edge cases", () => {
     it("should return empty document for empty string", () => {
       const doc = deserializeDocument("");
-      expect(doc.version).toBe(1);
+      expect(doc.version).toBe(3);
       expect(doc.strokes).toEqual([]);
     });
 
     it("should return empty document for invalid JSON", () => {
       const doc = deserializeDocument("not json {{{");
-      expect(doc.version).toBe(1);
+      expect(doc.version).toBe(3);
       expect(doc.strokes).toEqual([]);
     });
 
     it("should return empty document for future version", () => {
       const doc = deserializeDocument(JSON.stringify({ v: 999 }));
-      expect(doc.version).toBe(1);
+      expect(doc.version).toBe(3);
       expect(doc.strokes).toEqual([]);
     });
 
     it("should handle missing optional fields gracefully", () => {
+      // v1 data is rejected (< 3), so we get an empty document back
       const minimal = JSON.stringify({
         v: 1,
         meta: { created: 1000, app: "0.1.0" },
       });
       const doc = deserializeDocument(minimal);
-      expect(doc.version).toBe(1);
-      expect(doc.canvas.width).toBe(2048);
+      // Returns fresh empty document since v1 < 3
+      expect(doc.version).toBe(3);
       expect(doc.strokes).toEqual([]);
+      expect(doc.pages).toHaveLength(1);
       expect(doc.channels).toEqual(["x", "y", "p", "tx", "ty", "tw", "t"]);
     });
   });
@@ -153,17 +157,18 @@ describe("Serializer", () => {
       const parsed = JSON.parse(json);
 
       // Top-level compact keys
-      expect(parsed.v).toBe(1);
-      expect(parsed.canvas.w).toBe(2048);
-      expect(parsed.canvas.h).toBe(2732);
-      expect(parsed.canvas.bg).toBe("#fffff8");
-      expect(parsed.canvas.paper).toBe("blank");
+      expect(parsed.v).toBe(3);
+      // Pages array with compact keys
+      expect(parsed.pages).toHaveLength(1);
+      expect(parsed.pages[0].w).toBe(612);   // US letter width
+      expect(parsed.pages[0].h).toBe(792);   // US letter height
     });
 
     it("should use compact stroke keys", () => {
       const doc = createEmptyDocument();
       doc.strokes.push({
         id: "s1",
+        pageIndex: 0,
         style: "_default",
         bbox: [0, 0, 100, 100],
         pointCount: 1,
@@ -173,6 +178,7 @@ describe("Serializer", () => {
       const parsed = JSON.parse(json);
 
       expect(parsed.strokes[0].st).toBe("_default");
+      expect(parsed.strokes[0].pg).toBe(0);
       expect(parsed.strokes[0].bb).toEqual([0, 0, 100, 100]);
       expect(parsed.strokes[0].n).toBe(1);
     });

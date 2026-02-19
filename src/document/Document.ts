@@ -1,8 +1,13 @@
-import type { PaperDocument, PenStyle } from "../types";
-
-const DEFAULT_CANVAS_WIDTH = 2048;
-const DEFAULT_CANVAS_HEIGHT = 2732;
-const DEFAULT_BACKGROUND = "#fffff8";
+import type {
+  PaperDocument,
+  PenStyle,
+  PageSize,
+  PageOrientation,
+  PaperType,
+  LayoutDirection,
+  PageMargins,
+} from "../types";
+import { PAGE_SIZE_PRESETS } from "../types";
 
 const DEFAULT_STYLE: PenStyle = {
   pen: "ballpoint",
@@ -14,23 +19,42 @@ const DEFAULT_STYLE: PenStyle = {
   tiltSensitivity: 0,
 };
 
-export function createEmptyDocument(appVersion: string = "0.1.0"): PaperDocument {
+const DEFAULT_MARGINS: PageMargins = {
+  top: 72,     // 1 inch
+  bottom: 36,  // 0.5 inch
+  left: 36,    // 0.5 inch
+  right: 36,   // 0.5 inch
+};
+
+export function createEmptyDocument(
+  appVersion: string = "0.1.0",
+  pageSize?: PageSize,
+  orientation?: PageOrientation,
+  paperType?: PaperType,
+  layoutDirection?: LayoutDirection,
+  margins?: PageMargins,
+): PaperDocument {
   const now = Date.now();
+  const size = pageSize ?? PAGE_SIZE_PRESETS["us-letter"];
   return {
-    version: 1,
+    version: 3,
     meta: {
       created: now,
       modified: now,
       appVersion,
     },
-    canvas: {
-      width: DEFAULT_CANVAS_WIDTH,
-      height: DEFAULT_CANVAS_HEIGHT,
-      backgroundColor: DEFAULT_BACKGROUND,
-      paperType: "blank",
-      lineSpacing: 32,
-      gridSize: 40,
-    },
+    pages: [
+      {
+        id: generatePageId(),
+        size: { width: size.width, height: size.height },
+        orientation: orientation ?? "portrait",
+        paperType: paperType ?? "blank",
+        lineSpacing: 32,
+        gridSize: 40,
+        margins: margins ?? { ...DEFAULT_MARGINS },
+      },
+    ],
+    layoutDirection: layoutDirection ?? "vertical",
     viewport: { x: 0, y: 0, zoom: 1.0 },
     channels: ["x", "y", "p", "tx", "ty", "tw", "t"],
     styles: {
@@ -46,6 +70,18 @@ export function createEmptyDocument(appVersion: string = "0.1.0"): PaperDocument
 export function generateStrokeId(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
   let id = "s";
+  for (let i = 0; i < 5; i++) {
+    id += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return id;
+}
+
+/**
+ * Generate a short unique page ID.
+ */
+export function generatePageId(): string {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let id = "p";
   for (let i = 0; i < 5; i++) {
     id += chars[Math.floor(Math.random() * chars.length)];
   }

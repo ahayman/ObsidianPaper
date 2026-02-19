@@ -18,13 +18,13 @@ function makePoint(overrides: Partial<StrokePoint> = {}): StrokePoint {
 describe("StrokeBuilder", () => {
   describe("point accumulation", () => {
     it("should start empty", () => {
-      const builder = new StrokeBuilder("_default");
+      const builder = new StrokeBuilder("_default", 0);
       expect(builder.pointCount).toBe(0);
       expect(builder.hasPoints).toBe(false);
     });
 
     it("should accumulate points", () => {
-      const builder = new StrokeBuilder("_default");
+      const builder = new StrokeBuilder("_default", 0);
       builder.addPoint(makePoint({ timestamp: 0 }));
       builder.addPoint(makePoint({ x: 110, timestamp: 8 }));
       builder.addPoint(makePoint({ x: 120, timestamp: 16 }));
@@ -34,7 +34,7 @@ describe("StrokeBuilder", () => {
     });
 
     it("should return smoothed points", () => {
-      const builder = new StrokeBuilder("_default", { smoothing: 0.5 });
+      const builder = new StrokeBuilder("_default", 0, { smoothing: 0.5 });
 
       // Add some jittery points
       const smoothed1 = builder.addPoint(makePoint({ x: 100, y: 200, timestamp: 0 }));
@@ -52,7 +52,7 @@ describe("StrokeBuilder", () => {
     });
 
     it("should provide access to accumulated points", () => {
-      const builder = new StrokeBuilder("_default");
+      const builder = new StrokeBuilder("_default", 0);
       builder.addPoint(makePoint({ timestamp: 0 }));
       builder.addPoint(makePoint({ x: 110, timestamp: 8 }));
 
@@ -64,7 +64,7 @@ describe("StrokeBuilder", () => {
 
   describe("finalize", () => {
     it("should produce a valid Stroke object", () => {
-      const builder = new StrokeBuilder("_default");
+      const builder = new StrokeBuilder("_default", 0);
       builder.addPoint(makePoint({ x: 100, y: 200, timestamp: 0 }));
       builder.addPoint(makePoint({ x: 150, y: 250, timestamp: 8 }));
       builder.addPoint(makePoint({ x: 200, y: 300, timestamp: 16 }));
@@ -87,7 +87,7 @@ describe("StrokeBuilder", () => {
     });
 
     it("should produce decodable pts string", () => {
-      const builder = new StrokeBuilder("_default");
+      const builder = new StrokeBuilder("_default", 0);
       builder.addPoint(makePoint({ x: 100, y: 200, timestamp: 0 }));
       builder.addPoint(makePoint({ x: 150, y: 250, timestamp: 8 }));
 
@@ -100,7 +100,7 @@ describe("StrokeBuilder", () => {
     });
 
     it("should include style overrides when provided", () => {
-      const builder = new StrokeBuilder("_default", {}, { width: 5.0 });
+      const builder = new StrokeBuilder("_default", 0, {}, { width: 5.0 });
       builder.addPoint(makePoint({ timestamp: 0 }));
 
       const stroke = builder.finalize();
@@ -108,7 +108,7 @@ describe("StrokeBuilder", () => {
     });
 
     it("should not include styleOverrides when none provided", () => {
-      const builder = new StrokeBuilder("_default");
+      const builder = new StrokeBuilder("_default", 0);
       builder.addPoint(makePoint({ timestamp: 0 }));
 
       const stroke = builder.finalize();
@@ -118,7 +118,7 @@ describe("StrokeBuilder", () => {
 
   describe("discard", () => {
     it("should clear all accumulated data", () => {
-      const builder = new StrokeBuilder("_default");
+      const builder = new StrokeBuilder("_default", 0);
       builder.addPoint(makePoint({ timestamp: 0 }));
       builder.addPoint(makePoint({ x: 110, timestamp: 8 }));
 

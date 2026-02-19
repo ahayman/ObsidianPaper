@@ -1,7 +1,8 @@
 import { PluginSettingTab, App, Setting } from "obsidian";
 import type { Plugin } from "obsidian";
 import type { PaperSettings, PaperFormat } from "./PaperSettings";
-import type { PenType, PaperType } from "../types";
+import { formatSpacingDisplay, displayToWorldUnits } from "./PaperSettings";
+import type { PenType, PaperType, PageSizePreset, PageOrientation, LayoutDirection, PageUnit, SpacingUnit } from "../types";
 
 const PEN_TYPE_OPTIONS: Record<PenType, string> = {
   ballpoint: "Ballpoint",
@@ -111,33 +112,202 @@ export class PaperSettingsTab extends PluginSettingTab {
         });
       });
 
+    const spacingUnitLabel = this.settings.spacingUnit === "wu" ? "world units"
+      : this.settings.spacingUnit === "in" ? "inches" : "centimeters";
+
+    new Setting(containerEl)
+      .setName("Spacing unit")
+      .setDesc("Unit for grid size and line spacing")
+      .addDropdown((dropdown) => {
+        dropdown.addOption("in", "Inches");
+        dropdown.addOption("cm", "Centimeters");
+        dropdown.addOption("wu", "World units");
+        dropdown.setValue(this.settings.spacingUnit);
+        dropdown.onChange((value: string) => {
+          this.settings.spacingUnit = value as SpacingUnit;
+          this.notifyChange();
+          this.display(); // Refresh to update displayed values
+        });
+      });
+
     new Setting(containerEl)
       .setName("Grid size")
-      .setDesc("Size of grid squares in world units")
+      .setDesc(`Size of grid squares (${spacingUnitLabel})`)
       .addText((text) => {
-        text.setValue(String(this.settings.gridSize));
+        text.setValue(formatSpacingDisplay(this.settings.gridSize, this.settings.spacingUnit));
         text.onChange((value: string) => {
-          const num = parseInt(value);
-          if (!isNaN(num) && num >= 10 && num <= 200) {
-            this.settings.gridSize = num;
-            this.notifyChange();
+          const num = parseFloat(value);
+          if (!isNaN(num) && num > 0) {
+            const wu = Math.round(displayToWorldUnits(num, this.settings.spacingUnit));
+            if (wu >= 5 && wu <= 500) {
+              this.settings.gridSize = wu;
+              this.notifyChange();
+            }
           }
         });
       });
 
     new Setting(containerEl)
       .setName("Line spacing")
-      .setDesc("Spacing between ruled lines in world units")
+      .setDesc(`Spacing between ruled lines (${spacingUnitLabel})`)
       .addText((text) => {
-        text.setValue(String(this.settings.lineSpacing));
+        text.setValue(formatSpacingDisplay(this.settings.lineSpacing, this.settings.spacingUnit));
         text.onChange((value: string) => {
-          const num = parseInt(value);
-          if (!isNaN(num) && num >= 10 && num <= 200) {
-            this.settings.lineSpacing = num;
+          const num = parseFloat(value);
+          if (!isNaN(num) && num > 0) {
+            const wu = Math.round(displayToWorldUnits(num, this.settings.spacingUnit));
+            if (wu >= 5 && wu <= 500) {
+              this.settings.lineSpacing = wu;
+              this.notifyChange();
+            }
+          }
+        });
+      });
+
+    // --- Margins Section ---
+    new Setting(containerEl).setName("Margins").setHeading();
+
+    const marginUnitLabel = spacingUnitLabel;
+
+    new Setting(containerEl)
+      .setName("Top margin")
+      .setDesc(`Space above the first line (${marginUnitLabel})`)
+      .addText((text) => {
+        text.setValue(formatSpacingDisplay(this.settings.marginTop, this.settings.spacingUnit));
+        text.onChange((value: string) => {
+          const num = parseFloat(value);
+          if (!isNaN(num) && num >= 0) {
+            this.settings.marginTop = Math.round(displayToWorldUnits(num, this.settings.spacingUnit));
             this.notifyChange();
           }
         });
       });
+
+    new Setting(containerEl)
+      .setName("Bottom margin")
+      .setDesc(`Space below the last line (${marginUnitLabel})`)
+      .addText((text) => {
+        text.setValue(formatSpacingDisplay(this.settings.marginBottom, this.settings.spacingUnit));
+        text.onChange((value: string) => {
+          const num = parseFloat(value);
+          if (!isNaN(num) && num >= 0) {
+            this.settings.marginBottom = Math.round(displayToWorldUnits(num, this.settings.spacingUnit));
+            this.notifyChange();
+          }
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Side margins")
+      .setDesc(`Space on left and right edges (${marginUnitLabel})`)
+      .addText((text) => {
+        text.setValue(formatSpacingDisplay(this.settings.marginLeft, this.settings.spacingUnit));
+        text.onChange((value: string) => {
+          const num = parseFloat(value);
+          if (!isNaN(num) && num >= 0) {
+            const wu = Math.round(displayToWorldUnits(num, this.settings.spacingUnit));
+            this.settings.marginLeft = wu;
+            this.settings.marginRight = wu;
+            this.notifyChange();
+          }
+        });
+      });
+
+    // --- Page Section ---
+    new Setting(containerEl).setName("Page").setHeading();
+
+    const PAGE_SIZE_OPTIONS: Record<PageSizePreset, string> = {
+      "us-letter": "US Letter",
+      "us-legal": "US Legal",
+      "a4": "A4",
+      "a5": "A5",
+      "a3": "A3",
+      "custom": "Custom",
+    };
+
+    new Setting(containerEl)
+      .setName("Default page size")
+      .setDesc("Page size for new documents")
+      .addDropdown((dropdown) => {
+        for (const [value, display] of Object.entries(PAGE_SIZE_OPTIONS)) {
+          dropdown.addOption(value, display);
+        }
+        dropdown.setValue(this.settings.defaultPageSize);
+        dropdown.onChange((value: string) => {
+          this.settings.defaultPageSize = value as PageSizePreset;
+          this.notifyChange();
+          this.display(); // Refresh to show/hide custom fields
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Default orientation")
+      .setDesc("Page orientation for new documents")
+      .addDropdown((dropdown) => {
+        dropdown.addOption("portrait", "Portrait");
+        dropdown.addOption("landscape", "Landscape");
+        dropdown.setValue(this.settings.defaultOrientation);
+        dropdown.onChange((value: string) => {
+          this.settings.defaultOrientation = value as PageOrientation;
+          this.notifyChange();
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Default layout direction")
+      .setDesc("How pages are arranged in new documents")
+      .addDropdown((dropdown) => {
+        dropdown.addOption("vertical", "Vertical");
+        dropdown.addOption("horizontal", "Horizontal");
+        dropdown.setValue(this.settings.defaultLayoutDirection);
+        dropdown.onChange((value: string) => {
+          this.settings.defaultLayoutDirection = value as LayoutDirection;
+          this.notifyChange();
+        });
+      });
+
+    if (this.settings.defaultPageSize === "custom") {
+      new Setting(containerEl)
+        .setName("Unit")
+        .setDesc("Measurement unit for custom page size")
+        .addDropdown((dropdown) => {
+          dropdown.addOption("in", "Inches");
+          dropdown.addOption("cm", "Centimeters");
+          dropdown.setValue(this.settings.customPageUnit);
+          dropdown.onChange((value: string) => {
+            this.settings.customPageUnit = value as PageUnit;
+            this.notifyChange();
+          });
+        });
+
+      new Setting(containerEl)
+        .setName("Width")
+        .setDesc(`Page width in ${this.settings.customPageUnit === "in" ? "inches" : "centimeters"}`)
+        .addText((text) => {
+          text.setValue(String(this.settings.customPageWidth));
+          text.onChange((value: string) => {
+            const num = parseFloat(value);
+            if (!isNaN(num) && num > 0 && num <= 100) {
+              this.settings.customPageWidth = num;
+              this.notifyChange();
+            }
+          });
+        });
+
+      new Setting(containerEl)
+        .setName("Height")
+        .setDesc(`Page height in ${this.settings.customPageUnit === "in" ? "inches" : "centimeters"}`)
+        .addText((text) => {
+          text.setValue(String(this.settings.customPageHeight));
+          text.onChange((value: string) => {
+            const num = parseFloat(value);
+            if (!isNaN(num) && num > 0 && num <= 100) {
+              this.settings.customPageHeight = num;
+              this.notifyChange();
+            }
+          });
+        });
+    }
 
     // --- Input Section ---
     new Setting(containerEl).setName("Input").setHeading();

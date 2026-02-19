@@ -37,6 +37,7 @@ export interface StrokePoint {
 
 export interface Stroke {
   id: string;
+  pageIndex: number; // Which page this stroke belongs to
   style: string; // Reference to styles map
   styleOverrides?: Partial<PenStyle>; // Per-stroke overrides
   bbox: [number, number, number, number]; // [minX, minY, maxX, maxY]
@@ -49,13 +50,43 @@ export interface Stroke {
 
 export type PaperType = "blank" | "lined" | "grid" | "dot-grid";
 
-export interface CanvasConfig {
-  width: number;
-  height: number;
-  backgroundColor: string;
+export type PageSizePreset = "us-letter" | "us-legal" | "a4" | "a5" | "a3" | "custom";
+export type PageOrientation = "portrait" | "landscape";
+export type LayoutDirection = "vertical" | "horizontal";
+export type PageUnit = "in" | "cm";
+export type SpacingUnit = "in" | "cm" | "wu";
+
+export interface PageSize {
+  width: number;   // World units (portrait dimensions, width < height)
+  height: number;  // World units
+}
+
+export const PAGE_SIZE_PRESETS: Record<Exclude<PageSizePreset, "custom">, PageSize> = {
+  "us-letter": { width: 612, height: 792 },
+  "us-legal": { width: 612, height: 1008 },
+  "a4": { width: 595, height: 842 },
+  "a5": { width: 420, height: 595 },
+  "a3": { width: 842, height: 1191 },
+};
+
+export const PPI = 72;
+export const CM_PER_INCH = 2.54;
+
+export interface PageMargins {
+  top: number;    // World units
+  bottom: number; // World units
+  left: number;   // World units
+  right: number;  // World units
+}
+
+export interface Page {
+  id: string;
+  size: PageSize;
+  orientation: PageOrientation;
   paperType: PaperType;
   lineSpacing: number;
   gridSize: number;
+  margins: PageMargins;
 }
 
 export interface DocumentMeta {
@@ -73,7 +104,8 @@ export interface Viewport {
 export interface PaperDocument {
   version: number;
   meta: DocumentMeta;
-  canvas: CanvasConfig;
+  pages: Page[];
+  layoutDirection: LayoutDirection;
   viewport: Viewport;
   channels: string[];
   styles: Record<string, PenStyle>;
@@ -90,10 +122,25 @@ export interface CameraState {
 
 // --- Serialized Format (compact keys) ---
 
+export interface SerializedPage {
+  id: string;
+  w: number;
+  h: number;
+  o?: string;      // orientation, omit if "portrait"
+  paper?: string;   // paperType, omit if "blank"
+  ls?: number;      // lineSpacing
+  gs?: number;      // gridSize
+  mt?: number;      // marginTop
+  mb?: number;      // marginBottom
+  ml?: number;      // marginLeft
+  mr?: number;      // marginRight
+}
+
 export interface SerializedDocument {
   v: number;
   meta: { created: number; app: string };
-  canvas: { w: number; h: number; bg: string; paper: string; ls?: number; gs?: number };
+  layout?: string;  // "vertical" | "horizontal", omit if "vertical"
+  pages: SerializedPage[];
   viewport: { x: number; y: number; zoom: number };
   channels: string[];
   styles: Record<string, SerializedPenStyle>;
@@ -113,7 +160,8 @@ export interface SerializedPenStyle {
 
 export interface SerializedStroke {
   id: string;
-  st: string; // style reference
+  pg: number;   // pageIndex
+  st: string;   // style reference
   so?: Partial<SerializedPenStyle>; // style overrides
   bb: [number, number, number, number];
   n: number;

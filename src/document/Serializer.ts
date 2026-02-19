@@ -2,11 +2,15 @@ import type {
   PaperDocument,
   PenStyle,
   Stroke,
+  Page,
   SerializedDocument,
   SerializedStroke,
   SerializedPenStyle,
+  SerializedPage,
   PaperType,
   PenType,
+  PageOrientation,
+  LayoutDirection,
 } from "../types";
 import { createEmptyDocument } from "./Document";
 import {
@@ -16,7 +20,7 @@ import {
   COMPRESSION_THRESHOLD,
 } from "./Compression";
 
-const CURRENT_VERSION = 2;
+const CURRENT_VERSION = 3;
 
 /**
  * Cache of compressed pts strings per stroke.
@@ -37,7 +41,7 @@ export function precompressStroke(stroke: Stroke): void {
 
 /**
  * Serialize a PaperDocument to a JSON string for storage.
- * Auto-selects v1 (plain) or v2 (compressed pts) based on data size.
+ * Uses v3 format with pages and optional compression.
  */
 export function serializeDocument(doc: PaperDocument): string {
   const ptsStrings = doc.strokes.map((s) => s.pts);
@@ -45,19 +49,12 @@ export function serializeDocument(doc: PaperDocument): string {
   const useCompression = dataSize >= COMPRESSION_THRESHOLD;
 
   const serialized: SerializedDocument = {
-    v: useCompression ? 2 : 1,
+    v: CURRENT_VERSION,
     meta: {
       created: doc.meta.created,
       app: doc.meta.appVersion,
     },
-    canvas: {
-      w: doc.canvas.width,
-      h: doc.canvas.height,
-      bg: doc.canvas.backgroundColor,
-      paper: doc.canvas.paperType,
-      ls: doc.canvas.lineSpacing,
-      gs: doc.canvas.gridSize,
-    },
+    pages: doc.pages.map((p) => serializePage(p)),
     viewport: {
       x: doc.viewport.x,
       y: doc.viewport.y,
@@ -68,12 +65,17 @@ export function serializeDocument(doc: PaperDocument): string {
     strokes: doc.strokes.map((s) => serializeStroke(s, useCompression)),
   };
 
+  // Omit layout if default (vertical)
+  if (doc.layoutDirection !== "vertical") {
+    serialized.layout = doc.layoutDirection;
+  }
+
   return JSON.stringify(serialized);
 }
 
 /**
  * Deserialize a JSON string to a PaperDocument.
- * Returns a fresh empty document if the data is empty or invalid.
+ * Only handles v3 format. Returns a fresh empty document for older/invalid data.
  */
 export function deserializeDocument(data: string): PaperDocument {
   if (!data || data.trim() === "") {
@@ -87,11 +89,13 @@ export function deserializeDocument(data: string): PaperDocument {
     return createEmptyDocument();
   }
 
-  if (!parsed.v || parsed.v > CURRENT_VERSION) {
+  if (!parsed.v || parsed.v < 3 || parsed.v > CURRENT_VERSION) {
     return createEmptyDocument();
   }
 
-  const isCompressed = parsed.v >= 2;
+  const useCompression = estimateStrokeDataSize(
+    (parsed.strokes ?? []).map((s) => s.pts)
+  ) >= COMPRESSION_THRESHOLD;
 
   return {
     version: parsed.v,
@@ -100,14 +104,8 @@ export function deserializeDocument(data: string): PaperDocument {
       modified: Date.now(),
       appVersion: parsed.meta?.app ?? "0.1.0",
     },
-    canvas: {
-      width: parsed.canvas?.w ?? 2048,
-      height: parsed.canvas?.h ?? 2732,
-      backgroundColor: parsed.canvas?.bg ?? "#fffff8",
-      paperType: (parsed.canvas?.paper as PaperType) ?? "blank",
-      lineSpacing: parsed.canvas?.ls ?? 32,
-      gridSize: parsed.canvas?.gs ?? 40,
-    },
+    pages: (parsed.pages ?? []).map((p) => deserializePage(p)),
+    layoutDirection: (parsed.layout as LayoutDirection) ?? "vertical",
     viewport: {
       x: parsed.viewport?.x ?? 0,
       y: parsed.viewport?.y ?? 0,
@@ -115,7 +113,55 @@ export function deserializeDocument(data: string): PaperDocument {
     },
     channels: parsed.channels ?? ["x", "y", "p", "tx", "ty", "tw", "t"],
     styles: deserializeStyles(parsed.styles ?? {}),
-    strokes: (parsed.strokes ?? []).map((s) => deserializeStroke(s, isCompressed)),
+    strokes: (parsed.strokes ?? []).map((s) => deserializeStroke(s, useCompression)),
+  };
+}
+
+function serializePage(page: Page): SerializedPage {
+  const result: SerializedPage = {
+    id: page.id,
+    w: page.size.width,
+    h: page.size.height,
+  };
+
+  if (page.orientation !== "portrait") {
+    result.o = page.orientation;
+  }
+  if (page.paperType !== "blank") {
+    result.paper = page.paperType;
+  }
+  if (page.lineSpacing !== undefined) {
+    result.ls = page.lineSpacing;
+  }
+  if (page.gridSize !== undefined) {
+    result.gs = page.gridSize;
+  }
+
+  // Margins — only serialize if non-default
+  if (page.margins) {
+    if (page.margins.top !== 72) result.mt = page.margins.top;
+    if (page.margins.bottom !== 36) result.mb = page.margins.bottom;
+    if (page.margins.left !== 36) result.ml = page.margins.left;
+    if (page.margins.right !== 36) result.mr = page.margins.right;
+  }
+
+  return result;
+}
+
+function deserializePage(s: SerializedPage): Page {
+  return {
+    id: s.id,
+    size: { width: s.w, height: s.h },
+    orientation: (s.o as PageOrientation) ?? "portrait",
+    paperType: (s.paper as PaperType) ?? "blank",
+    lineSpacing: s.ls ?? 32,
+    gridSize: s.gs ?? 40,
+    margins: {
+      top: s.mt ?? 72,
+      bottom: s.mb ?? 36,
+      left: s.ml ?? 36,
+      right: s.mr ?? 36,
+    },
   };
 }
 
@@ -174,6 +220,7 @@ function serializeStroke(stroke: Stroke, compress: boolean): SerializedStroke {
 
   const result: SerializedStroke = {
     id: stroke.id,
+    pg: stroke.pageIndex,
     st: stroke.style,
     bb: stroke.bbox,
     n: stroke.pointCount,
@@ -194,6 +241,7 @@ function serializeStroke(stroke: Stroke, compress: boolean): SerializedStroke {
 function deserializeStroke(s: SerializedStroke, compressed: boolean): Stroke {
   const result: Stroke = {
     id: s.id,
+    pageIndex: s.pg ?? 0,
     style: s.st,
     bbox: s.bb,
     pointCount: s.n,

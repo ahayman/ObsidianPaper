@@ -17,6 +17,7 @@ function makeStroke(
   const ys = points.map((p) => p.y);
   return {
     id,
+    pageIndex: 0,
     style,
     bbox: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)],
     pointCount: points.length,
@@ -44,21 +45,20 @@ describe("SvgExporter", () => {
     expect(svg).toContain("viewBox=");
   });
 
-  it("should include background rect with document color", () => {
+  it("should include background rect with desk color", () => {
     const doc = createEmptyDocument();
     const svg = exportToSvg(doc, false);
 
     expect(svg).toContain("<rect");
-    // Default document background is #fffff8
-    expect(svg).toContain('fill="#fffff8"');
+    // Desk background color for light mode
+    expect(svg).toContain('fill="#e8e8e8"');
   });
 
-  it("should use dark fallback when backgroundColor is empty", () => {
+  it("should use dark desk color in dark mode", () => {
     const doc = createEmptyDocument();
-    doc.canvas.backgroundColor = "";
     const svg = exportToSvg(doc, true);
 
-    expect(svg).toContain('fill="#1e1e1e"');
+    expect(svg).toContain('fill="#111111"');
   });
 
   it("should render strokes as path elements", () => {
@@ -77,19 +77,15 @@ describe("SvgExporter", () => {
     expect(svg).toContain('fill="');
   });
 
-  it("should compute viewBox from content bbox", () => {
-    const points1 = [makePoint(100, 100), makePoint(200, 200)];
-    const points2 = [makePoint(300, 300), makePoint(400, 400)];
-    const doc = makeDocWithStrokes([
-      makeStroke("s1", points1),
-      makeStroke("s2", points2),
-    ]);
+  it("should compute viewBox from page layout bounds", () => {
+    const doc = createEmptyDocument();
     const svg = exportToSvg(doc, false);
 
-    // viewBox should encompass both strokes with padding
+    // viewBox should be based on the US Letter page layout with padding
+    // Page is 612x792, centered at x=0 → x: -306..306, y: 0..792
+    // With padding=20: minX=-326, minY=-20, width=652, height=832
     expect(svg).toContain("viewBox=");
-    // minX = 100 - 20 = 80, minY = 100 - 20 = 80
-    expect(svg).toContain("80");
+    expect(svg).toContain("-326");
   });
 
   it("should handle highlighter strokes with opacity and blend mode", () => {
@@ -133,7 +129,6 @@ describe("SvgExporter", () => {
 
   it("should produce valid XML with escaped characters", () => {
     const doc = createEmptyDocument();
-    doc.canvas.backgroundColor = "#ffffff";
     const svg = exportToSvg(doc, false);
 
     // Should not have unescaped special XML chars in attributes

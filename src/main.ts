@@ -2,7 +2,7 @@ import { Notice, Plugin, TFile, TFolder, normalizePath } from "obsidian";
 import { PaperView, VIEW_TYPE_PAPER, PAPER_EXTENSION } from "./view/PaperView";
 import { createEmptyDocument } from "./document/Document";
 import { serializeDocument, deserializeDocument } from "./document/Serializer";
-import { DEFAULT_SETTINGS, mergeSettings } from "./settings/PaperSettings";
+import { DEFAULT_SETTINGS, mergeSettings, resolvePageSize, resolveMargins } from "./settings/PaperSettings";
 import type { PaperSettings } from "./settings/PaperSettings";
 import { PaperSettingsTab } from "./settings/PaperSettingsTab";
 import { createEmbedPostProcessor } from "./embed/EmbedPostProcessor";
@@ -127,12 +127,19 @@ export default class PaperPlugin extends Plugin {
     const baseName = this.generateFileName(folder);
     const path = normalizePath(`${folder.path}/${baseName}.${PAPER_EXTENSION}`);
 
-    const doc = createEmptyDocument(this.manifest.version);
-    // Apply default settings to new document
-    doc.canvas.paperType = this.settings.defaultPaperType;
-    doc.canvas.backgroundColor = this.settings.defaultBackgroundColor;
-    doc.canvas.lineSpacing = this.settings.lineSpacing;
-    doc.canvas.gridSize = this.settings.gridSize;
+    const doc = createEmptyDocument(
+      this.manifest.version,
+      resolvePageSize(this.settings),
+      this.settings.defaultOrientation,
+      this.settings.defaultPaperType,
+      this.settings.defaultLayoutDirection,
+      resolveMargins(this.settings),
+    );
+    // Apply settings to first page
+    if (doc.pages.length > 0) {
+      doc.pages[0].lineSpacing = this.settings.lineSpacing;
+      doc.pages[0].gridSize = this.settings.gridSize;
+    }
     const content = serializeDocument(doc);
 
     try {

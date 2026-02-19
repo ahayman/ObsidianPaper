@@ -1,38 +1,14 @@
-import type { PaperDocument, PenStyle, Stroke } from "../types";
+import type { PenStyle, Stroke } from "../types";
 import { decodePoints } from "../document/PointEncoder";
 import { generateStrokePath } from "../stroke/OutlineGenerator";
 import { resolveColor } from "../color/ColorPalette";
 import { getPenConfig } from "../stroke/PenConfigs";
 import { deserializeDocument } from "../document/Serializer";
-
-/**
- * Compute the bounding box of all strokes in a document.
- * Returns [minX, minY, maxX, maxY] or null if no strokes.
- */
-function computeDocBBox(
-  doc: PaperDocument
-): [number, number, number, number] | null {
-  if (doc.strokes.length === 0) return null;
-
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-
-  for (const stroke of doc.strokes) {
-    const [sMinX, sMinY, sMaxX, sMaxY] = stroke.bbox;
-    if (sMinX < minX) minX = sMinX;
-    if (sMinY < minY) minY = sMinY;
-    if (sMaxX > maxX) maxX = sMaxX;
-    if (sMaxY > maxY) maxY = sMaxY;
-  }
-
-  return [minX, minY, maxX, maxY];
-}
+import { computePageLayout, getDocumentBounds } from "../document/PageLayout";
 
 /**
  * Render a static preview of a PaperDocument onto a canvas.
- * Fits all strokes into the canvas with padding.
+ * Renders pages with desk background, page backgrounds, and clipped strokes.
  */
 export function renderEmbed(
   canvas: HTMLCanvasElement,
@@ -41,23 +17,23 @@ export function renderEmbed(
   maxWidth: number
 ): void {
   const doc = deserializeDocument(data);
+  const pageLayout = computePageLayout(doc.pages, doc.layoutDirection);
 
-  const bbox = computeDocBBox(doc);
-  if (!bbox) {
-    // No strokes — render empty background
+  if (pageLayout.length === 0) {
+    // No pages — render empty background
     canvas.width = maxWidth;
     canvas.height = Math.round(maxWidth * 0.5);
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    ctx.fillStyle = isDarkMode ? "#1e1e1e" : "#fffff8";
+    ctx.fillStyle = isDarkMode ? "#111111" : "#e8e8e8";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     return;
   }
 
+  const bounds = getDocumentBounds(pageLayout);
   const padding = 20;
-  const [minX, minY, maxX, maxY] = bbox;
-  const contentWidth = maxX - minX + padding * 2;
-  const contentHeight = maxY - minY + padding * 2;
+  const contentWidth = (bounds.maxX - bounds.minX) + padding * 2;
+  const contentHeight = (bounds.maxY - bounds.minY) + padding * 2;
 
   // Scale to fit within maxWidth while preserving aspect ratio
   const scale = Math.min(1, maxWidth / contentWidth);
@@ -72,17 +48,35 @@ export function renderEmbed(
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
-  // Background
-  ctx.fillStyle = isDarkMode ? "#1e1e1e" : "#fffff8";
+  // Desk background
+  ctx.fillStyle = isDarkMode ? "#111111" : "#e8e8e8";
   ctx.fillRect(0, 0, displayWidth, displayHeight);
 
   // Apply transform to center content
   ctx.scale(scale, scale);
-  ctx.translate(-minX + padding, -minY + padding);
+  ctx.translate(-bounds.minX + padding, -bounds.minY + padding);
 
-  // Render all strokes
-  for (const stroke of doc.strokes) {
-    renderStroke(ctx, stroke, doc.styles, isDarkMode);
+  const paperBg = isDarkMode ? "#1e1e1e" : "#fffff8";
+
+  // Render pages and strokes
+  for (const pageRect of pageLayout) {
+    // Page background
+    ctx.fillStyle = paperBg;
+    ctx.fillRect(pageRect.x, pageRect.y, pageRect.width, pageRect.height);
+
+    // Clip strokes to page
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(pageRect.x, pageRect.y, pageRect.width, pageRect.height);
+    ctx.clip();
+
+    for (const stroke of doc.strokes) {
+      if (stroke.pageIndex === pageRect.pageIndex) {
+        renderStroke(ctx, stroke, doc.styles, isDarkMode);
+      }
+    }
+
+    ctx.restore();
   }
 }
 
@@ -136,17 +130,23 @@ function resolveStyle(
 }
 
 /**
- * Compute the aspect ratio (width/height) of a paper document based on its content.
+ * Compute the aspect ratio (width/height) of a paper document based on its page layout.
  */
 export function getDocumentAspectRatio(data: string): number {
   const doc = deserializeDocument(data);
-  const bbox = computeDocBBox(doc);
-  if (!bbox) {
-    return doc.canvas.width / doc.canvas.height;
+  const pageLayout = computePageLayout(doc.pages, doc.layoutDirection);
+
+  if (pageLayout.length === 0) {
+    // Fallback: first page dimensions or default
+    if (doc.pages.length > 0) {
+      return doc.pages[0].size.width / doc.pages[0].size.height;
+    }
+    return 612 / 792; // US Letter
   }
-  const [minX, minY, maxX, maxY] = bbox;
-  const w = maxX - minX;
-  const h = maxY - minY;
+
+  const bounds = getDocumentBounds(pageLayout);
+  const w = bounds.maxX - bounds.minX;
+  const h = bounds.maxY - bounds.minY;
   if (h <= 0) return 2;
   return w / h;
 }

@@ -1,12 +1,12 @@
 import { TextFileView, WorkspaceLeaf, Platform } from "obsidian";
-import type { PaperDocument, PenStyle, PenType, Stroke, StrokePoint } from "../types";
+import type { PaperDocument, PenStyle, PenType, Stroke, StrokePoint, Page, PageSize } from "../types";
 import { Camera } from "../canvas/Camera";
 import { Renderer } from "../canvas/Renderer";
 import { InputManager } from "../input/InputManager";
 import type { InputCallbacks } from "../input/InputManager";
 import { StrokeBuilder } from "../stroke/StrokeBuilder";
 import { UndoManager } from "../document/UndoManager";
-import { createEmptyDocument } from "../document/Document";
+import { createEmptyDocument, generatePageId } from "../document/Document";
 import { serializeDocument, deserializeDocument, precompressStroke } from "../document/Serializer";
 import { getPenConfig } from "../stroke/PenConfigs";
 import { findHitStrokes } from "../eraser/StrokeEraser";
@@ -14,9 +14,11 @@ import { ThemeDetector } from "../color/ThemeDetector";
 import { ToolPalette } from "./ToolPalette";
 import type { ActiveTool, ToolPaletteCallbacks } from "./ToolPalette";
 import type { PaperSettings } from "../settings/PaperSettings";
-import { DEFAULT_SETTINGS } from "../settings/PaperSettings";
+import { DEFAULT_SETTINGS, resolvePageSize, resolveMargins } from "../settings/PaperSettings";
 import { HoverCursor } from "../input/HoverCursor";
 import { SpatialIndex } from "../spatial/SpatialIndex";
+import { computePageLayout, findPageAtPoint, getDocumentBounds } from "../document/PageLayout";
+import type { PageRect } from "../document/PageLayout";
 
 export const VIEW_TYPE_PAPER = "paper-view";
 export const PAPER_EXTENSION = "paper";
@@ -39,6 +41,10 @@ export class PaperView extends TextFileView {
   private settings: PaperSettings = DEFAULT_SETTINGS;
   private staticRafId: number | null = null;
   private precompressTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  // Page layout
+  private pageLayout: PageRect[] = [];
+  private activeStrokePageIndex = -1;
 
   // Active tool state
   private activeTool: ActiveTool = "pen";
@@ -82,11 +88,6 @@ export class PaperView extends TextFileView {
     // Create multi-layer renderer
     this.renderer = new Renderer(container, this.camera, Platform.isMobile);
     this.renderer.isDarkMode = this.themeDetector.isDarkMode;
-    this.renderer.setBackgroundConfig({
-      paperType: this.document.canvas.paperType,
-      lineSpacing: this.document.canvas.lineSpacing,
-      gridSize: this.document.canvas.gridSize,
-    });
 
     // Initial resize
     const rect = container.getBoundingClientRect();
@@ -157,30 +158,27 @@ export class PaperView extends TextFileView {
   }
 
   setViewData(data: string, clear: boolean): void {
-    // Flush pending stroke finalizations to the current document before replacing it
     this.renderer?.flushFinalizations();
-    // Always deserialize the file data. The `clear` flag means this is a
-    // fresh file load (vs an in-place update), so we reset undo history.
     this.document = deserializeDocument(data);
-
-    // Restore viewport
-    this.camera.setState({
-      x: this.document.viewport.x,
-      y: this.document.viewport.y,
-      zoom: this.document.viewport.zoom,
-    });
 
     if (clear) {
       this.undoManager.clear();
     }
     this.spatialIndex.buildFromStrokes(this.document.strokes);
-    this.renderer?.setBackgroundConfig({
-      paperType: this.document.canvas.paperType,
-      lineSpacing: this.document.canvas.lineSpacing,
-      gridSize: this.document.canvas.gridSize,
-    });
+    this.recomputeLayout();
+
+    // Determine if we should center on first page (new/default viewport)
+    const vp = this.document.viewport;
+    const isDefaultViewport = vp.x === 0 && vp.y === 0 && vp.zoom === 1.0;
+
+    if (isDefaultViewport && this.pageLayout.length > 0) {
+      this.centerOnFirstPage();
+    } else {
+      this.camera.setState({ x: vp.x, y: vp.y, zoom: vp.zoom });
+    }
+
     this.renderer?.invalidateCache();
-    this.renderer?.renderStaticLayer(this.document, this.spatialIndex);
+    this.renderer?.renderStaticLayer(this.document, this.pageLayout, this.spatialIndex);
     this.precompressLoadedStrokes();
   }
 
@@ -191,8 +189,9 @@ export class PaperView extends TextFileView {
     this.camera = new Camera();
     this.undoManager.clear();
     this.spatialIndex.clear();
+    this.recomputeLayout();
     this.renderer?.invalidateCache();
-    this.renderer?.renderStaticLayer(this.document, this.spatialIndex);
+    this.renderer?.renderStaticLayer(this.document, this.pageLayout, this.spatialIndex);
   }
 
   setSettings(settings: PaperSettings): void {
@@ -251,7 +250,7 @@ export class PaperView extends TextFileView {
       }
     }
 
-    this.renderer?.renderStaticLayer(this.document, this.spatialIndex);
+    this.renderer?.renderStaticLayer(this.document, this.pageLayout, this.spatialIndex);
     this.requestSave();
   }
 
@@ -292,31 +291,151 @@ export class PaperView extends TextFileView {
       }
     }
 
-    this.renderer?.renderStaticLayer(this.document, this.spatialIndex);
+    this.renderer?.renderStaticLayer(this.document, this.pageLayout, this.spatialIndex);
     this.requestSave();
   }
 
   /**
+   * Add a new page to the document.
+   */
+  addPage(size?: PageSize, orientation?: Page["orientation"], paperType?: Page["paperType"]): void {
+    const page: Page = {
+      id: generatePageId(),
+      size: size ?? resolvePageSize(this.settings),
+      orientation: orientation ?? this.settings.defaultOrientation,
+      paperType: paperType ?? this.settings.defaultPaperType,
+      lineSpacing: this.settings.lineSpacing,
+      gridSize: this.settings.gridSize,
+      margins: resolveMargins(this.settings),
+    };
+    this.document.pages.push(page);
+    this.recomputeLayout();
+    this.requestStaticRender();
+    this.requestSave();
+  }
+
+  /**
+   * Get the current page layout.
+   */
+  getPageLayout(): readonly PageRect[] {
+    return this.pageLayout;
+  }
+
+  /**
+   * Get the current document.
+   */
+  getDocument(): PaperDocument {
+    return this.document;
+  }
+
+  /**
+   * Scroll viewport to center on a specific page.
+   */
+  scrollToPage(pageIndex: number): void {
+    if (pageIndex < 0 || pageIndex >= this.pageLayout.length) return;
+    const rect = this.pageLayout[pageIndex];
+    const container = this.contentEl.getBoundingClientRect();
+    const centerX = rect.x + rect.width / 2;
+    const centerY = rect.y + rect.height / 2;
+    this.camera.x = centerX - container.width / (2 * this.camera.zoom);
+    this.camera.y = centerY - container.height / (2 * this.camera.zoom);
+    this.camera.clampPan(container.width, container.height);
+    this.requestStaticRender();
+    this.requestSave();
+  }
+
+  /**
+   * Set the layout direction and recompute.
+   */
+  setLayoutDirection(direction: PaperDocument["layoutDirection"]): void {
+    this.document.layoutDirection = direction;
+    this.recomputeLayout();
+    this.requestStaticRender();
+    this.requestSave();
+  }
+
+  // ─── Page Layout ───────────────────────────────────────────────
+
+  /**
+   * Center the viewport on the first page, fitting it to the screen width.
+   */
+  private centerOnFirstPage(): void {
+    const rect = this.pageLayout[0];
+    const container = this.contentEl.getBoundingClientRect();
+    if (container.width === 0 || container.height === 0) return;
+
+    // Fit page width to container with some padding
+    const horizontalPadding = 40; // 20px on each side in screen coords
+    const fitZoom = (container.width - horizontalPadding) / rect.width;
+    const zoom = Camera.clampZoom(fitZoom);
+
+    // Center horizontally on page
+    const pageCenterX = rect.x + rect.width / 2;
+    const x = pageCenterX - container.width / (2 * zoom);
+
+    // Position so top of page is near top of screen with a small offset
+    const topPadding = 20 / zoom; // 20px screen offset
+    const y = rect.y - topPadding;
+
+    this.camera.setState({ x, y, zoom });
+    this.camera.clampPan(container.width, container.height);
+  }
+
+  private recomputeLayout(): void {
+    this.pageLayout = computePageLayout(this.document.pages, this.document.layoutDirection);
+    const bounds = getDocumentBounds(this.pageLayout);
+    this.camera.setDocumentBounds(bounds);
+    this.updateZoomLimits();
+  }
+
+  private updateZoomLimits(): void {
+    const container = this.contentEl.getBoundingClientRect();
+    if (container.width === 0 || container.height === 0) return;
+    if (this.pageLayout.length === 0) return;
+
+    const isVertical = this.document.layoutDirection === "vertical";
+    const screenSize = isVertical ? container.width : container.height;
+
+    let largestPageSize = 0;
+    let smallestPageSize = Infinity;
+    for (const rect of this.pageLayout) {
+      const pageSize = isVertical ? rect.width : rect.height;
+      largestPageSize = Math.max(largestPageSize, pageSize);
+      smallestPageSize = Math.min(smallestPageSize, pageSize);
+    }
+
+    if (largestPageSize === 0 || smallestPageSize === 0) return;
+
+    const minZoom = screenSize / (3 * largestPageSize);
+    const maxZoom = (3 * screenSize) / smallestPageSize;
+
+    this.camera.setZoomLimits(
+      Math.max(0.05, minZoom),
+      Math.min(10, maxZoom)
+    );
+  }
+
+  // ─── Rendering ──────────────────────────────────────────────────
+
+  /**
    * Coalesce multiple static layer render requests into a single RAF frame.
-   * Prevents 30-60 full redraws per second during pinch/pan gestures.
    */
   private requestStaticRender(): void {
     if (this.staticRafId !== null) return;
     this.staticRafId = requestAnimationFrame(() => {
       this.staticRafId = null;
-      this.renderer?.renderStaticLayer(this.document, this.spatialIndex);
+      this.renderer?.renderStaticLayer(this.document, this.pageLayout, this.spatialIndex);
     });
   }
 
   private handleResize(width: number, height: number): void {
     this.renderer?.resize(width, height);
-    this.renderer?.renderStaticLayer(this.document, this.spatialIndex);
+    this.updateZoomLimits();
+    this.renderer?.renderStaticLayer(this.document, this.pageLayout, this.spatialIndex);
   }
 
-  /**
-   * Pre-compress all loaded strokes in background batches.
-   * Yields to the event loop between batches so drawing is never blocked.
-   */
+  // ─── Precompression ─────────────────────────────────────────────
+
   private precompressLoadedStrokes(): void {
     this.cancelPrecompression();
     const strokes = this.document.strokes;
@@ -343,6 +462,8 @@ export class PaperView extends TextFileView {
     }
   }
 
+  // ─── Style Helpers ──────────────────────────────────────────────
+
   private getCurrentStyle(): PenStyle {
     const penConfig = getPenConfig(this.currentPenType);
     return {
@@ -357,10 +478,10 @@ export class PaperView extends TextFileView {
   }
 
   private getCurrentStyleName(): string {
-    // Check if the current settings match a named style in the document
-    // If not, use "_default" and apply overrides
     return "_default";
   }
+
+  // ─── Tool Palette ───────────────────────────────────────────────
 
   private createToolPaletteCallbacks(): ToolPaletteCallbacks {
     return {
@@ -369,7 +490,6 @@ export class PaperView extends TextFileView {
       },
       onPenTypeChange: (penType: PenType) => {
         this.currentPenType = penType;
-        // Update width to pen type default
         const config = getPenConfig(penType);
         this.currentWidth = config.baseWidth;
         this.toolPalette?.setWidth(config.baseWidth);
@@ -383,6 +503,15 @@ export class PaperView extends TextFileView {
     };
   }
 
+  // ─── Input Callbacks ────────────────────────────────────────────
+
+  private getActivePageRect(): PageRect | undefined {
+    if (this.activeStrokePageIndex < 0 || this.activeStrokePageIndex >= this.pageLayout.length) {
+      return undefined;
+    }
+    return this.pageLayout[this.activeStrokePageIndex];
+  }
+
   private createInputCallbacks(): InputCallbacks {
     return {
       onStrokeStart: (point: StrokePoint) => {
@@ -390,12 +519,23 @@ export class PaperView extends TextFileView {
         if (this.activeTool === "eraser") return;
 
         const world = this.camera.screenToWorld(point.x, point.y);
+        const pageIndex = findPageAtPoint(world.x, world.y, this.pageLayout);
+
+        if (pageIndex === -1) {
+          // Outside all pages — treat as pan gesture
+          this.activeStrokePageIndex = -1;
+          this.inputManager?.switchToPan(point);
+          return;
+        }
+
+        this.activeStrokePageIndex = pageIndex;
         const style = this.getCurrentStyle();
         const styleName = this.getCurrentStyleName();
         const baseStyle = this.document.styles[styleName];
         const overrides = baseStyle ? computeStyleOverrides(baseStyle, style) : undefined;
         this.strokeBuilder = new StrokeBuilder(
           styleName,
+          pageIndex,
           { smoothing: style.smoothing },
           overrides,
         );
@@ -412,6 +552,7 @@ export class PaperView extends TextFileView {
 
         if (!this.strokeBuilder) return;
         const style = this.getCurrentStyle();
+        const pageRect = this.getActivePageRect();
 
         for (const point of points) {
           const world = this.camera.screenToWorld(point.x, point.y);
@@ -420,7 +561,8 @@ export class PaperView extends TextFileView {
 
         this.renderer?.renderActiveStroke(
           this.strokeBuilder.getPoints(),
-          style
+          style,
+          pageRect
         );
 
         // Render prediction
@@ -432,7 +574,8 @@ export class PaperView extends TextFileView {
           this.renderer?.renderPrediction(
             this.strokeBuilder.getPoints(),
             predictedWorld,
-            style
+            style,
+            pageRect
           );
         }
       },
@@ -444,51 +587,42 @@ export class PaperView extends TextFileView {
         this.strokeBuilder.addPoint({ ...point, x: world.x, y: world.y });
 
         if (this.strokeBuilder.pointCount >= 2) {
-          // Capture references for the deferred finalization closure
           const builder = this.strokeBuilder;
           const style = this.getCurrentStyle();
           const styleName = this.getCurrentStyleName();
           const docStyles = this.document.styles;
+          const pageRect = this.getActivePageRect();
 
-          // Ensure the stroke's style exists in the document
           if (!docStyles[styleName]) {
             docStyles[styleName] = style;
           }
 
-          // Defer ALL heavy work to the next RAF frame.
-          // This keeps the event loop free for the next pointerdown.
           this.renderer?.scheduleFinalization(() => {
             const stroke = builder.finalize();
 
-            // Push to document
             this.document.strokes.push(stroke);
             this.spatialIndex.insert(stroke, this.document.strokes.length - 1);
             this.undoManager.pushAddStroke(stroke);
 
-            // Bake to static canvas (also deferred to same RAF)
-            this.renderer?.bakeStroke(stroke, this.document.styles);
+            this.renderer?.bakeStroke(stroke, this.document.styles, pageRect);
 
-            // Pre-compress for fast saves
             precompressStroke(stroke);
-
-            // Clear active layer now that stroke is baked to static
             this.renderer?.clearActiveLayer();
-
             this.requestSave();
           });
         } else {
           this.renderer?.clearActiveLayer();
         }
 
-        // Clear prediction layer immediately, leave active layer visible
-        // until the deferred bake paints the stroke to static
         this.renderer?.clearPredictionLayer();
         this.strokeBuilder = null;
+        this.activeStrokePageIndex = -1;
       },
 
       onStrokeCancel: () => {
         this.strokeBuilder?.discard();
         this.strokeBuilder = null;
+        this.activeStrokePageIndex = -1;
         this.renderer?.clearActiveLayer();
       },
 
@@ -496,6 +630,8 @@ export class PaperView extends TextFileView {
 
       onPanMove: (dx: number, dy: number) => {
         this.camera.pan(dx, dy);
+        const rect = this.contentEl.getBoundingClientRect();
+        this.camera.clampPan(rect.width, rect.height);
         this.requestStaticRender();
       },
 
@@ -509,6 +645,8 @@ export class PaperView extends TextFileView {
         }
         const newZoom = this.pinchBaseZoom * scale;
         this.camera.zoomAt(centerX, centerY, newZoom);
+        const rect = this.contentEl.getBoundingClientRect();
+        this.camera.clampPan(rect.width, rect.height);
         this.requestStaticRender();
       },
 
@@ -555,7 +693,6 @@ export class PaperView extends TextFileView {
 
     if (hitIndices.length === 0) return;
 
-    // Remove strokes in reverse order to preserve indices
     const removedEntries: { stroke: Stroke; index: number }[] = [];
     const sortedDesc = [...hitIndices].sort((a, b) => b - a);
 

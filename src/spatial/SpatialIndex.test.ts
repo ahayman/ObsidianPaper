@@ -7,6 +7,7 @@ function makeStroke(
 ): Stroke {
   return {
     id,
+    pageIndex: 0,
     style: "_default",
     bbox,
     pointCount: 2,

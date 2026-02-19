@@ -1,5 +1,6 @@
 import type { Stroke, PenStyle, StrokePoint, PaperDocument } from "../types";
 import type { SpatialIndex } from "../spatial/SpatialIndex";
+import type { PageRect } from "../document/PageLayout";
 import { Camera } from "./Camera";
 import { setupHighDPICanvas, resizeHighDPICanvas } from "./HighDPI";
 import { decodePoints } from "../document/PointEncoder";
@@ -41,16 +42,13 @@ export class Renderer {
   private cssHeight = 0;
   isDarkMode = false;
   private bgConfig: BackgroundConfig = {
-    paperType: "blank",
     isDarkMode: false,
-    lineSpacing: 32,
-    gridSize: 40,
   };
 
   // RAF batching
   private rafId: number | null = null;
   private pendingActiveRender: (() => void) | null = null;
-  private pendingBakes: { stroke: Stroke; styles: Record<string, PenStyle> }[] = [];
+  private pendingBakes: { stroke: Stroke; styles: Record<string, PenStyle>; pageRect?: PageRect }[] = [];
   private pendingFinalizations: (() => void)[] = [];
 
   constructor(container: HTMLElement, camera: Camera, isMobile: boolean) {
@@ -127,7 +125,7 @@ export class Renderer {
     this.bgConfig = { ...this.bgConfig, ...config };
   }
 
-  renderStaticLayer(doc: PaperDocument, spatialIndex?: SpatialIndex): void {
+  renderStaticLayer(doc: PaperDocument, pageLayout: PageRect[], spatialIndex?: SpatialIndex): void {
     this.flushFinalizations();
     this.pendingBakes = [];
     const ctx = this.staticCtx;
@@ -135,7 +133,7 @@ export class Renderer {
 
     // Render background on dedicated layer
     this.bgConfig.isDarkMode = this.isDarkMode;
-    this.backgroundRenderer.render(this.bgConfig);
+    this.backgroundRenderer.render(this.bgConfig, pageLayout, doc.pages);
 
     // Apply camera
     this.camera.applyToContext(ctx);
@@ -146,23 +144,46 @@ export class Renderer {
     // Render visible strokes with viewport culling
     const visibleRect = this.camera.getVisibleRect(this.cssWidth, this.cssHeight);
 
+    // Determine visible stroke IDs
+    let visibleIds: Set<string> | null = null;
     if (spatialIndex) {
-      // O(log n) spatial query
-      const visibleIds = new Set(spatialIndex.queryRect(
+      visibleIds = new Set(spatialIndex.queryRect(
         visibleRect[0], visibleRect[1], visibleRect[2], visibleRect[3]
       ));
+    }
+
+    // Render strokes grouped by page, with per-page clipping
+    for (const pageRect of pageLayout) {
+      // Cull pages not in viewport
+      if (
+        pageRect.x + pageRect.width < visibleRect[0] ||
+        pageRect.x > visibleRect[2] ||
+        pageRect.y + pageRect.height < visibleRect[1] ||
+        pageRect.y > visibleRect[3]
+      ) {
+        continue;
+      }
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(pageRect.x, pageRect.y, pageRect.width, pageRect.height);
+      ctx.clip();
+
       for (const stroke of doc.strokes) {
-        if (visibleIds.has(stroke.id)) {
-          this.renderStrokeToContext(ctx, stroke, doc.styles, lod);
+        if (stroke.pageIndex !== pageRect.pageIndex) continue;
+
+        if (visibleIds) {
+          if (visibleIds.has(stroke.id)) {
+            this.renderStrokeToContext(ctx, stroke, doc.styles, lod);
+          }
+        } else {
+          if (bboxOverlaps(stroke.bbox, visibleRect)) {
+            this.renderStrokeToContext(ctx, stroke, doc.styles, lod);
+          }
         }
       }
-    } else {
-      // Linear scan fallback
-      for (const stroke of doc.strokes) {
-        if (bboxOverlaps(stroke.bbox, visibleRect)) {
-          this.renderStrokeToContext(ctx, stroke, doc.styles, lod);
-        }
-      }
+
+      ctx.restore();
     }
 
     this.camera.resetContext(ctx);
@@ -171,8 +192,9 @@ export class Renderer {
   /**
    * Incrementally bake a single new stroke onto the static canvas.
    * O(1) — doesn't re-render all strokes.
+   * Clips to the page rect if provided.
    */
-  bakeStroke(stroke: Stroke, styles: Record<string, PenStyle>): void {
+  bakeStroke(stroke: Stroke, styles: Record<string, PenStyle>, pageRect?: PageRect): void {
     const ctx = this.staticCtx;
 
     // Apply DPR + camera transform
@@ -180,7 +202,18 @@ export class Renderer {
     ctx.scale(this.dpr, this.dpr);
     this.camera.applyToContext(ctx);
 
+    if (pageRect) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(pageRect.x, pageRect.y, pageRect.width, pageRect.height);
+      ctx.clip();
+    }
+
     this.renderStrokeToContext(ctx, stroke, styles);
+
+    if (pageRect) {
+      ctx.restore();
+    }
 
     this.camera.resetContext(ctx);
   }
@@ -225,8 +258,8 @@ export class Renderer {
    * Schedule a stroke bake for the next RAF frame.
    * Non-blocking — returns immediately so the event loop stays free for the next pointerdown.
    */
-  scheduleBake(stroke: Stroke, styles: Record<string, PenStyle>): void {
-    this.pendingBakes.push({ stroke, styles });
+  scheduleBake(stroke: Stroke, styles: Record<string, PenStyle>, pageRect?: PageRect): void {
+    this.pendingBakes.push({ stroke, styles, pageRect });
     this.scheduleFrame();
   }
 
@@ -265,16 +298,25 @@ export class Renderer {
   /**
    * Render the active stroke (currently being drawn).
    * Batched via requestAnimationFrame.
+   * Clips to page rect if provided.
    */
   renderActiveStroke(
     points: readonly StrokePoint[],
-    style: PenStyle
+    style: PenStyle,
+    pageRect?: PageRect
   ): void {
     this.pendingActiveRender = () => {
       this.clearCanvas(this.activeCtx);
       this.activeCtx.setTransform(1, 0, 0, 1, 0, 0);
       this.activeCtx.scale(this.dpr, this.dpr);
       this.camera.applyToContext(this.activeCtx);
+
+      if (pageRect) {
+        this.activeCtx.save();
+        this.activeCtx.beginPath();
+        this.activeCtx.rect(pageRect.x, pageRect.y, pageRect.width, pageRect.height);
+        this.activeCtx.clip();
+      }
 
       const path = generateStrokePath(points, style);
       if (path) {
@@ -296,6 +338,10 @@ export class Renderer {
         }
       }
 
+      if (pageRect) {
+        this.activeCtx.restore();
+      }
+
       this.camera.resetContext(this.activeCtx);
     };
 
@@ -304,11 +350,13 @@ export class Renderer {
 
   /**
    * Render predicted stroke extension.
+   * Clips to page rect if provided.
    */
   renderPrediction(
     allPoints: readonly StrokePoint[],
     predictedPoints: readonly StrokePoint[],
-    style: PenStyle
+    style: PenStyle,
+    pageRect?: PageRect
   ): void {
     this.clearCanvas(this.predictionCtx);
 
@@ -325,6 +373,13 @@ export class Renderer {
     this.predictionCtx.scale(this.dpr, this.dpr);
     this.camera.applyToContext(this.predictionCtx);
 
+    if (pageRect) {
+      this.predictionCtx.save();
+      this.predictionCtx.beginPath();
+      this.predictionCtx.rect(pageRect.x, pageRect.y, pageRect.width, pageRect.height);
+      this.predictionCtx.clip();
+    }
+
     const path = generateStrokePath(combined, style);
     if (path) {
       const color = resolveColor(style.color, this.isDarkMode);
@@ -332,6 +387,10 @@ export class Renderer {
       this.predictionCtx.globalAlpha = style.opacity * 0.5; // Predictions are semi-transparent
       this.predictionCtx.fill(path);
       this.predictionCtx.globalAlpha = 1;
+    }
+
+    if (pageRect) {
+      this.predictionCtx.restore();
     }
 
     this.camera.resetContext(this.predictionCtx);
@@ -453,8 +512,8 @@ export class Renderer {
       }
       // 2. Standalone bakes (from scheduleBake calls)
       if (this.pendingBakes.length > 0) {
-        for (const { stroke, styles } of this.pendingBakes) {
-          this.bakeStroke(stroke, styles);
+        for (const { stroke, styles, pageRect } of this.pendingBakes) {
+          this.bakeStroke(stroke, styles, pageRect);
         }
         this.pendingBakes = [];
       }
