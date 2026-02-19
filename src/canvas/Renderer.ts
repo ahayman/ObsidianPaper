@@ -482,8 +482,8 @@ export class Renderer {
       ctx.globalAlpha = 1;
     }
 
-    // Fountain pen ink pooling (skip at high LOD for performance)
-    if (style.pen === "fountain" && lod === 0) {
+    // Fountain pen ink pooling (skip at high LOD and for italic nib strokes)
+    if (style.pen === "fountain" && lod === 0 && style.nibAngle == null) {
       const points = decodedPoints ?? decodePoints(stroke.pts);
       const pools = detectInkPools(points, style.width);
       if (pools.length > 0) {

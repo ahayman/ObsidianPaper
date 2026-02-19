@@ -44,6 +44,8 @@ describe("HoverCursor", () => {
     isDarkMode: false,
     isEraser: false,
     zoom: 1,
+    nibThickness: null,
+    nibAngle: null,
   };
 
   beforeEach(() => {

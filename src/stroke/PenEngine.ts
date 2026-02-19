@@ -45,11 +45,10 @@ export function computePointAttributes(
     opacity *= 1 - tiltInfluence * 0.6;
   }
 
-  // 6. Fountain pen: angle-dependent width
+  // 6. Fountain pen: angle-dependent width (flat nib cross-product)
   if (config.nibAngle !== null && config.nibThickness !== null) {
-    const strokeAngle = prevPoint
-      ? Math.atan2(point.y - prevPoint.y, point.x - prevPoint.x)
-      : 0;
+    const dx = prevPoint ? point.x - prevPoint.x : 0;
+    const dy = prevPoint ? point.y - prevPoint.y : 0;
 
     // Use barrel rotation (twist) as dynamic nib angle when available
     const effectiveNibAngle =
@@ -61,7 +60,7 @@ export function computePointAttributes(
       config.baseWidth,
       config.nibThickness,
       effectiveNibAngle,
-      strokeAngle,
+      dx, dy,
       effectivePressure
     );
   }
@@ -91,28 +90,42 @@ function computeTiltFactor(tiltX: number, tiltY: number): number {
 }
 
 /**
- * Compute fountain pen width based on stroke direction relative to nib angle.
- * Uses the projected nib ellipse onto the perpendicular of the stroke direction.
+ * Compute fountain pen width using flat nib (cross-product) projection.
+ * For a rectangular italic nib, the projected width depends on the angle
+ * between the stroke direction and the nib edge.
  *
- * Formula: width = sqrt((W*sin(delta))^2 + (T*cos(delta))^2)
- * where W = major axis, T = minor axis (thickness), delta = angle difference
+ * Uses 2D cross product to avoid atan2+sin per point:
+ *   |sin(Δ)| = |nx*sy - ny*sx|   (nib × stroke unit vectors)
+ *   width = W * |sin(Δ)| + H * (1 - |sin(Δ)|)
  */
 function computeFountainWidth(
   baseWidth: number,
   nibThickness: number,
   nibAngle: number,
-  strokeAngle: number,
+  strokeDx: number,
+  strokeDy: number,
   pressure: number
 ): number {
-  const delta = strokeAngle - nibAngle;
-  const W = baseWidth;
-  const T = baseWidth * nibThickness;
+  const len = Math.hypot(strokeDx, strokeDy);
+  if (len < 0.001) return baseWidth * nibThickness * lerp(0.5, 1.0, pressure);
 
-  const sinD = Math.sin(delta);
-  const cosD = Math.cos(delta);
+  const sx = strokeDx / len;
+  const sy = strokeDy / len;
 
-  const width = Math.sqrt(W * sinD * (W * sinD) + T * cosD * (T * cosD));
-  return width * lerp(0.5, 1.0, pressure);
+  // Nib unit vector
+  const nx = Math.cos(nibAngle);
+  const ny = Math.sin(nibAngle);
+
+  // |sin(nibAngle - strokeAngle)| via 2D cross product
+  const crossMag = Math.abs(nx * sy - ny * sx);
+
+  const W = baseWidth;                    // major axis (nib edge width)
+  const H = baseWidth * nibThickness;     // minor axis (nib thickness)
+
+  // Flat nib projection
+  const projectedWidth = W * crossMag + H * (1 - crossMag);
+
+  return projectedWidth * lerp(0.5, 1.0, pressure);
 }
 
 /**

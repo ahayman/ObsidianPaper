@@ -21,6 +21,9 @@ export interface PenStyle {
   smoothing: number; // 0-1 (streamline factor)
   pressureCurve: number; // Gamma exponent
   tiltSensitivity: number;
+  nibAngle?: number; // Nib angle in radians (0 = horizontal). Fountain pen / directional pens.
+  nibThickness?: number; // Minor/major axis ratio (0-1, e.g. 0.25 = 4:1 aspect)
+  nibPressure?: number; // Pressure sensitivity 0-1 (0 = none, 1 = max)
 }
 
 // --- Stroke Data ---
@@ -156,6 +159,9 @@ export interface SerializedPenStyle {
   smoothing: number;
   pressureCurve: number;
   tiltSensitivity: number;
+  nibAngle?: number;
+  nibThickness?: number;
+  nibPressure?: number;
 }
 
 export interface SerializedStroke {

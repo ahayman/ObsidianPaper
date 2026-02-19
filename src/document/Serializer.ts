@@ -179,6 +179,9 @@ function serializeStyles(
       smoothing: style.smoothing,
       pressureCurve: style.pressureCurve,
       tiltSensitivity: style.tiltSensitivity,
+      ...(style.nibAngle != null ? { nibAngle: style.nibAngle } : {}),
+      ...(style.nibThickness != null ? { nibThickness: style.nibThickness } : {}),
+      ...(style.nibPressure != null ? { nibPressure: style.nibPressure } : {}),
     };
   }
   return result;
@@ -198,6 +201,9 @@ function deserializeStyles(
       smoothing: s.smoothing,
       pressureCurve: s.pressureCurve,
       tiltSensitivity: s.tiltSensitivity,
+      ...(s.nibAngle != null ? { nibAngle: s.nibAngle } : {}),
+      ...(s.nibThickness != null ? { nibThickness: s.nibThickness } : {}),
+      ...(s.nibPressure != null ? { nibPressure: s.nibPressure } : {}),
     };
   }
   return result;

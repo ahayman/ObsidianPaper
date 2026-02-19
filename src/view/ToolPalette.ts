@@ -1,5 +1,6 @@
 import type { PenType } from "../types";
 import { COLOR_PALETTE } from "../color/ColorPalette";
+import { getPenConfig } from "../stroke/PenConfigs";
 
 export type ActiveTool = "pen" | "eraser";
 
@@ -8,6 +9,9 @@ export interface ToolPaletteState {
   penType: PenType;
   colorId: string;
   width: number;
+  nibAngle: number;
+  nibThickness: number;
+  nibPressure: number;
 }
 
 export interface ToolPaletteCallbacks {
@@ -15,6 +19,9 @@ export interface ToolPaletteCallbacks {
   onPenTypeChange: (penType: PenType) => void;
   onColorChange: (colorId: string) => void;
   onWidthChange: (width: number) => void;
+  onNibAngleChange: (angle: number) => void;
+  onNibThicknessChange: (thickness: number) => void;
+  onNibPressureChange: (pressure: number) => void;
 }
 
 const PEN_TYPES: { type: PenType; label: string }[] = [
@@ -47,6 +54,13 @@ export class ToolPalette {
   private widthLabel: HTMLElement | null = null;
   private colorSwatches: HTMLElement | null = null;
   private activeSwatchEl: HTMLElement | null = null;
+  private nibRow: HTMLElement | null = null;
+  private nibAngleSlider: HTMLInputElement | null = null;
+  private nibAngleValue: HTMLElement | null = null;
+  private nibThicknessSlider: HTMLInputElement | null = null;
+  private nibThicknessValue: HTMLElement | null = null;
+  private nibPressureSlider: HTMLInputElement | null = null;
+  private nibPressureValue: HTMLElement | null = null;
   private isDarkMode = false;
 
   constructor(
@@ -61,6 +75,9 @@ export class ToolPalette {
       penType: initialState?.penType ?? "ballpoint",
       colorId: initialState?.colorId ?? "ink-black",
       width: initialState?.width ?? 2,
+      nibAngle: initialState?.nibAngle ?? Math.PI / 6,
+      nibThickness: initialState?.nibThickness ?? 0.25,
+      nibPressure: initialState?.nibPressure ?? 0.5,
     };
 
     this.el = this.container.createEl("div", { cls: "paper-tool-palette" });
@@ -122,6 +139,61 @@ export class ToolPalette {
       this.callbacks.onWidthChange(width);
     });
 
+    // Nib settings row (fountain pen only)
+    this.nibRow = this.el.createEl("div", { cls: "paper-tool-row paper-nib-row" });
+
+    this.nibRow.createEl("span", { cls: "paper-nib-label", text: "Angle" });
+    this.nibAngleSlider = this.nibRow.createEl("input", {
+      cls: "paper-nib-slider",
+      type: "range",
+      attr: { min: "0", max: "180", step: "1", value: String(Math.round(this.state.nibAngle * 180 / Math.PI)) },
+    });
+    this.nibAngleValue = this.nibRow.createEl("span", {
+      cls: "paper-nib-value",
+      text: `${Math.round(this.state.nibAngle * 180 / Math.PI)}°`,
+    });
+    this.nibAngleSlider.addEventListener("input", () => {
+      const degrees = parseFloat(this.nibAngleSlider!.value);
+      const radians = degrees * Math.PI / 180;
+      this.state.nibAngle = radians;
+      this.nibAngleValue!.textContent = `${Math.round(degrees)}°`;
+      this.callbacks.onNibAngleChange(radians);
+    });
+
+    this.nibRow.createEl("span", { cls: "paper-nib-label", text: "Aspect" });
+    this.nibThicknessSlider = this.nibRow.createEl("input", {
+      cls: "paper-nib-slider",
+      type: "range",
+      attr: { min: "0.05", max: "1.0", step: "0.05", value: String(this.state.nibThickness) },
+    });
+    this.nibThicknessValue = this.nibRow.createEl("span", {
+      cls: "paper-nib-value",
+      text: this.state.nibThickness.toFixed(2),
+    });
+    this.nibThicknessSlider.addEventListener("input", () => {
+      const thickness = parseFloat(this.nibThicknessSlider!.value);
+      this.state.nibThickness = thickness;
+      this.nibThicknessValue!.textContent = thickness.toFixed(2);
+      this.callbacks.onNibThicknessChange(thickness);
+    });
+
+    this.nibRow.createEl("span", { cls: "paper-nib-label", text: "Pressure" });
+    this.nibPressureSlider = this.nibRow.createEl("input", {
+      cls: "paper-nib-slider",
+      type: "range",
+      attr: { min: "0", max: "1.0", step: "0.05", value: String(this.state.nibPressure) },
+    });
+    this.nibPressureValue = this.nibRow.createEl("span", {
+      cls: "paper-nib-value",
+      text: this.state.nibPressure.toFixed(2),
+    });
+    this.nibPressureSlider.addEventListener("input", () => {
+      const pressure = parseFloat(this.nibPressureSlider!.value);
+      this.state.nibPressure = pressure;
+      this.nibPressureValue!.textContent = pressure.toFixed(2);
+      this.callbacks.onNibPressureChange(pressure);
+    });
+
     this.updateToolButtonState();
   }
 
@@ -181,6 +253,11 @@ export class ToolPalette {
     const isPen = this.state.activeTool === "pen";
     this.penTypeSelect?.toggleVisibility(isPen);
     this.colorSwatches?.toggleVisibility(isPen);
+
+    // Show nib controls only for pens with nib properties
+    const penConfig = getPenConfig(this.state.penType);
+    const hasNib = penConfig.nibAngle !== null;
+    this.nibRow?.toggleVisibility(isPen && hasNib);
   }
 
   getState(): ToolPaletteState {
@@ -202,6 +279,25 @@ export class ToolPalette {
   setPenType(penType: PenType): void {
     this.state.penType = penType;
     if (this.penTypeSelect) this.penTypeSelect.value = penType;
+    this.updateToolButtonState();
+  }
+
+  setNibAngle(angle: number): void {
+    this.state.nibAngle = angle;
+    if (this.nibAngleSlider) this.nibAngleSlider.value = String(Math.round(angle * 180 / Math.PI));
+    if (this.nibAngleValue) this.nibAngleValue.textContent = `${Math.round(angle * 180 / Math.PI)}°`;
+  }
+
+  setNibThickness(thickness: number): void {
+    this.state.nibThickness = thickness;
+    if (this.nibThicknessSlider) this.nibThicknessSlider.value = String(thickness);
+    if (this.nibThicknessValue) this.nibThicknessValue.textContent = thickness.toFixed(2);
+  }
+
+  setNibPressure(pressure: number): void {
+    this.state.nibPressure = pressure;
+    if (this.nibPressureSlider) this.nibPressureSlider.value = String(pressure);
+    if (this.nibPressureValue) this.nibPressureValue.textContent = pressure.toFixed(2);
   }
 
   destroy(): void {

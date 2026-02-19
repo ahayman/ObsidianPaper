@@ -55,6 +55,10 @@ export class PaperView extends TextFileView {
   private currentPenType: PenType = "ballpoint";
   private currentColorId = "ink-black";
   private currentWidth = 2;
+  private currentNibAngle = Math.PI / 6;
+  private currentNibThickness = 0.25;
+  private currentNibPressure = 0.5;
+  private useBarrelRotation = true;
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
@@ -113,6 +117,9 @@ export class PaperView extends TextFileView {
         penType: this.currentPenType,
         colorId: this.currentColorId,
         width: this.currentWidth,
+        nibAngle: this.currentNibAngle,
+        nibThickness: this.currentNibThickness,
+        nibPressure: this.currentNibPressure,
       }
     );
     this.toolPalette.setDarkMode(this.themeDetector.isDarkMode);
@@ -205,8 +212,15 @@ export class PaperView extends TextFileView {
     this.currentPenType = settings.defaultPenType;
     this.currentColorId = settings.defaultColorId;
     this.currentWidth = settings.defaultWidth;
+    this.currentNibAngle = settings.defaultNibAngle;
+    this.currentNibThickness = settings.defaultNibThickness;
+    this.currentNibPressure = settings.defaultNibPressure;
+    this.useBarrelRotation = settings.useBarrelRotation;
     this.toolPalette?.setPenType(settings.defaultPenType);
     this.toolPalette?.setWidth(settings.defaultWidth);
+    this.toolPalette?.setNibAngle(settings.defaultNibAngle);
+    this.toolPalette?.setNibThickness(settings.defaultNibThickness);
+    this.toolPalette?.setNibPressure(settings.defaultNibPressure);
   }
 
   onResize(): void {
@@ -489,7 +503,7 @@ export class PaperView extends TextFileView {
 
   private getCurrentStyle(): PenStyle {
     const penConfig = getPenConfig(this.currentPenType);
-    return {
+    const style: PenStyle = {
       pen: this.currentPenType,
       color: this.currentColorId,
       width: this.currentWidth,
@@ -498,6 +512,13 @@ export class PaperView extends TextFileView {
       pressureCurve: penConfig.pressureCurve,
       tiltSensitivity: penConfig.tiltSensitivity,
     };
+    // Store nib params for fountain pen (and future directional pens)
+    if (penConfig.nibAngle !== null) {
+      style.nibAngle = this.currentNibAngle;
+      style.nibThickness = this.currentNibThickness;
+      style.nibPressure = this.currentNibPressure;
+    }
+    return style;
   }
 
   private getCurrentStyleName(): string {
@@ -516,12 +537,30 @@ export class PaperView extends TextFileView {
         const config = getPenConfig(penType);
         this.currentWidth = config.baseWidth;
         this.toolPalette?.setWidth(config.baseWidth);
+        // Reset nib to defaults when switching pen types
+        if (config.nibAngle !== null) {
+          this.currentNibAngle = this.settings.defaultNibAngle;
+          this.currentNibThickness = this.settings.defaultNibThickness;
+          this.currentNibPressure = this.settings.defaultNibPressure;
+          this.toolPalette?.setNibAngle(this.currentNibAngle);
+          this.toolPalette?.setNibThickness(this.currentNibThickness);
+          this.toolPalette?.setNibPressure(this.currentNibPressure);
+        }
       },
       onColorChange: (colorId: string) => {
         this.currentColorId = colorId;
       },
       onWidthChange: (width: number) => {
         this.currentWidth = width;
+      },
+      onNibAngleChange: (angle: number) => {
+        this.currentNibAngle = angle;
+      },
+      onNibThicknessChange: (thickness: number) => {
+        this.currentNibThickness = thickness;
+      },
+      onNibPressureChange: (pressure: number) => {
+        this.currentNibPressure = pressure;
       },
     };
   }
@@ -689,12 +728,16 @@ export class PaperView extends TextFileView {
       },
 
       onHover: (x: number, y: number) => {
+        const penConfig = getPenConfig(this.currentPenType);
+        const hasNib = penConfig.nibAngle !== null;
         this.hoverCursor?.show(x, y, {
           colorId: this.currentColorId,
           width: this.currentWidth,
           isDarkMode: this.themeDetector?.isDarkMode ?? false,
           isEraser: this.activeTool === "eraser",
           zoom: this.camera.zoom,
+          nibThickness: hasNib ? this.currentNibThickness : null,
+          nibAngle: hasNib ? this.currentNibAngle : null,
         });
       },
 
@@ -756,6 +799,9 @@ function computeStyleOverrides(
   if (current.smoothing !== base.smoothing) { overrides.smoothing = current.smoothing; has = true; }
   if (current.pressureCurve !== base.pressureCurve) { overrides.pressureCurve = current.pressureCurve; has = true; }
   if (current.tiltSensitivity !== base.tiltSensitivity) { overrides.tiltSensitivity = current.tiltSensitivity; has = true; }
+  if (current.nibAngle !== base.nibAngle) { overrides.nibAngle = current.nibAngle; has = true; }
+  if (current.nibThickness !== base.nibThickness) { overrides.nibThickness = current.nibThickness; has = true; }
+  if (current.nibPressure !== base.nibPressure) { overrides.nibPressure = current.nibPressure; has = true; }
 
   return has ? overrides : undefined;
 }

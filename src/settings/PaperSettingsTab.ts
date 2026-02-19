@@ -309,6 +309,62 @@ export class PaperSettingsTab extends PluginSettingTab {
         });
     }
 
+    // --- Fountain Pen Section ---
+    new Setting(containerEl).setName("Fountain pen").setHeading();
+
+    new Setting(containerEl)
+      .setName("Default nib angle")
+      .setDesc("Angle of the italic nib in degrees (0° = horizontal, 90° = vertical)")
+      .addText((text) => {
+        text.setValue(String(Math.round(this.settings.defaultNibAngle * 180 / Math.PI)));
+        text.onChange((value: string) => {
+          const num = parseFloat(value);
+          if (!isNaN(num) && num >= 0 && num <= 180) {
+            this.settings.defaultNibAngle = num * Math.PI / 180;
+            this.notifyChange();
+          }
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Default nib thickness")
+      .setDesc("Aspect ratio of the nib (0.1 = very flat italic, 1.0 = square)")
+      .addText((text) => {
+        text.setValue(String(this.settings.defaultNibThickness));
+        text.onChange((value: string) => {
+          const num = parseFloat(value);
+          if (!isNaN(num) && num >= 0.05 && num <= 1) {
+            this.settings.defaultNibThickness = num;
+            this.notifyChange();
+          }
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Default nib pressure")
+      .setDesc("How much pressure affects stroke width (0 = none, 1 = maximum)")
+      .addText((text) => {
+        text.setValue(String(this.settings.defaultNibPressure));
+        text.onChange((value: string) => {
+          const num = parseFloat(value);
+          if (!isNaN(num) && num >= 0 && num <= 1) {
+            this.settings.defaultNibPressure = num;
+            this.notifyChange();
+          }
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Use barrel rotation")
+      .setDesc("Twist the pencil to change nib angle dynamically")
+      .addToggle((toggle) => {
+        toggle.setValue(this.settings.useBarrelRotation);
+        toggle.onChange((value: boolean) => {
+          this.settings.useBarrelRotation = value;
+          this.notifyChange();
+        });
+      });
+
     // --- Input Section ---
     new Setting(containerEl).setName("Input").setHeading();
 

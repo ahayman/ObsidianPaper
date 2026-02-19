@@ -1,5 +1,7 @@
 import getStroke from "perfect-freehand";
 import type { StrokePoint, PenStyle } from "../types";
+import { getPenConfig } from "./PenConfigs";
+import { generateItalicOutline, type ItalicNibConfig } from "./ItalicOutlineGenerator";
 
 export interface StrokeOutlineOptions {
   size: number;
@@ -90,6 +92,32 @@ export function generateOutline(
 ): number[][] {
   if (points.length === 0) return [];
 
+  // Fountain pen: use italic outline generator
+  // Read nib params from style (per-stroke) with PenConfig fallback
+  const penConfig = getPenConfig(style.pen);
+  const nibAngle = style.nibAngle ?? penConfig.nibAngle;
+  const nibThickness = style.nibThickness ?? penConfig.nibThickness;
+
+  if (nibAngle !== null && nibThickness !== null) {
+    // nibPressure 0-1 maps to pressureWidthRange min:
+    // 0 → [1.0, 1.0] (no pressure effect), 1 → [0.3, 1.0] (max effect)
+    const nibPressure = style.nibPressure ?? 0.5;
+    const pressureMin = 1.0 - nibPressure * 0.7;
+    const italicConfig: ItalicNibConfig = {
+      nibWidth: style.width,
+      nibHeight: style.width * nibThickness,
+      nibAngle: nibAngle,
+      useBarrelRotation: penConfig.useBarrelRotation,
+      pressureCurve: penConfig.pressureCurve,
+      pressureWidthRange: [pressureMin, 1.0],
+      widthSmoothing: 0.4,
+      taperStart: penConfig.taperStart,
+      taperEnd: penConfig.taperEnd,
+    };
+    return generateItalicOutline(points, italicConfig);
+  }
+
+  // All other pen types: perfect-freehand
   const options = penStyleToOutlineOptions(style);
   const input = pointsToFreehandInput(points);
 

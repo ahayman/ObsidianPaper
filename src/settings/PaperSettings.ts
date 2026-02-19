@@ -51,6 +51,12 @@ export interface PaperSettings {
   // Smoothing
   defaultSmoothing: number; // 0-1
 
+  // Fountain pen
+  defaultNibAngle: number;       // Radians (default: Math.PI / 6 ≈ 30°)
+  defaultNibThickness: number;   // Ratio 0-1 (default: 0.25)
+  defaultNibPressure: number;    // Pressure sensitivity 0-1 (default: 0.5)
+  useBarrelRotation: boolean;    // Use Apple Pencil Pro twist for nib angle
+
   // File
   defaultFolder: string;
   fileNameTemplate: string;
@@ -86,6 +92,11 @@ export const DEFAULT_SETTINGS: PaperSettings = {
   fingerAction: "pan",
 
   defaultSmoothing: 0.5,
+
+  defaultNibAngle: Math.PI / 6,    // 30 degrees
+  defaultNibThickness: 0.25,       // 4:1 aspect ratio
+  defaultNibPressure: 0.5,         // Moderate pressure sensitivity
+  useBarrelRotation: true,
 
   defaultFolder: "",
   fileNameTemplate: "Untitled Paper",

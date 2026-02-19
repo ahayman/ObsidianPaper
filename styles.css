@@ -60,6 +60,14 @@
   background-color: var(--cursor-color);
 }
 
+.paper-hover-cursor--nib {
+  border-radius: 1px;
+  width: var(--cursor-width, 4px);
+  height: var(--cursor-height, 2px);
+  transform: translateZ(0) rotate(var(--cursor-rotation, 0deg));
+  background-color: var(--cursor-color);
+}
+
 /* Paper Embeds */
 .paper-embed-container {
   display: block;
@@ -180,6 +188,29 @@
 .paper-width-label {
   font-size: 12px;
   min-width: 28px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.paper-nib-row {
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.paper-nib-label {
+  font-size: 11px;
+  min-width: 36px;
+  color: var(--text-muted);
+}
+
+.paper-nib-slider {
+  flex: 1;
+  min-width: 60px;
+}
+
+.paper-nib-value {
+  font-size: 11px;
+  min-width: 32px;
   text-align: center;
   color: var(--text-muted);
 }
