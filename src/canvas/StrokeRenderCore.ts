@@ -100,9 +100,11 @@ export function renderStrokeToContext(
   if (lod === 0 && penConfig.grain?.enabled) {
     const strength = grainCtx.strengthOverrides.get(style.pen) ?? penConfig.grain.strength;
     if (strength > 0) {
+      const anchorX = stroke.grainAnchor?.[0] ?? stroke.bbox[0];
+      const anchorY = stroke.grainAnchor?.[1] ?? stroke.bbox[1];
       renderStrokeWithGrain(
         ctx, path, color, style.opacity, strength,
-        stroke.bbox[0], stroke.bbox[1], stroke.bbox,
+        anchorX, anchorY, stroke.bbox,
         grainCtx,
       );
       return;

@@ -43,6 +43,7 @@ export interface Stroke {
   style: string; // Reference to styles map
   styleOverrides?: Partial<PenStyle>; // Per-stroke overrides
   bbox: [number, number, number, number]; // [minX, minY, maxX, maxY]
+  grainAnchor?: [number, number]; // [x, y] of first point, for stable grain texture
   pointCount: number;
   pts: string; // Delta-encoded integer string
   transform?: number[]; // Affine transform [a,b,c,d,tx,ty]

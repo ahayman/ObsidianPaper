@@ -99,6 +99,7 @@ export class StrokeBuilder {
       pageIndex: this.pageIndex,
       style: this.style,
       bbox,
+      grainAnchor: this.points.length > 0 ? [this.points[0].x, this.points[0].y] : undefined,
       pointCount: this.points.length,
       pts,
     };
