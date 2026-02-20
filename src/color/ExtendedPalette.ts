@@ -5,11 +5,19 @@
  * Each column is a single hue family. Rows go dark (top) → light (bottom).
  * Each color has hand-tuned light and dark theme variants.
  *
+ * Two palette variants:
+ *   - EXTENDED_PALETTE (brightness-matched): both theme variants have
+ *     similar brightness. Both go dark→light top-to-bottom.
+ *   - EXTENDED_PALETTE_CONTRAST (contrast-matched): dark-theme variants
+ *     are inverted so both themes have similar contrast against their
+ *     respective backgrounds. Light goes dark→light, dark goes light→dark.
+ *
  * Columns: Red, Orange, Green, Teal, Blue, Purple, Pink, Neutral
  * The original 10 COLOR_PALETTE entries are included for compatibility.
  */
 
 import type { SemanticColor } from "./ColorPalette";
+import { perceivedLuminance } from "./ColorUtils";
 
 /** Grid dimensions for the Simple picker layout. */
 export const PALETTE_COLUMNS = 8;
@@ -81,3 +89,62 @@ export const EXTENDED_PALETTE: SemanticColor[] = [
   { id: "ext-pink-200", name: "Pale Pink", light: "#fbcfe8", dark: "#fce7f3" },
   { id: "ext-white", name: "White", light: "#f5f5f4", dark: "#ffffff" },
 ];
+
+/** Which pairing strategy the Simple picker uses. */
+export type PaletteMode = "brightness" | "contrast";
+
+/** Index of the neutral column (grayscale). */
+const NEUTRAL_COL = 7;
+
+/**
+ * Build the contrast-matched palette from the brightness-matched one.
+ *
+ * For chromatic columns: reverse the dark values within each column so
+ * the lightest dark value lands on row 0 (highest contrast on dark bg).
+ *
+ * For the neutral column: mirror the light values instead, because the
+ * original dark neutrals don't span a useful range for inversion.
+ *
+ * After reordering, each column's dark values are sorted by perceived
+ * luminance descending to guarantee a smooth gradient (fixes edge cases
+ * like the purple column where the original order isn't monotonic).
+ */
+function buildContrastPalette(src: SemanticColor[]): SemanticColor[] {
+  const result: SemanticColor[] = src.map((c) => ({ ...c }));
+
+  for (let col = 0; col < PALETTE_COLUMNS; col++) {
+    // Collect new dark values for this column
+    const darkValues: string[] = [];
+
+    if (col === NEUTRAL_COL) {
+      // Mirror light values from opposite rows
+      for (let row = PALETTE_ROWS - 1; row >= 0; row--) {
+        darkValues.push(src[row * PALETTE_COLUMNS + col].light);
+      }
+    } else {
+      // Reverse existing dark values
+      for (let row = PALETTE_ROWS - 1; row >= 0; row--) {
+        darkValues.push(src[row * PALETTE_COLUMNS + col].dark);
+      }
+    }
+
+    // Sort by perceived luminance descending (lightest first = top row)
+    darkValues.sort(
+      (a, b) => perceivedLuminance(b) - perceivedLuminance(a)
+    );
+
+    // Assign back
+    for (let row = 0; row < PALETTE_ROWS; row++) {
+      result[row * PALETTE_COLUMNS + col].dark = darkValues[row];
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Contrast-matched palette: dark-theme variants are inverted so that
+ * row 0 has high contrast in both themes, row 5 has low contrast in both.
+ */
+export const EXTENDED_PALETTE_CONTRAST: SemanticColor[] =
+  buildContrastPalette(EXTENDED_PALETTE);

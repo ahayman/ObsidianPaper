@@ -7,7 +7,8 @@
  * a colorId string (semantic ID for palette colors, dual-hex for custom).
  */
 
-import { EXTENDED_PALETTE } from "../../color/ExtendedPalette";
+import { EXTENDED_PALETTE, EXTENDED_PALETTE_CONTRAST } from "../../color/ExtendedPalette";
+import type { PaletteMode } from "../../color/ExtendedPalette";
 import { parseColorId, encodeDualHex, isDualHex, hexToHsl, hslToHex } from "../../color/ColorUtils";
 
 type PickerMode = "simple" | "spectrum";
@@ -34,7 +35,8 @@ export class ColorPickerPanel {
   private simpleContainer!: HTMLElement;
   private spectrumContainer!: HTMLElement;
 
-  // Simple mode swatch map
+  // Simple mode state
+  private paletteMode: PaletteMode = "contrast";
   private swatchEls: Map<string, HTMLElement> = new Map();
 
   // Spectrum mode state
@@ -106,11 +108,55 @@ export class ColorPickerPanel {
   // ─── Simple Mode ────────────────────────────────────────────
 
   private buildSimpleMode(): void {
-    this.simpleContainer = this.el.createEl("div", { cls: "paper-color-picker__grid" });
+    this.simpleContainer = this.el.createEl("div", { cls: "paper-color-picker__simple" });
 
-    for (const color of EXTENDED_PALETTE) {
+    // Palette mode toggle
+    const toggle = this.simpleContainer.createEl("div", { cls: "paper-color-picker__mode-toggle" });
+    const contrastBtn = toggle.createEl("button", {
+      cls: "paper-color-picker__mode-btn is-active",
+      text: "Contrast",
+      attr: { "aria-label": "Contrast-matched colors" },
+    });
+    const brightnessBtn = toggle.createEl("button", {
+      cls: "paper-color-picker__mode-btn",
+      text: "Brightness",
+      attr: { "aria-label": "Brightness-matched colors" },
+    });
+
+    contrastBtn.addEventListener("click", () => {
+      if (this.paletteMode === "contrast") return;
+      this.paletteMode = "contrast";
+      contrastBtn.addClass("is-active");
+      brightnessBtn.removeClass("is-active");
+      this.rebuildSwatchGrid();
+    });
+    brightnessBtn.addEventListener("click", () => {
+      if (this.paletteMode === "brightness") return;
+      this.paletteMode = "brightness";
+      brightnessBtn.addClass("is-active");
+      contrastBtn.removeClass("is-active");
+      this.rebuildSwatchGrid();
+    });
+
+    // Swatch grid
+    this.simpleContainer.createEl("div", { cls: "paper-color-picker__grid" });
+    this.rebuildSwatchGrid();
+  }
+
+  private rebuildSwatchGrid(): void {
+    const grid = this.simpleContainer.querySelector(".paper-color-picker__grid");
+    if (!grid) return;
+    grid.empty();
+    this.swatchEls.clear();
+
+    const palette =
+      this.paletteMode === "contrast"
+        ? EXTENDED_PALETTE_CONTRAST
+        : EXTENDED_PALETTE;
+
+    for (const color of palette) {
       const dualHex = encodeDualHex(color.light, color.dark);
-      const swatch = this.simpleContainer.createEl("button", {
+      const swatch = (grid as HTMLElement).createEl("button", {
         cls: "paper-popover__color-swatch",
         attr: { "aria-label": color.name },
       });

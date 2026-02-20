@@ -597,6 +597,45 @@
   border-color: var(--interactive-accent);
 }
 
+/* Simple mode container */
+.paper-color-picker__simple {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Palette mode toggle (Contrast / Brightness) */
+.paper-color-picker__mode-toggle {
+  display: flex;
+  gap: 2px;
+  background: var(--background-secondary);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.paper-color-picker__mode-btn {
+  flex: 1;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  text-align: center;
+}
+
+.paper-color-picker__mode-btn:hover {
+  color: var(--text-normal);
+}
+
+.paper-color-picker__mode-btn.is-active {
+  background: var(--background-primary);
+  color: var(--text-normal);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
 /* Simple mode — color grid */
 .paper-color-picker__grid {
   display: grid;
