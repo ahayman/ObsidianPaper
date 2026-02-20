@@ -119,7 +119,7 @@ describe("tileSizePhysicalForBand", () => {
 
 describe("DEFAULT_TILE_CONFIG", () => {
   it("has sensible defaults", () => {
-    expect(DEFAULT_TILE_CONFIG.tileWorldSize).toBe(512);
+    expect(DEFAULT_TILE_CONFIG.tileWorldSize).toBe(256);
     expect(DEFAULT_TILE_CONFIG.dpr).toBe(2);
     expect(DEFAULT_TILE_CONFIG.maxMemoryBytes).toBe(200 * 1024 * 1024);
     expect(DEFAULT_TILE_CONFIG.overscanTiles).toBe(1);

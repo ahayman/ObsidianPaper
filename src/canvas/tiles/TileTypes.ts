@@ -56,7 +56,7 @@ export function tileSizePhysicalForBand(config: TileGridConfig, zoomBand: number
 }
 
 export const DEFAULT_TILE_CONFIG: TileGridConfig = {
-  tileWorldSize: 512,
+  tileWorldSize: 256,
   dpr: 2,
   maxMemoryBytes: 200 * 1024 * 1024,
   overscanTiles: 1,
