@@ -1036,40 +1036,42 @@ class TiledStaticLayer {
     const visibleTiles = this.grid.getVisibleTiles(this.camera, screenWidth, screenHeight);
     const visibleKeySet = new Set(visibleTiles.map(tileKeyString));
 
-    // Protect visible tiles from eviction during the render loop.
-    // Without this, allocating a new tile can evict one we just rendered.
+    // Protect visible tiles from eviction during sync render and async scheduling.
+    // Protection persists until next renderVisible/gestureUpdate/endGesture.
     this.cache.protect(visibleKeySet);
 
-    // Render all visible tiles synchronously at the correct resolution
+    // Only sync-render tiles that have NO cached content (would be blank spots).
+    // Tiles with stale content (dirty or wrong band) keep their old pixels and
+    // are re-rendered asynchronously to avoid blocking the UI.
     for (const key of visibleTiles) {
-      const worldBounds = this.grid.tileBounds(key.col, key.row);
-      const entry = this.cache.getStale(key);
-
-      if (!entry) {
-        // New tile — allocate and render
+      if (!this.cache.getStale(key)) {
+        const worldBounds = this.grid.tileBounds(key.col, key.row);
         const newEntry = this.cache.allocate(key, worldBounds, currentZoomBand);
         this.tileRenderer.renderTile(newEntry, doc, pageLayout, spatialIndex, isDarkMode);
-        this.cache.markClean(key);
-      } else if (entry.dirty || entry.renderedAtBand !== currentZoomBand) {
-        // Dirty or wrong resolution — re-allocate (handles canvas resize) and render
-        const updated = this.cache.allocate(key, worldBounds, currentZoomBand);
-        this.tileRenderer.renderTile(updated, doc, pageLayout, spatialIndex, isDarkMode);
         this.cache.markClean(key);
       }
     }
 
-    this.cache.unprotect();
-
-    // Schedule background rendering for dirty non-visible tiles
+    // Collect tiles needing async re-render: visible tiles at wrong band or dirty,
+    // plus any dirty non-visible tiles in the cache.
+    const toSchedule: TileKey[] = [];
+    for (const key of visibleTiles) {
+      const entry = this.cache.getStale(key);
+      if (entry && (entry.dirty || entry.renderedAtBand !== currentZoomBand)) {
+        toSchedule.push(key);
+      }
+    }
     const dirtyTiles = this.cache.getDirtyTiles(visibleKeySet);
-    if (dirtyTiles.length > 0) {
-      this.scheduler.schedule(
-        dirtyTiles.map(t => t.key),
-        visibleKeySet,
-      );
+    for (const entry of dirtyTiles) {
+      if (!visibleKeySet.has(tileKeyString(entry.key))) {
+        toSchedule.push(entry.key);
+      }
+    }
+    if (toSchedule.length > 0) {
+      this.scheduler.schedule(toSchedule, visibleKeySet);
     }
 
-    // Composite all available tiles onto the canvas
+    // Composite with whatever is available (stale tiles shown at old resolution)
     this.compositor.composite(ctx, canvas, this.camera, screenWidth, screenHeight, this.cache);
     this.drawOverlay();
   }
@@ -1212,18 +1214,17 @@ class TiledStaticLayer {
    * Render a single tile. Called by the scheduler during async processing.
    * Renders at the current zoom band (the zoom at the moment of rendering).
    *
-   * Skips tiles that are already clean — they may have been rendered
-   * synchronously by renderVisible() after being scheduled.
+   * Skips tiles that are already clean at the correct zoom band.
    */
   private renderOneTile(key: TileKey): void {
     if (!this.currentDoc || !this.currentSpatialIndex) return;
 
+    const zoomBand = zoomToZoomBand(this.camera.zoom);
     const entry = this.cache.getStale(key);
 
-    // Already rendered (e.g. by renderVisible after gesture end) — skip
-    if (entry && !entry.dirty) return;
+    // Already clean at the correct resolution — skip
+    if (entry && !entry.dirty && entry.renderedAtBand === zoomBand) return;
 
-    const zoomBand = zoomToZoomBand(this.camera.zoom);
     const worldBounds = this.grid.tileBounds(key.col, key.row);
     const allocated = this.cache.allocate(key, worldBounds, zoomBand);
     this.tileRenderer.renderTile(
