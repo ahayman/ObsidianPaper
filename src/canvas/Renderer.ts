@@ -1109,7 +1109,7 @@ class TiledStaticLayer {
     for (const key of affectedTiles) {
       const worldBounds = this.grid.tileBounds(key.col, key.row);
       let entry = this.cache.getStale(key);
-      if (!entry) {
+      if (!entry || entry.renderedAtBand !== currentZoomBand) {
         entry = this.cache.allocate(key, worldBounds, currentZoomBand);
       }
       // Full re-render of the tile (needed for correct overlapping)
