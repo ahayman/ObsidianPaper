@@ -3,7 +3,6 @@ import type { SpatialIndex } from "../spatial/SpatialIndex";
 import type { PageRect } from "../document/PageLayout";
 import { Camera } from "./Camera";
 import { setupHighDPICanvas, resizeHighDPICanvas, getEffectiveDPR } from "./HighDPI";
-import { decodePoints } from "../document/PointEncoder";
 import {
   generateStrokePath,
   StrokePathCache,
@@ -12,12 +11,26 @@ import { resolveColor } from "../color/ColorPalette";
 import { getPenConfig } from "../stroke/PenConfigs";
 import type { PenType } from "../types";
 import { GrainTextureGenerator } from "./GrainTextureGenerator";
-import { selectLodLevel, lodCacheKey, simplifyPoints } from "../stroke/StrokeSimplifier";
-import type { LodLevel } from "../stroke/StrokeSimplifier";
-import { detectInkPools, renderInkPools } from "../stroke/InkPooling";
+import { selectLodLevel } from "../stroke/StrokeSimplifier";
 import { BackgroundRenderer } from "./BackgroundRenderer";
 import type { BackgroundConfig } from "./BackgroundRenderer";
 import { resolvePageBackground } from "../color/ColorUtils";
+import {
+  renderStrokeToContext,
+  applyGrainToStroke,
+  computeScreenBBox,
+} from "./StrokeRenderCore";
+import type { GrainRenderContext } from "./StrokeRenderCore";
+import { TileGrid } from "./tiles/TileGrid";
+import { TileCache } from "./tiles/TileCache";
+import { TileRenderer } from "./tiles/TileRenderer";
+import { TileCompositor } from "./tiles/TileCompositor";
+import { TileRenderScheduler } from "./tiles/TileRenderScheduler";
+import {
+  zoomToZoomBand, tileKeyString,
+  DEFAULT_TILE_CONFIG,
+} from "./tiles/TileTypes";
+import type { TileGridConfig, TileKey } from "./tiles/TileTypes";
 
 /**
  * Multi-layer canvas renderer managing:
@@ -55,13 +68,15 @@ export class Renderer {
   private overscanOffsetX = 0;  // Negative CSS offset (e.g., -512)
   private overscanOffsetY = 0;  // Negative CSS offset (e.g., -384)
   private grainGenerator: GrainTextureGenerator | null = null;
-  private grainPatternCache = new WeakMap<CanvasRenderingContext2D, CanvasPattern>();
   private grainStrengthOverrides = new Map<PenType, number>();
   private grainOffscreen: HTMLCanvasElement | null = null;
   private grainOffscreenCtx: CanvasRenderingContext2D | null = null;
   private bgConfig: BackgroundConfig = {
     isDarkMode: false,
   };
+
+  // Tile-based rendering (when enabled, replaces overscan static canvas)
+  private tiledLayer: TiledStaticLayer | null = null;
 
   // RAF batching
   private rafId: number | null = null;
@@ -267,11 +282,41 @@ export class Renderer {
     this.flushFinalizations();
     this.pendingBakes = [];
 
-    // Recalculate overscan to cover nearby pages (may resize canvases)
-    this.recalculateOverscan(pageLayout);
-
     // Match container background to desk color so edges during CSS zoom look seamless
     this.container.style.backgroundColor = this.isDarkMode ? "#111111" : "#e8e8e8";
+
+    if (this.tiledLayer && spatialIndex) {
+      // ─── Tile-based path ─────────────────────────────────
+      // Background rendering still uses overscan approach
+      this.recalculateOverscan(pageLayout);
+      this.bgConfig.isDarkMode = this.isDarkMode;
+      this.backgroundRenderer.render(
+        this.bgConfig, pageLayout, doc.pages, afterBackground,
+        this.overscanOffsetX, this.overscanOffsetY,
+      );
+
+      // Static canvas: composited from tiles (viewport-sized, no overscan offset)
+      this.staticCanvas.style.left = "0px";
+      this.staticCanvas.style.top = "0px";
+      const dpr = getEffectiveDPR(this.isMobile);
+      if (this.staticCanvas.width !== Math.round(this.cssWidth * dpr) ||
+          this.staticCanvas.height !== Math.round(this.cssHeight * dpr)) {
+        this.dpr = setupHighDPICanvas(
+          this.staticCanvas, this.staticCtx,
+          this.cssWidth, this.cssHeight, this.isMobile,
+        );
+      }
+
+      this.tiledLayer.renderVisible(
+        this.staticCtx, this.staticCanvas,
+        this.cssWidth, this.cssHeight,
+        doc, pageLayout, spatialIndex, this.isDarkMode,
+      );
+      return;
+    }
+
+    // ─── Legacy overscan path ──────────────────────────────
+    this.recalculateOverscan(pageLayout);
 
     const ctx = this.staticCtx;
     this.clearOverscanCanvas(ctx);
@@ -357,7 +402,24 @@ export class Renderer {
    * O(1) — doesn't re-render all strokes.
    * Clips to the page rect if provided.
    */
-  bakeStroke(stroke: Stroke, styles: Record<string, PenStyle>, pageRect?: PageRect, useDarkColors?: boolean): void {
+  bakeStroke(
+    stroke: Stroke,
+    styles: Record<string, PenStyle>,
+    pageRect?: PageRect,
+    useDarkColors?: boolean,
+    doc?: PaperDocument,
+    pageLayout?: PageRect[],
+    spatialIndex?: SpatialIndex,
+  ): void {
+    if (this.tiledLayer && doc && pageLayout && spatialIndex) {
+      this.tiledLayer.bakeStroke(
+        stroke, this.staticCtx, this.staticCanvas,
+        this.cssWidth, this.cssHeight,
+        doc, pageLayout, spatialIndex, this.isDarkMode,
+      );
+      return;
+    }
+
     const ctx = this.staticCtx;
 
     // Apply DPR + camera transform with overscan offset
@@ -412,7 +474,28 @@ export class Renderer {
           }
           const m = style.width * 2;
           const ptsBbox: [number, number, number, number] = [bMinX - m, bMinY - m, bMaxX + m, bMaxY + m];
-          this.renderStrokeWithGrain(ctx, path, color, style.opacity, strength, points[0].x, points[0].y, ptsBbox);
+          const grainCtx = this.getGrainRenderContext(this.staticCanvas.width, this.staticCanvas.height);
+          const offscreen = grainCtx.getOffscreen(256, 256);
+          if (offscreen) {
+            // Use shared grain rendering via StrokeRenderCore
+            const m = ctx.getTransform();
+            const region = computeScreenBBox(ptsBbox, m, grainCtx.canvasWidth, grainCtx.canvasHeight);
+            if (region) {
+              const offCtx = offscreen.ctx;
+              offCtx.setTransform(1, 0, 0, 1, 0, 0);
+              offCtx.clearRect(0, 0, region.sw, region.sh);
+              offCtx.setTransform(m.a, m.b, m.c, m.d, m.e - region.sx, m.f - region.sy);
+              offCtx.fillStyle = color;
+              offCtx.globalAlpha = style.opacity;
+              offCtx.fill(path);
+              offCtx.globalAlpha = 1;
+              applyGrainToStroke(offCtx, path, strength, points[0].x, points[0].y, grainCtx);
+              ctx.save();
+              ctx.setTransform(1, 0, 0, 1, 0, 0);
+              ctx.drawImage(offscreen.canvas, 0, 0, region.sw, region.sh, region.sx, region.sy, region.sw, region.sh);
+              ctx.restore();
+            }
+          }
           this.camera.resetContext(ctx);
           return;
         }
@@ -525,7 +608,7 @@ export class Renderer {
         if (penConfig.grain?.enabled && points.length > 0) {
           const strength = this.grainStrengthOverrides.get(style.pen) ?? penConfig.grain.strength;
           if (strength > 0) {
-            this.applyGrainToStroke(this.activeCtx, path, strength, points[0].x, points[0].y);
+            this.applyGrainToStrokeLocal(this.activeCtx, path, strength, points[0].x, points[0].y);
           }
         }
       }
@@ -605,8 +688,10 @@ export class Renderer {
   invalidateCache(strokeId?: string): void {
     if (strokeId) {
       this.pathCache.delete(strokeId);
+      this.tiledLayer?.invalidateStroke(strokeId);
     } else {
       this.pathCache.clear();
+      this.tiledLayer?.invalidateAll();
     }
   }
 
@@ -616,6 +701,9 @@ export class Renderer {
   initGrain(): void {
     this.grainGenerator = new GrainTextureGenerator();
     this.grainGenerator.initialize();
+    if (this.tiledLayer) {
+      this.tiledLayer.tileRenderer.setGrainGenerator(this.grainGenerator);
+    }
   }
 
   /**
@@ -623,6 +711,7 @@ export class Renderer {
    */
   setGrainStrength(penType: PenType, strength: number): void {
     this.grainStrengthOverrides.set(penType, strength);
+    this.tiledLayer?.tileRenderer.setGrainStrength(penType, strength);
   }
 
   /**
@@ -633,6 +722,8 @@ export class Renderer {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
     }
+    this.tiledLayer?.destroy();
+    this.tiledLayer = null;
     this.pendingBakes = [];
     this.pendingFinalizations = [];
     this.pathCache.clear();
@@ -660,20 +751,31 @@ export class Renderer {
 
   /**
    * Apply a CSS transform to all canvas layers for gesture preview.
-   * This is O(1) — just a CSS property update — avoiding full re-renders during pan/zoom.
+   *
+   * When tiling is enabled, the static canvas is NOT CSS-transformed.
+   * Instead, tiles are re-composited at the current camera position.
+   * This avoids blank edges since cached tiles already cover beyond the viewport.
    */
   setGestureTransform(tx: number, ty: number, scale: number): void {
-    // Overscan canvases: adjust translation for canvas offset + scale interaction.
-    // With transform-origin: 0 0, scaling from the corner means the CSS offset
-    // position shifts by offset * (scale - 1). Compensate so the viewport-center
-    // portion of the overscan canvas stays aligned.
+    // Background canvas: always uses overscan + CSS transform
     const oxAdj = tx + this.overscanOffsetX * (scale - 1);
     const oyAdj = ty + this.overscanOffsetY * (scale - 1);
     const overscanValue = `translate(${oxAdj}px, ${oyAdj}px) scale(${scale})`;
     this.backgroundCanvas.style.transform = overscanValue;
-    this.staticCanvas.style.transform = overscanValue;
 
-    // Active/prediction canvases: no offset adjustment needed (viewport-sized)
+    if (this.tiledLayer) {
+      // Tiled: composite cached tiles + schedule async renders for missing tiles.
+      // No CSS transform needed — compositing positions tiles correctly.
+      this.tiledLayer.gestureUpdate(
+        this.staticCtx, this.staticCanvas,
+        this.cssWidth, this.cssHeight,
+      );
+    } else {
+      // Legacy: CSS-transform the overscan static canvas
+      this.staticCanvas.style.transform = overscanValue;
+    }
+
+    // Active/prediction canvases: viewport-sized, simple CSS transform
     const viewportValue = `translate(${tx}px, ${ty}px) scale(${scale})`;
     this.activeCanvas.style.transform = viewportValue;
     this.predictionCanvas.style.transform = viewportValue;
@@ -685,118 +787,96 @@ export class Renderer {
    */
   clearGestureTransform(): void {
     this.backgroundCanvas.style.transform = "";
-    this.staticCanvas.style.transform = "";
+    // Static canvas only has a CSS transform in legacy mode
+    if (this.tiledLayer) {
+      this.tiledLayer.endGesture();
+    } else {
+      this.staticCanvas.style.transform = "";
+    }
     this.activeCanvas.style.transform = "";
     this.predictionCanvas.style.transform = "";
+  }
+
+  // ─── Tile-Based Rendering ──────────────────────────────────────
+
+  get isTilingEnabled(): boolean {
+    return this.tiledLayer !== null;
+  }
+
+  enableTiling(config?: Partial<TileGridConfig>): void {
+    if (this.tiledLayer) return;
+
+    const dpr = getEffectiveDPR(this.isMobile);
+    const tileConfig: TileGridConfig = {
+      ...DEFAULT_TILE_CONFIG,
+      dpr,
+      ...config,
+    };
+
+    this.tiledLayer = new TiledStaticLayer(
+      this.camera,
+      tileConfig,
+      this.pathCache,
+    );
+
+    // Share grain resources
+    if (this.grainGenerator) {
+      this.tiledLayer.tileRenderer.setGrainGenerator(this.grainGenerator);
+    }
+    for (const [penType, strength] of this.grainStrengthOverrides) {
+      this.tiledLayer.tileRenderer.setGrainStrength(penType, strength);
+    }
+  }
+
+  disableTiling(): void {
+    this.tiledLayer?.destroy();
+    this.tiledLayer = null;
+  }
+
+  /**
+   * Get a GrainRenderContext that wraps this Renderer's grain resources.
+   */
+  private getGrainRenderContext(canvasWidth: number, canvasHeight: number): GrainRenderContext {
+    return {
+      generator: this.grainGenerator,
+      strengthOverrides: this.grainStrengthOverrides,
+      getOffscreen: (minW: number, minH: number) => {
+        const ctx = this.ensureGrainOffscreen(minW, minH);
+        if (!ctx || !this.grainOffscreen) return null;
+        return { canvas: this.grainOffscreen, ctx };
+      },
+      canvasWidth,
+      canvasHeight,
+    };
   }
 
   private renderStrokeToContext(
     ctx: CanvasRenderingContext2D,
     stroke: Stroke,
     styles: Record<string, PenStyle>,
-    lod: LodLevel = 0,
+    lod: 0 | 1 | 2 | 3 = 0,
     useDarkColors?: boolean,
   ): void {
-    // Get or generate Path2D (LOD-aware cache key)
-    const cacheKey = lodCacheKey(stroke.id, lod);
-    let path = this.pathCache.get(cacheKey);
-    let decodedPoints: StrokePoint[] | undefined;
-    if (!path) {
-      const style = resolveStyle(stroke, styles);
-      decodedPoints = decodePoints(stroke.pts);
-      let points = decodedPoints;
-      if (lod > 0) {
-        points = simplifyPoints(points, lod);
-      }
-      path = generateStrokePath(points, style) ?? undefined;
-      if (path) {
-        this.pathCache.set(cacheKey, path);
-      }
-    }
-
-    if (!path) return;
-
-    const style = resolveStyle(stroke, styles);
     const dark = useDarkColors ?? this.isDarkMode;
-    const color = resolveColor(style.color, dark);
-    const penConfig = getPenConfig(style.pen);
-
-    // Grain-enabled strokes are rendered in isolation on an offscreen canvas
-    // so destination-out only affects this stroke, allowing overlapping strokes
-    // to show through grain holes correctly.
-    if (lod === 0 && penConfig.grain?.enabled) {
-      const strength = this.grainStrengthOverrides.get(style.pen) ?? penConfig.grain.strength;
-      if (strength > 0) {
-        this.renderStrokeWithGrain(ctx, path, color, style.opacity, strength, stroke.bbox[0], stroke.bbox[1], stroke.bbox);
-        return;
-      }
-    }
-
-    if (penConfig.highlighterMode) {
-      // Highlighter: render at full opacity, then composite at reduced alpha
-      // This prevents intra-stroke opacity stacking artifacts
-      ctx.save();
-      ctx.globalAlpha = penConfig.baseOpacity;
-      ctx.globalCompositeOperation = "multiply";
-      ctx.fillStyle = color;
-      ctx.fill(path);
-      ctx.restore();
-    } else {
-      ctx.fillStyle = color;
-      ctx.globalAlpha = style.opacity;
-      ctx.fill(path);
-      ctx.globalAlpha = 1;
-    }
-
-    // Fountain pen ink pooling (skip at high LOD and for italic nib strokes)
-    if (style.pen === "fountain" && lod === 0 && style.nibAngle == null) {
-      const points = decodedPoints ?? decodePoints(stroke.pts);
-      const pools = detectInkPools(points, style.width);
-      if (pools.length > 0) {
-        renderInkPools(ctx, pools, color);
-      }
-    }
+    const grainCtx = this.getGrainRenderContext(
+      this.staticCanvas.width,
+      this.staticCanvas.height,
+    );
+    renderStrokeToContext(ctx, stroke, styles, lod, dark, this.pathCache, grainCtx);
   }
 
-  private getGrainPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
-    const cached = this.grainPatternCache.get(ctx);
-    if (cached) return cached;
-
-    if (!this.grainGenerator) return null;
-    const pattern = this.grainGenerator.getPattern(ctx);
-    if (pattern) {
-      this.grainPatternCache.set(ctx, pattern);
-    }
-    return pattern;
-  }
-
-  private applyGrainToStroke(
+  private applyGrainToStrokeLocal(
     ctx: CanvasRenderingContext2D,
     path: Path2D,
     grainStrength: number,
     anchorX: number,
     anchorY: number,
   ): void {
-    const pattern = this.getGrainPattern(ctx);
-    if (!pattern) return;
-
-    ctx.save();
-    ctx.clip(path);
-    // Anchor the grain pattern to the stroke's starting point so each stroke
-    // gets a unique grain alignment. Two strokes crossing the same area will
-    // have different grain because they start at different positions.
-    // Scale of 0.3 = each tile pixel maps to 0.3 world units, producing grain
-    // features of ~1.2 world units (~3-6 screen pixels at typical iPad zoom).
-    pattern.setTransform(
-      new DOMMatrix().translateSelf(anchorX, anchorY).scaleSelf(0.3, 0.3)
+    const grainCtx = this.getGrainRenderContext(
+      this.activeCanvas.width,
+      this.activeCanvas.height,
     );
-    // destination-out: the pattern's alpha punches transparency holes in the
-    // stroke, simulating paper texture gaps where graphite didn't deposit.
-    ctx.globalCompositeOperation = "destination-out";
-    ctx.globalAlpha = grainStrength;
-    ctx.fillStyle = pattern;
-    ctx.fill(path);
-    ctx.restore();
+    applyGrainToStroke(ctx, path, grainStrength, anchorX, anchorY, grainCtx);
   }
 
   /**
@@ -822,84 +902,6 @@ export class Renderer {
     return this.grainOffscreenCtx;
   }
 
-  /**
-   * Render a single stroke with grain in isolation on an offscreen canvas,
-   * then composite back to the target. This ensures destination-out grain
-   * only affects this stroke, so overlapping strokes show through grain holes.
-   *
-   * When a world-space bbox is provided, the offscreen canvas is scoped to
-   * just the stroke's screen-pixel region instead of the full canvas, reducing
-   * per-stroke pixel work by 10-20× for typical strokes.
-   */
-  private renderStrokeWithGrain(
-    targetCtx: CanvasRenderingContext2D,
-    path: Path2D,
-    color: string,
-    opacity: number,
-    grainStrength: number,
-    anchorX: number,
-    anchorY: number,
-    bbox?: [number, number, number, number],
-  ): void {
-    const m = targetCtx.getTransform();
-
-    // If bbox provided, scope the offscreen to just the stroke's screen region
-    const region = bbox
-      ? computeScreenBBox(bbox, m, this.staticCanvas.width, this.staticCanvas.height)
-      : null;
-
-    if (bbox && !region) return; // Fully off-screen, skip
-
-    const offW = region ? region.sw : this.staticCanvas.width;
-    const offH = region ? region.sh : this.staticCanvas.height;
-
-    const offCtx = this.ensureGrainOffscreen(offW, offH);
-    if (!offCtx || !this.grainOffscreen) {
-      // Fallback: draw directly without isolation
-      targetCtx.fillStyle = color;
-      targetCtx.globalAlpha = opacity;
-      targetCtx.fill(path);
-      targetCtx.globalAlpha = 1;
-      return;
-    }
-
-    // Clear only the used region
-    offCtx.setTransform(1, 0, 0, 1, 0, 0);
-    offCtx.clearRect(0, 0, offW, offH);
-
-    if (region) {
-      // Offset transform so the bbox's screen origin maps to offscreen (0,0)
-      offCtx.setTransform(m.a, m.b, m.c, m.d, m.e - region.sx, m.f - region.sy);
-    } else {
-      // Copy the current transform (DPR + camera) from the target context
-      offCtx.setTransform(m);
-    }
-
-    // Draw stroke fill on the isolated offscreen canvas
-    offCtx.fillStyle = color;
-    offCtx.globalAlpha = opacity;
-    offCtx.fill(path);
-    offCtx.globalAlpha = 1;
-
-    // Apply grain — destination-out only affects this one stroke
-    this.applyGrainToStroke(offCtx, path, grainStrength, anchorX, anchorY);
-
-    // Composite the grain-textured stroke back to the main canvas.
-    // Identity transform so offscreen pixels map 1:1 to target pixels.
-    // Any active clip region (e.g., page rect) from the target is preserved.
-    targetCtx.save();
-    targetCtx.setTransform(1, 0, 0, 1, 0, 0);
-    if (region) {
-      targetCtx.drawImage(
-        this.grainOffscreen,
-        0, 0, region.sw, region.sh,
-        region.sx, region.sy, region.sw, region.sh,
-      );
-    } else {
-      targetCtx.drawImage(this.grainOffscreen, 0, 0);
-    }
-    targetCtx.restore();
-  }
 
   private clearCanvas(ctx: CanvasRenderingContext2D): void {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -955,31 +957,6 @@ export class Renderer {
   }
 }
 
-/**
- * Resolve the effective PenStyle for a stroke, merging base style with overrides.
- */
-function resolveStyle(
-  stroke: Stroke,
-  styles: Record<string, PenStyle>
-): PenStyle {
-  const base = styles[stroke.style];
-  if (!base) {
-    // Fallback to a default style
-    return {
-      pen: "ballpoint",
-      color: "#1a1a1a",
-      width: 2,
-      opacity: 1,
-      smoothing: 0.5,
-      pressureCurve: 1,
-      tiltSensitivity: 0,
-    };
-  }
-
-  if (!stroke.styleOverrides) return base;
-  return { ...base, ...stroke.styleOverrides };
-}
-
 function bboxOverlaps(
   a: [number, number, number, number],
   b: [number, number, number, number]
@@ -988,53 +965,279 @@ function bboxOverlaps(
 }
 
 /**
- * Transform a world-space bounding box to screen-pixel coordinates,
- * add a 2px anti-aliasing margin, and clip to canvas bounds.
- * Returns null if the bbox is fully off-screen.
+ * Orchestrates tile-based static stroke rendering.
+ * Manages TileGrid, TileCache, TileRenderer, TileCompositor, and TileRenderScheduler.
+ *
+ * Tiles have a fixed world size. The grid never changes with zoom — only the
+ * rendering resolution (canvas pixel size) varies per zoom band. Each grid
+ * position has one cache slot.
  */
-export function computeScreenBBox(
-  bbox: [number, number, number, number],
-  transform: DOMMatrix,
-  canvasWidth: number,
-  canvasHeight: number,
-): { sx: number; sy: number; sw: number; sh: number } | null {
-  const { a, b, c, d, e, f } = transform;
+class TiledStaticLayer {
+  private camera: Camera;
+  private config: TileGridConfig;
+  private grid: TileGrid;
+  private cache: TileCache;
+  readonly tileRenderer: TileRenderer;
+  private compositor: TileCompositor;
+  private scheduler: TileRenderScheduler;
+  private gestureActive = false;
 
-  // Transform all four corners of the world-space bbox to screen pixels
-  const corners: [number, number][] = [
-    [bbox[0], bbox[1]],
-    [bbox[2], bbox[1]],
-    [bbox[0], bbox[3]],
-    [bbox[2], bbox[3]],
-  ];
+  // Cached state for scheduler callbacks
+  private currentDoc: PaperDocument | null = null;
+  private currentPageLayout: PageRect[] = [];
+  private currentSpatialIndex: SpatialIndex | null = null;
+  private currentIsDarkMode = false;
+  private currentCtx: CanvasRenderingContext2D | null = null;
+  private currentCanvas: HTMLCanvasElement | null = null;
+  private currentScreenWidth = 0;
+  private currentScreenHeight = 0;
 
-  let minSx = Infinity, minSy = Infinity;
-  let maxSx = -Infinity, maxSy = -Infinity;
+  constructor(camera: Camera, config: TileGridConfig, pathCache: StrokePathCache) {
+    this.camera = camera;
+    this.config = config;
+    this.grid = new TileGrid(config);
+    this.cache = new TileCache(config);
+    this.tileRenderer = new TileRenderer(this.grid, config, pathCache);
+    this.compositor = new TileCompositor(this.grid, config);
 
-  for (const [wx, wy] of corners) {
-    const px = a * wx + c * wy + e;
-    const py = b * wx + d * wy + f;
-    if (px < minSx) minSx = px;
-    if (py < minSy) minSy = py;
-    if (px > maxSx) maxSx = px;
-    if (py > maxSy) maxSy = py;
+    this.scheduler = new TileRenderScheduler(
+      (key) => this.renderOneTile(key),
+      () => this.onSchedulerBatchComplete(),
+    );
   }
 
-  // Add 2px anti-aliasing margin, then clip to canvas bounds
-  let sx = Math.floor(minSx) - 2;
-  let sy = Math.floor(minSy) - 2;
-  let sx2 = Math.ceil(maxSx) + 2;
-  let sy2 = Math.ceil(maxSy) + 2;
+  /**
+   * Render visible tiles and composite them onto the static canvas.
+   * Called from Renderer.renderStaticLayer() — typically at gesture end
+   * or on document load/undo/redo.
+   *
+   * Re-renders tiles that are dirty or at the wrong zoom band resolution.
+   */
+  renderVisible(
+    ctx: CanvasRenderingContext2D,
+    canvas: HTMLCanvasElement,
+    screenWidth: number,
+    screenHeight: number,
+    doc: PaperDocument,
+    pageLayout: PageRect[],
+    spatialIndex: SpatialIndex,
+    isDarkMode: boolean,
+  ): void {
+    this.currentDoc = doc;
+    this.currentPageLayout = pageLayout;
+    this.currentSpatialIndex = spatialIndex;
+    this.currentIsDarkMode = isDarkMode;
+    this.currentCtx = ctx;
+    this.currentCanvas = canvas;
+    this.currentScreenWidth = screenWidth;
+    this.currentScreenHeight = screenHeight;
 
-  sx = Math.max(0, sx);
-  sy = Math.max(0, sy);
-  sx2 = Math.min(canvasWidth, sx2);
-  sy2 = Math.min(canvasHeight, sy2);
+    this.scheduler.cancel();
 
-  const sw = sx2 - sx;
-  const sh = sy2 - sy;
+    const currentZoomBand = zoomToZoomBand(this.camera.zoom);
+    const visibleTiles = this.grid.getVisibleTiles(this.camera, screenWidth, screenHeight);
+    const visibleKeySet = new Set(visibleTiles.map(tileKeyString));
 
-  if (sw <= 0 || sh <= 0) return null;
+    // Protect visible tiles from eviction during the render loop.
+    // Without this, allocating a new tile can evict one we just rendered.
+    this.cache.protect(visibleKeySet);
 
-  return { sx, sy, sw, sh };
+    // Render all visible tiles synchronously at the correct resolution
+    for (const key of visibleTiles) {
+      const worldBounds = this.grid.tileBounds(key.col, key.row);
+      const entry = this.cache.getStale(key);
+
+      if (!entry) {
+        // New tile — allocate and render
+        const newEntry = this.cache.allocate(key, worldBounds, currentZoomBand);
+        this.tileRenderer.renderTile(newEntry, doc, pageLayout, spatialIndex, isDarkMode);
+        this.cache.markClean(key);
+      } else if (entry.dirty || entry.renderedAtBand !== currentZoomBand) {
+        // Dirty or wrong resolution — re-allocate (handles canvas resize) and render
+        const updated = this.cache.allocate(key, worldBounds, currentZoomBand);
+        this.tileRenderer.renderTile(updated, doc, pageLayout, spatialIndex, isDarkMode);
+        this.cache.markClean(key);
+      }
+    }
+
+    this.cache.unprotect();
+
+    // Schedule background rendering for dirty non-visible tiles
+    const dirtyTiles = this.cache.getDirtyTiles(visibleKeySet);
+    if (dirtyTiles.length > 0) {
+      this.scheduler.schedule(
+        dirtyTiles.map(t => t.key),
+        visibleKeySet,
+      );
+    }
+
+    // Composite all available tiles onto the canvas
+    this.compositor.composite(ctx, canvas, this.camera, screenWidth, screenHeight, this.cache);
+  }
+
+  /**
+   * Incrementally add a stroke to affected tiles and re-composite.
+   */
+  bakeStroke(
+    stroke: Stroke,
+    ctx: CanvasRenderingContext2D,
+    canvas: HTMLCanvasElement,
+    screenWidth: number,
+    screenHeight: number,
+    doc: PaperDocument,
+    pageLayout: PageRect[],
+    spatialIndex: SpatialIndex,
+    isDarkMode: boolean,
+  ): void {
+    this.currentDoc = doc;
+    this.currentPageLayout = pageLayout;
+    this.currentSpatialIndex = spatialIndex;
+    this.currentIsDarkMode = isDarkMode;
+    this.currentCtx = ctx;
+    this.currentCanvas = canvas;
+    this.currentScreenWidth = screenWidth;
+    this.currentScreenHeight = screenHeight;
+
+    const currentZoomBand = zoomToZoomBand(this.camera.zoom);
+    const affectedTiles = this.grid.getTilesForWorldBBox(stroke.bbox);
+
+    // Protect visible tiles from eviction during stroke bake
+    const visibleTiles = this.grid.getVisibleTiles(this.camera, screenWidth, screenHeight);
+    this.cache.protect(new Set(visibleTiles.map(tileKeyString)));
+
+    for (const key of affectedTiles) {
+      const worldBounds = this.grid.tileBounds(key.col, key.row);
+      let entry = this.cache.getStale(key);
+      if (!entry) {
+        entry = this.cache.allocate(key, worldBounds, currentZoomBand);
+      }
+      // Full re-render of the tile (needed for correct overlapping)
+      this.tileRenderer.renderTile(entry, doc, pageLayout, spatialIndex, isDarkMode);
+      this.cache.markClean(key);
+    }
+
+    this.cache.unprotect();
+
+    // Re-composite
+    this.compositor.composite(ctx, canvas, this.camera, screenWidth, screenHeight, this.cache);
+  }
+
+  /**
+   * Update during a gesture: composite cached tiles and schedule async
+   * rendering for any missing tiles (newly visible from pan/zoom-out).
+   *
+   * - Zoom in: no new tiles needed (viewport shrinks). Existing tiles
+   *   are scaled — slightly blurry but acceptable.
+   * - Zoom out: new grid positions are scheduled for rendering at the
+   *   current zoom band. Once rendered, they are not re-rendered until
+   *   gesture end.
+   */
+  gestureUpdate(
+    ctx: CanvasRenderingContext2D,
+    canvas: HTMLCanvasElement,
+    screenWidth: number,
+    screenHeight: number,
+  ): void {
+    this.gestureActive = true;
+    this.currentCtx = ctx;
+    this.currentCanvas = canvas;
+    this.currentScreenWidth = screenWidth;
+    this.currentScreenHeight = screenHeight;
+
+    // Composite whatever tiles are cached (fast — just drawImage, any resolution)
+    this.compositor.composite(
+      ctx, canvas, this.camera, screenWidth, screenHeight, this.cache,
+    );
+
+    // Identify tiles not yet cached at any resolution
+    const visibleTiles = this.grid.getVisibleTiles(this.camera, screenWidth, screenHeight);
+    const visibleKeySet = new Set(visibleTiles.map(tileKeyString));
+    const missing: TileKey[] = [];
+    for (const key of visibleTiles) {
+      if (!this.cache.getStale(key)) {
+        missing.push(key);
+      }
+    }
+
+    // Protect visible tiles from eviction by async renders
+    this.cache.protect(visibleKeySet);
+
+    // Schedule missing tiles for async rendering
+    if (missing.length > 0) {
+      this.scheduler.schedule(missing, visibleKeySet);
+    }
+  }
+
+  /**
+   * End gesture mode. Cancels the scheduler to prevent stale composites
+   * between now and the next renderVisible() call.
+   */
+  endGesture(): void {
+    this.gestureActive = false;
+    this.scheduler.cancel();
+    this.cache.unprotect();
+  }
+
+  invalidateStroke(strokeId: string): void {
+    this.cache.invalidateStroke(strokeId);
+  }
+
+  invalidateAll(): void {
+    this.cache.invalidateAll();
+  }
+
+  /**
+   * Render a single tile. Called by the scheduler during async processing.
+   * Renders at the current zoom band (the zoom at the moment of rendering).
+   *
+   * Skips tiles that are already clean — they may have been rendered
+   * synchronously by renderVisible() after being scheduled.
+   */
+  private renderOneTile(key: TileKey): void {
+    if (!this.currentDoc || !this.currentSpatialIndex) return;
+
+    const entry = this.cache.getStale(key);
+
+    // Already rendered (e.g. by renderVisible after gesture end) — skip
+    if (entry && !entry.dirty) return;
+
+    const zoomBand = zoomToZoomBand(this.camera.zoom);
+    const worldBounds = this.grid.tileBounds(key.col, key.row);
+    const allocated = this.cache.allocate(key, worldBounds, zoomBand);
+    this.tileRenderer.renderTile(
+      allocated, this.currentDoc, this.currentPageLayout,
+      this.currentSpatialIndex, this.currentIsDarkMode,
+    );
+    this.cache.markClean(key);
+  }
+
+  /**
+   * Called by the scheduler after each batch of background tiles finishes.
+   * Re-composites so newly rendered tiles become visible.
+   *
+   * During a gesture, skip — the next gestureUpdate() (every ~16ms) will
+   * composite at the correct camera position. Compositing here with a
+   * stale camera snapshot causes edge tiles to flicker.
+   */
+  private onSchedulerBatchComplete(): void {
+    if (this.gestureActive) return;
+    if (!this.currentCtx || !this.currentCanvas) return;
+    this.compositor.composite(
+      this.currentCtx, this.currentCanvas,
+      this.camera, this.currentScreenWidth, this.currentScreenHeight,
+      this.cache,
+    );
+  }
+
+  destroy(): void {
+    this.scheduler.destroy();
+    this.cache.clear();
+    this.currentDoc = null;
+    this.currentSpatialIndex = null;
+    this.currentCtx = null;
+    this.currentCanvas = null;
+  }
 }
+
+// Re-export computeScreenBBox from StrokeRenderCore for backwards compatibility
+export { computeScreenBBox } from "./StrokeRenderCore";

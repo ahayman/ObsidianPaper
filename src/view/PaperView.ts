@@ -115,6 +115,9 @@ export class PaperView extends TextFileView {
     this.renderer.initGrain();
     this.renderer.setGrainStrength("pencil", this.settings.pencilGrainStrength);
 
+    // Enable tile-based rendering for better zoom/pan performance
+    this.renderer.enableTiling();
+
     // Initial resize
     const rect = container.getBoundingClientRect();
     if (rect.width > 0 && rect.height > 0) {
@@ -814,9 +817,15 @@ export class PaperView extends TextFileView {
 
   /**
    * Check whether the CSS-transformed overscan canvas still fully covers the viewport.
+   * When tile-based rendering is active, mid-gesture re-renders are not needed
+   * since tiles provide pre-rendered content beyond the viewport.
    */
   private isOverscanSufficient(tx: number, ty: number, scale: number): boolean {
     if (!this.renderer) return true;
+
+    // Tile-based rendering handles edge content via overscan tiles
+    if (this.renderer.isTilingEnabled) return true;
+
     const { x: ox, y: oy } = this.renderer.getOverscanOffset();
     const { width: ow, height: oh } = this.renderer.getOverscanCssSize();
 
@@ -1066,7 +1075,10 @@ export class PaperView extends TextFileView {
             this.spatialIndex.insert(stroke, this.document.strokes.length - 1);
             this.undoManager.pushAddStroke(stroke);
 
-            this.renderer?.bakeStroke(stroke, this.document.styles, pageRect, pageDark);
+            this.renderer?.bakeStroke(
+              stroke, this.document.styles, pageRect, pageDark,
+              this.document, this.pageLayout, this.spatialIndex,
+            );
 
             precompressStroke(stroke);
             this.renderer?.clearActiveLayer();
