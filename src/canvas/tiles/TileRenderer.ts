@@ -12,6 +12,7 @@ import { selectLodLevel } from "../../stroke/StrokeSimplifier";
 import { resolvePageBackground } from "../../color/ColorUtils";
 import { renderStrokeToContext } from "../StrokeRenderCore";
 import type { GrainRenderContext } from "../StrokeRenderCore";
+import { renderDeskFill, renderPageBackground } from "../BackgroundRenderer";
 
 function bboxOverlaps(
   a: [number, number, number, number],
@@ -53,7 +54,8 @@ export class TileRenderer {
   }
 
   /**
-   * Render all strokes intersecting a tile's world bounds onto its OffscreenCanvas.
+   * Render background and all strokes intersecting a tile's world bounds
+   * onto its OffscreenCanvas.
    */
   renderTile(
     tile: TileEntry,
@@ -78,7 +80,26 @@ export class TileRenderer {
     const ty = -tile.worldBounds[1] * scale;
     ctx.setTransform(scale, 0, 0, scale, tx, ty);
 
-    // Find intersecting strokes via spatial index
+    // lineScale: world units per pixel (for 1-pixel-wide lines/dots)
+    const lineScale = this.config.tileWorldSize / tilePhysical;
+
+    // ── Phase 1: Background ──
+    renderDeskFill(ctx, tile.worldBounds, isDarkMode);
+
+    for (const pageRect of pageLayout) {
+      const pageBbox: [number, number, number, number] = [
+        pageRect.x, pageRect.y,
+        pageRect.x + pageRect.width, pageRect.y + pageRect.height,
+      ];
+      if (!bboxOverlaps(pageBbox, tile.worldBounds)) continue;
+
+      const page = doc.pages[pageRect.pageIndex];
+      if (!page) continue;
+
+      renderPageBackground(ctx, page, pageRect, isDarkMode, lineScale);
+    }
+
+    // ── Phase 2: Strokes ──
     const strokeIds = spatialIndex.queryRect(
       tile.worldBounds[0], tile.worldBounds[1],
       tile.worldBounds[2], tile.worldBounds[3],
@@ -89,7 +110,6 @@ export class TileRenderer {
     const strokeIdSet = new Set(strokeIds);
     const grainCtx = this.getGrainRenderContext(tilePhysical, tilePhysical);
 
-    // Render strokes grouped by page with per-page clipping
     for (const pageRect of pageLayout) {
       const pageBbox: [number, number, number, number] = [
         pageRect.x, pageRect.y,
@@ -97,7 +117,6 @@ export class TileRenderer {
       ];
       if (!bboxOverlaps(pageBbox, tile.worldBounds)) continue;
 
-      // Determine page dark mode
       const page = doc.pages[pageRect.pageIndex];
       let pageDark = isDarkMode;
       if (page) {

@@ -12,7 +12,7 @@ import { getPenConfig } from "../stroke/PenConfigs";
 import type { PenType } from "../types";
 import { GrainTextureGenerator } from "./GrainTextureGenerator";
 import { selectLodLevel } from "../stroke/StrokeSimplifier";
-import { BackgroundRenderer } from "./BackgroundRenderer";
+import { BackgroundRenderer, DESK_COLORS } from "./BackgroundRenderer";
 import type { BackgroundConfig } from "./BackgroundRenderer";
 import { resolvePageBackground } from "../color/ColorUtils";
 import {
@@ -283,17 +283,12 @@ export class Renderer {
     this.pendingBakes = [];
 
     // Match container background to desk color so edges during CSS zoom look seamless
-    this.container.style.backgroundColor = this.isDarkMode ? "#111111" : "#e8e8e8";
+    this.container.style.backgroundColor = this.isDarkMode ? DESK_COLORS.dark : DESK_COLORS.light;
 
     if (this.tiledLayer && spatialIndex) {
       // ─── Tile-based path ─────────────────────────────────
-      // Background rendering still uses overscan approach
-      this.recalculateOverscan(pageLayout);
-      this.bgConfig.isDarkMode = this.isDarkMode;
-      this.backgroundRenderer.render(
-        this.bgConfig, pageLayout, doc.pages, afterBackground,
-        this.overscanOffsetX, this.overscanOffsetY,
-      );
+      // Background is rendered into tiles — hide the background canvas
+      this.backgroundCanvas.style.display = "none";
 
       // Static canvas: composited from tiles (viewport-sized, no overscan offset)
       this.staticCanvas.style.left = "0px";
@@ -306,6 +301,9 @@ export class Renderer {
           this.cssWidth, this.cssHeight, this.isMobile,
         );
       }
+
+      // Store overlay callback so it persists across composites (scheduler, gesture)
+      this.tiledLayer.setOverlay(afterBackground ?? null);
 
       this.tiledLayer.renderVisible(
         this.staticCtx, this.staticCanvas,
@@ -757,21 +755,19 @@ export class Renderer {
    * This avoids blank edges since cached tiles already cover beyond the viewport.
    */
   setGestureTransform(tx: number, ty: number, scale: number): void {
-    // Background canvas: always uses overscan + CSS transform
-    const oxAdj = tx + this.overscanOffsetX * (scale - 1);
-    const oyAdj = ty + this.overscanOffsetY * (scale - 1);
-    const overscanValue = `translate(${oxAdj}px, ${oyAdj}px) scale(${scale})`;
-    this.backgroundCanvas.style.transform = overscanValue;
-
     if (this.tiledLayer) {
-      // Tiled: composite cached tiles + schedule async renders for missing tiles.
-      // No CSS transform needed — compositing positions tiles correctly.
+      // Tiled: background is in tiles, no separate background canvas.
+      // Composite cached tiles + schedule async renders for missing tiles.
       this.tiledLayer.gestureUpdate(
         this.staticCtx, this.staticCanvas,
         this.cssWidth, this.cssHeight,
       );
     } else {
-      // Legacy: CSS-transform the overscan static canvas
+      // Legacy: CSS-transform the overscan background + static canvases
+      const oxAdj = tx + this.overscanOffsetX * (scale - 1);
+      const oyAdj = ty + this.overscanOffsetY * (scale - 1);
+      const overscanValue = `translate(${oxAdj}px, ${oyAdj}px) scale(${scale})`;
+      this.backgroundCanvas.style.transform = overscanValue;
       this.staticCanvas.style.transform = overscanValue;
     }
 
@@ -786,11 +782,10 @@ export class Renderer {
    * Call this at gesture end, followed by a real render.
    */
   clearGestureTransform(): void {
-    this.backgroundCanvas.style.transform = "";
-    // Static canvas only has a CSS transform in legacy mode
     if (this.tiledLayer) {
       this.tiledLayer.endGesture();
     } else {
+      this.backgroundCanvas.style.transform = "";
       this.staticCanvas.style.transform = "";
     }
     this.activeCanvas.style.transform = "";
@@ -831,6 +826,7 @@ export class Renderer {
   disableTiling(): void {
     this.tiledLayer?.destroy();
     this.tiledLayer = null;
+    this.backgroundCanvas.style.display = "";
   }
 
   /**
@@ -991,6 +987,8 @@ class TiledStaticLayer {
   private currentCanvas: HTMLCanvasElement | null = null;
   private currentScreenWidth = 0;
   private currentScreenHeight = 0;
+  /** Optional callback to draw overlays (e.g. page icons) after compositing. */
+  private overlayCallback: ((ctx: CanvasRenderingContext2D, visibleRect: [number, number, number, number]) => void) | null = null;
 
   constructor(camera: Camera, config: TileGridConfig, pathCache: StrokePathCache) {
     this.camera = camera;
@@ -1073,6 +1071,7 @@ class TiledStaticLayer {
 
     // Composite all available tiles onto the canvas
     this.compositor.composite(ctx, canvas, this.camera, screenWidth, screenHeight, this.cache);
+    this.drawOverlay();
   }
 
   /**
@@ -1120,6 +1119,7 @@ class TiledStaticLayer {
 
     // Re-composite
     this.compositor.composite(ctx, canvas, this.camera, screenWidth, screenHeight, this.cache);
+    this.drawOverlay();
   }
 
   /**
@@ -1148,6 +1148,7 @@ class TiledStaticLayer {
     this.compositor.composite(
       ctx, canvas, this.camera, screenWidth, screenHeight, this.cache,
     );
+    this.drawOverlay();
 
     // Identify tiles not yet cached at any resolution
     const visibleTiles = this.grid.getVisibleTiles(this.camera, screenWidth, screenHeight);
@@ -1176,6 +1177,27 @@ class TiledStaticLayer {
     this.gestureActive = false;
     this.scheduler.cancel();
     this.cache.unprotect();
+  }
+
+  /** Set a callback to draw overlays (page icons) after every composite. */
+  setOverlay(cb: ((ctx: CanvasRenderingContext2D, visibleRect: [number, number, number, number]) => void) | null): void {
+    this.overlayCallback = cb;
+  }
+
+  /** Draw the overlay in camera space on top of the current composite. */
+  private drawOverlay(): void {
+    if (!this.overlayCallback || !this.currentCtx) return;
+    const ctx = this.currentCtx;
+    ctx.save();
+    ctx.setTransform(this.config.dpr, 0, 0, this.config.dpr, 0, 0);
+    ctx.transform(
+      this.camera.zoom, 0, 0, this.camera.zoom,
+      -this.camera.x * this.camera.zoom,
+      -this.camera.y * this.camera.zoom,
+    );
+    const visibleRect = this.camera.getVisibleRect(this.currentScreenWidth, this.currentScreenHeight);
+    this.overlayCallback(ctx, visibleRect);
+    ctx.restore();
   }
 
   invalidateStroke(strokeId: string): void {
@@ -1227,11 +1249,13 @@ class TiledStaticLayer {
       this.camera, this.currentScreenWidth, this.currentScreenHeight,
       this.cache,
     );
+    this.drawOverlay();
   }
 
   destroy(): void {
     this.scheduler.destroy();
     this.cache.clear();
+    this.overlayCallback = null;
     this.currentDoc = null;
     this.currentSpatialIndex = null;
     this.currentCtx = null;

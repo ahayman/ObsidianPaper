@@ -8,7 +8,7 @@ export interface BackgroundConfig {
 }
 
 // Desk color (outside pages)
-const DESK_COLORS = {
+export const DESK_COLORS = {
   light: "#e8e8e8",
   dark: "#111111",
 };
@@ -30,6 +30,150 @@ const SHADOW_OFFSET_X = 0;
 const SHADOW_OFFSET_Y = 2;
 const SHADOW_BLUR = 8;
 const SHADOW_COLOR = "rgba(0, 0, 0, 0.20)";
+
+// ─── Standalone helpers for tile-based background rendering ──────────
+
+/**
+ * Fill a region with the desk color.
+ * The context should already have a world→pixel transform applied.
+ */
+export function renderDeskFill(
+  ctx: OffscreenCanvasRenderingContext2D,
+  worldBounds: [number, number, number, number],
+  isDarkMode: boolean,
+): void {
+  ctx.fillStyle = isDarkMode ? DESK_COLORS.dark : DESK_COLORS.light;
+  ctx.fillRect(
+    worldBounds[0], worldBounds[1],
+    worldBounds[2] - worldBounds[0], worldBounds[3] - worldBounds[1],
+  );
+}
+
+/**
+ * Render a page's shadow, fill, and pattern within a tile's world bounds.
+ * The context should already have a world→pixel transform applied.
+ *
+ * @param lineScale - reciprocal of the effective zoom for 1-pixel-wide lines,
+ *                    i.e. `tileWorldSize / tilePhysical`
+ */
+export function renderPageBackground(
+  ctx: OffscreenCanvasRenderingContext2D,
+  page: Page,
+  pageRect: PageRect,
+  isDarkMode: boolean,
+  lineScale: number,
+): void {
+  const { paperColor, patternTheme } = resolvePageBackground(
+    page.backgroundColor,
+    page.backgroundColorTheme,
+    isDarkMode,
+  );
+
+  // Shadow
+  ctx.save();
+  ctx.shadowOffsetX = SHADOW_OFFSET_X * lineScale;
+  ctx.shadowOffsetY = SHADOW_OFFSET_Y * lineScale;
+  ctx.shadowBlur = SHADOW_BLUR * lineScale;
+  ctx.shadowColor = SHADOW_COLOR;
+  ctx.fillStyle = paperColor;
+  ctx.fillRect(pageRect.x, pageRect.y, pageRect.width, pageRect.height);
+  ctx.restore();
+
+  // Clean fill (no shadow)
+  ctx.fillStyle = paperColor;
+  ctx.fillRect(pageRect.x, pageRect.y, pageRect.width, pageRect.height);
+
+  // Patterns
+  if (page.paperType !== "blank") {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(pageRect.x, pageRect.y, pageRect.width, pageRect.height);
+    ctx.clip();
+
+    const margins = page.margins;
+    const minX = pageRect.x + margins.left;
+    const minY = pageRect.y + margins.top;
+    const maxX = pageRect.x + pageRect.width - margins.right;
+    const maxY = pageRect.y + pageRect.height - margins.bottom;
+
+    if (minX < maxX && minY < maxY) {
+      switch (page.paperType) {
+        case "lined":
+          renderLines(ctx, patternTheme, page.lineSpacing, lineScale, minX, minY, maxX, maxY);
+          break;
+        case "grid":
+          renderGrid(ctx, patternTheme, page.gridSize, lineScale, minX, minY, maxX, maxY);
+          break;
+        case "dot-grid":
+          renderDotGrid(ctx, patternTheme, page.gridSize, lineScale, minX, minY, maxX, maxY);
+          break;
+      }
+    }
+
+    ctx.restore();
+  }
+}
+
+function renderLines(
+  ctx: OffscreenCanvasRenderingContext2D,
+  patternTheme: "light" | "dark",
+  lineSpacing: number,
+  lineScale: number,
+  minX: number, minY: number, maxX: number, maxY: number,
+): void {
+  ctx.strokeStyle = LINE_COLORS[patternTheme];
+  ctx.lineWidth = lineScale;
+  const startY = Math.ceil(minY / lineSpacing) * lineSpacing;
+  ctx.beginPath();
+  for (let y = startY; y <= maxY; y += lineSpacing) {
+    ctx.moveTo(minX, y);
+    ctx.lineTo(maxX, y);
+  }
+  ctx.stroke();
+}
+
+function renderGrid(
+  ctx: OffscreenCanvasRenderingContext2D,
+  patternTheme: "light" | "dark",
+  gridSize: number,
+  lineScale: number,
+  minX: number, minY: number, maxX: number, maxY: number,
+): void {
+  ctx.strokeStyle = LINE_COLORS[patternTheme];
+  ctx.lineWidth = lineScale;
+  const startX = Math.ceil(minX / gridSize) * gridSize;
+  const startY = Math.ceil(minY / gridSize) * gridSize;
+  ctx.beginPath();
+  for (let x = startX; x <= maxX; x += gridSize) {
+    ctx.moveTo(x, minY);
+    ctx.lineTo(x, maxY);
+  }
+  for (let y = startY; y <= maxY; y += gridSize) {
+    ctx.moveTo(minX, y);
+    ctx.lineTo(maxX, y);
+  }
+  ctx.stroke();
+}
+
+function renderDotGrid(
+  ctx: OffscreenCanvasRenderingContext2D,
+  patternTheme: "light" | "dark",
+  gridSize: number,
+  lineScale: number,
+  minX: number, minY: number, maxX: number, maxY: number,
+): void {
+  ctx.fillStyle = DOT_COLORS[patternTheme];
+  const dotRadius = 1.5 * lineScale;
+  const startX = Math.ceil(minX / gridSize) * gridSize;
+  const startY = Math.ceil(minY / gridSize) * gridSize;
+  for (let x = startX; x <= maxX; x += gridSize) {
+    for (let y = startY; y <= maxY; y += gridSize) {
+      ctx.beginPath();
+      ctx.arc(x, y, dotRadius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
 
 /**
  * Renders page-based backgrounds with desk color, page shadows,
