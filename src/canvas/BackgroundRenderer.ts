@@ -1,16 +1,11 @@
 import type { Page } from "../types";
 import type { Camera } from "./Camera";
 import type { PageRect } from "../document/PageLayout";
+import { resolvePageBackground } from "../color/ColorUtils";
 
 export interface BackgroundConfig {
   isDarkMode: boolean;
 }
-
-// Light/dark paper fill colors
-const PAPER_COLORS = {
-  light: "#fffff8",
-  dark: "#1e1e1e",
-};
 
 // Desk color (outside pages)
 const DESK_COLORS = {
@@ -62,7 +57,16 @@ export class BackgroundRenderer {
     this.dpr = dpr;
   }
 
-  render(config: BackgroundConfig, pageLayout: PageRect[], pages: Page[]): void {
+  /**
+   * Render pages and return the context (still in camera space) and visible rect
+   * so callers can draw additional overlays before the camera transform is reset.
+   */
+  render(
+    config: BackgroundConfig,
+    pageLayout: PageRect[],
+    pages: Page[],
+    afterPages?: (ctx: CanvasRenderingContext2D, visibleRect: [number, number, number, number]) => void,
+  ): void {
     const ctx = this.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.scale(this.dpr, this.dpr);
@@ -78,8 +82,6 @@ export class BackgroundRenderer {
     const visibleRect = this.camera.getVisibleRect(this.cssWidth, this.cssHeight);
     const [visMinX, visMinY, visMaxX, visMaxY] = visibleRect;
 
-    const paperColor = config.isDarkMode ? PAPER_COLORS.dark : PAPER_COLORS.light;
-
     // 3. For each page, render shadow + background + patterns
     for (const pageRect of pageLayout) {
       // Cull pages that aren't visible
@@ -94,6 +96,13 @@ export class BackgroundRenderer {
 
       const page = pages[pageRect.pageIndex];
       if (!page) continue;
+
+      // Resolve per-page background color and pattern theme
+      const { paperColor, patternTheme } = resolvePageBackground(
+        page.backgroundColor,
+        page.backgroundColorTheme,
+        config.isDarkMode,
+      );
 
       // a. Draw drop shadow
       ctx.save();
@@ -116,19 +125,24 @@ export class BackgroundRenderer {
         ctx.rect(pageRect.x, pageRect.y, pageRect.width, pageRect.height);
         ctx.clip();
 
-        this.renderPatternForPage(ctx, config, page, pageRect);
+        this.renderPatternForPage(ctx, patternTheme, page, pageRect);
 
         ctx.restore();
       }
     }
 
-    // 4. Reset camera transform
+    // 4. Render any additional overlays (e.g. page menu icons) in camera space
+    if (afterPages) {
+      afterPages(ctx, visibleRect);
+    }
+
+    // 5. Reset camera transform
     this.camera.resetContext(ctx);
   }
 
   private renderPatternForPage(
     ctx: CanvasRenderingContext2D,
-    config: BackgroundConfig,
+    patternTheme: "light" | "dark",
     page: Page,
     rect: PageRect
   ): void {
@@ -144,29 +158,27 @@ export class BackgroundRenderer {
 
     switch (page.paperType) {
       case "lined":
-        this.renderLines(ctx, config, page.lineSpacing, minX, minY, maxX, maxY);
+        this.renderLines(ctx, patternTheme, page.lineSpacing, minX, minY, maxX, maxY);
         break;
       case "grid":
-        this.renderGrid(ctx, config, page.gridSize, minX, minY, maxX, maxY);
+        this.renderGrid(ctx, patternTheme, page.gridSize, minX, minY, maxX, maxY);
         break;
       case "dot-grid":
-        this.renderDotGrid(ctx, config, page.gridSize, minX, minY, maxX, maxY);
+        this.renderDotGrid(ctx, patternTheme, page.gridSize, minX, minY, maxX, maxY);
         break;
     }
   }
 
   private renderLines(
     ctx: CanvasRenderingContext2D,
-    config: BackgroundConfig,
+    patternTheme: "light" | "dark",
     lineSpacing: number,
     minX: number,
     minY: number,
     maxX: number,
     maxY: number
   ): void {
-    const color = config.isDarkMode ? LINE_COLORS.dark : LINE_COLORS.light;
-
-    ctx.strokeStyle = color;
+    ctx.strokeStyle = LINE_COLORS[patternTheme];
     ctx.lineWidth = 1 / this.camera.zoom;
 
     const startY = Math.ceil(minY / lineSpacing) * lineSpacing;
@@ -181,16 +193,14 @@ export class BackgroundRenderer {
 
   private renderGrid(
     ctx: CanvasRenderingContext2D,
-    config: BackgroundConfig,
+    patternTheme: "light" | "dark",
     gridSize: number,
     minX: number,
     minY: number,
     maxX: number,
     maxY: number
   ): void {
-    const color = config.isDarkMode ? LINE_COLORS.dark : LINE_COLORS.light;
-
-    ctx.strokeStyle = color;
+    ctx.strokeStyle = LINE_COLORS[patternTheme];
     ctx.lineWidth = 1 / this.camera.zoom;
 
     const startX = Math.ceil(minX / gridSize) * gridSize;
@@ -210,17 +220,15 @@ export class BackgroundRenderer {
 
   private renderDotGrid(
     ctx: CanvasRenderingContext2D,
-    config: BackgroundConfig,
+    patternTheme: "light" | "dark",
     gridSize: number,
     minX: number,
     minY: number,
     maxX: number,
     maxY: number
   ): void {
-    const color = config.isDarkMode ? DOT_COLORS.dark : DOT_COLORS.light;
+    ctx.fillStyle = DOT_COLORS[patternTheme];
     const dotRadius = 1.5 / this.camera.zoom;
-
-    ctx.fillStyle = color;
 
     const startX = Math.ceil(minX / gridSize) * gridSize;
     const startY = Math.ceil(minY / gridSize) * gridSize;

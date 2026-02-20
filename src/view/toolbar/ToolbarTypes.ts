@@ -4,7 +4,7 @@ export interface PenPreset {
   id: string;
   name: string;
   penType: PenType;
-  colorId: string;         // Semantic ID ("ink-black") or "#hex"
+  colorId: string;         // Dual-hex ("#light|#dark") or single "#hex"
   width: number;
   smoothing: number;       // 0-1
   nibAngle?: number;       // Radians, fountain only

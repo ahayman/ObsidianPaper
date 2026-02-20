@@ -11,7 +11,7 @@ import { PAGE_SIZE_PRESETS } from "../types";
 
 const DEFAULT_STYLE: PenStyle = {
   pen: "ballpoint",
-  color: "ink-black",
+  color: "#1a1a1a|#e8e8e8",
   width: 2.0,
   opacity: 1.0,
   smoothing: 0.5,

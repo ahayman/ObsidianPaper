@@ -1,7 +1,7 @@
 import type { PenType } from "../../types";
 import type { PenPreset, ToolbarPosition, ToolbarState } from "./ToolbarTypes";
-import { COLOR_PALETTE } from "../../color/ColorPalette";
 import { getPenConfig } from "../../stroke/PenConfigs";
+import { ColorPickerPanel } from "./ColorPickerPanel";
 
 const PEN_TYPES: { type: PenType; label: string }[] = [
   { type: "ballpoint", label: "Ballpoint" },
@@ -53,8 +53,7 @@ export class CustomizePopover {
   private nibThicknessValue: HTMLElement | null = null;
   private nibPressureSlider: HTMLInputElement | null = null;
   private nibPressureValue: HTMLElement | null = null;
-  private colorSwatchEls: Map<string, HTMLElement> = new Map();
-  private hexInput: HTMLInputElement | null = null;
+  private colorPicker: ColorPickerPanel | null = null;
   private penTypeBtns: Map<PenType, HTMLElement> = new Map();
   private positionBtns: Map<ToolbarPosition, HTMLElement> = new Map();
 
@@ -189,60 +188,13 @@ export class CustomizePopover {
   private buildColorSection(parent: HTMLElement): void {
     const section = parent.createEl("div", { cls: "paper-popover__section" });
     section.createEl("div", { cls: "paper-popover__section-title", text: "Color" });
-    const swatches = section.createEl("div", { cls: "paper-popover__colors" });
 
-    for (const color of COLOR_PALETTE) {
-      const swatch = swatches.createEl("button", {
-        cls: "paper-popover__color-swatch",
-        attr: { "aria-label": color.name },
-      });
-      swatch.setCssProps({ "--swatch-color": this.isDark ? color.dark : color.light });
-      if (color.id === this.state.colorId) swatch.addClass("is-active");
-      this.colorSwatchEls.set(color.id, swatch);
-
-      swatch.addEventListener("click", () => {
-        this.selectColor(color.id);
-      });
-    }
-
-    // Hex input
-    const hexRow = section.createEl("div", { cls: "paper-popover__hex-row" });
-    hexRow.createEl("span", { text: "#", cls: "paper-popover__hex-prefix" });
-    this.hexInput = hexRow.createEl("input", {
-      cls: "paper-popover__hex-input",
-      type: "text",
-      attr: {
-        placeholder: "Hex color",
-        maxlength: "7",
+    this.colorPicker = new ColorPickerPanel(section, this.state.colorId, {
+      onColorSelect: (colorId) => {
+        this.state.colorId = colorId;
+        this.callbacks.onStateChange({ colorId });
       },
     });
-    if (this.state.colorId.startsWith("#")) {
-      this.hexInput.value = this.state.colorId.slice(1);
-    }
-
-    this.hexInput.addEventListener("change", () => {
-      let hex = this.hexInput!.value.trim();
-      if (!hex.startsWith("#")) hex = "#" + hex;
-      if (/^#[0-9A-Fa-f]{3,8}$/.test(hex)) {
-        this.selectColor(hex);
-      }
-    });
-  }
-
-  private selectColor(colorId: string): void {
-    // Deselect all swatches
-    for (const [, el] of this.colorSwatchEls) el.removeClass("is-active");
-
-    if (!colorId.startsWith("#")) {
-      const swatch = this.colorSwatchEls.get(colorId);
-      if (swatch) swatch.addClass("is-active");
-      if (this.hexInput) this.hexInput.value = "";
-    } else {
-      if (this.hexInput) this.hexInput.value = colorId.slice(1);
-    }
-
-    this.state.colorId = colorId;
-    this.callbacks.onStateChange({ colorId });
   }
 
   // ─── Slider Helpers ────────────────────────────────────────
@@ -417,11 +369,7 @@ export class CustomizePopover {
 
   setDarkMode(isDark: boolean): void {
     this.isDark = isDark;
-    // Update color swatches
-    for (const color of COLOR_PALETTE) {
-      const el = this.colorSwatchEls.get(color.id);
-      if (el) el.setCssProps({ "--swatch-color": isDark ? color.dark : color.light });
-    }
+    // Color picker always shows both light/dark variants — no update needed
   }
 
   setPosition(position: ToolbarPosition): void {
@@ -434,6 +382,7 @@ export class CustomizePopover {
 
   destroy(): void {
     document.removeEventListener("keydown", this.handleKeyDown);
+    this.colorPicker?.destroy();
     this.backdrop.remove();
     this.el.remove();
   }

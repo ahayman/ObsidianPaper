@@ -82,6 +82,9 @@ export interface PageMargins {
   right: number;  // World units
 }
 
+export type PageBackgroundColor = string; // "auto" | "light" | "dark" | hex color
+export type PageBackgroundTheme = "auto" | "light" | "dark";
+
 export interface Page {
   id: string;
   size: PageSize;
@@ -90,6 +93,8 @@ export interface Page {
   lineSpacing: number;
   gridSize: number;
   margins: PageMargins;
+  backgroundColor?: PageBackgroundColor;      // Default: "auto" (theme-adaptive)
+  backgroundColorTheme?: PageBackgroundTheme;  // Default: "auto" (inferred from backgroundColor)
 }
 
 export interface DocumentMeta {
@@ -137,6 +142,8 @@ export interface SerializedPage {
   mb?: number;      // marginBottom
   ml?: number;      // marginLeft
   mr?: number;      // marginRight
+  bg?: string;      // backgroundColor, omit if "auto" or undefined
+  bgt?: string;     // backgroundColorTheme, omit if "auto" or undefined
 }
 
 export interface SerializedDocument {

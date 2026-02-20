@@ -39,7 +39,7 @@ describe("HoverCursor", () => {
   let cursor: HoverCursor;
 
   const defaultConfig: HoverCursorConfig = {
-    colorId: "ink-black",
+    colorId: "#1a1a1a|#e8e8e8",
     width: 2,
     isDarkMode: false,
     isEraser: false,

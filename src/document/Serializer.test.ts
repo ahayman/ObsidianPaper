@@ -83,7 +83,7 @@ describe("Serializer", () => {
       const doc = createEmptyDocument();
       const blueStyle: PenStyle = {
         pen: "brush",
-        color: "ink-blue",
+        color: "#2563eb|#60a5fa",
         colorDark: "#60a5fa",
         width: 8,
         opacity: 1,
@@ -98,7 +98,7 @@ describe("Serializer", () => {
 
       expect(restored.styles["my-blue"]).toBeDefined();
       expect(restored.styles["my-blue"].pen).toBe("brush");
-      expect(restored.styles["my-blue"].color).toBe("ink-blue");
+      expect(restored.styles["my-blue"].color).toBe("#2563eb|#60a5fa");
       expect(restored.styles["my-blue"].colorDark).toBe("#60a5fa");
       expect(restored.styles["my-blue"].width).toBe(8);
     });

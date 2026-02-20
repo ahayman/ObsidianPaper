@@ -3,6 +3,7 @@ import type {
   PenStyle,
   Stroke,
   Page,
+  PageBackgroundTheme,
   SerializedDocument,
   SerializedStroke,
   SerializedPenStyle,
@@ -145,11 +146,19 @@ function serializePage(page: Page): SerializedPage {
     if (page.margins.right !== 36) result.mr = page.margins.right;
   }
 
+  // Background — omit if "auto" or undefined
+  if (page.backgroundColor && page.backgroundColor !== "auto") {
+    result.bg = page.backgroundColor;
+  }
+  if (page.backgroundColorTheme && page.backgroundColorTheme !== "auto") {
+    result.bgt = page.backgroundColorTheme;
+  }
+
   return result;
 }
 
 function deserializePage(s: SerializedPage): Page {
-  return {
+  const page: Page = {
     id: s.id,
     size: { width: s.w, height: s.h },
     orientation: (s.o as PageOrientation) ?? "portrait",
@@ -163,6 +172,15 @@ function deserializePage(s: SerializedPage): Page {
       right: s.mr ?? 36,
     },
   };
+
+  if (s.bg) {
+    page.backgroundColor = s.bg;
+  }
+  if (s.bgt) {
+    page.backgroundColorTheme = s.bgt as PageBackgroundTheme;
+  }
+
+  return page;
 }
 
 function serializeStyles(

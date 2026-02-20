@@ -1,5 +1,5 @@
 import type { PenPreset } from "./ToolbarTypes";
-import { resolveColor } from "../../color/ColorPalette";
+import { parseColorId } from "../../color/ColorUtils";
 import { getPenConfig } from "../../stroke/PenConfigs";
 import { createPenIconElement } from "./PenIcons";
 
@@ -67,7 +67,7 @@ export class PresetButton {
   }
 
   private renderSwatch(): void {
-    const color = resolveColor(this.preset.colorId, this.isDark);
+    const { light, dark } = parseColorId(this.preset.colorId);
 
     // Highlighter presets render with reduced opacity
     const config = getPenConfig(this.preset.penType);
@@ -76,9 +76,12 @@ export class PresetButton {
     // Build layers: color background + SVG icon on top
     this.el.empty();
 
-    // Color layer — an inner div that we can style reliably regardless of button defaults
+    // Color layer — diagonal split showing dark (top-left) and light (bottom-right)
     const colorLayer = this.el.createEl("span", { cls: "paper-toolbar__preset-color" });
-    colorLayer.setCssProps({ "--preset-color": color });
+    colorLayer.setCssProps({
+      "--preset-color-dark": dark,
+      "--preset-color-light": light,
+    });
 
     // SVG icon layer
     const iconLayer = this.el.createEl("span", { cls: "paper-toolbar__preset-icon" });

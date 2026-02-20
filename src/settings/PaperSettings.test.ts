@@ -6,7 +6,7 @@ describe("PaperSettings", () => {
   describe("DEFAULT_SETTINGS", () => {
     it("should have valid pen defaults", () => {
       expect(DEFAULT_SETTINGS.defaultPenType).toBe("ballpoint");
-      expect(DEFAULT_SETTINGS.defaultColorId).toBe("ink-black");
+      expect(DEFAULT_SETTINGS.defaultColorId).toBe("#1a1a1a|#e8e8e8");
       expect(DEFAULT_SETTINGS.defaultWidth).toBe(2);
       expect(DEFAULT_SETTINGS.pressureSensitivity).toBe(1.0);
     });
@@ -53,14 +53,14 @@ describe("PaperSettings", () => {
       expect(result.defaultPenType).toBe("brush");
       expect(result.defaultWidth).toBe(5);
       // Rest should be defaults
-      expect(result.defaultColorId).toBe("ink-black");
+      expect(result.defaultColorId).toBe("#1a1a1a|#e8e8e8");
       expect(result.palmRejection).toBe(true);
     });
 
     it("should preserve all overridden fields", () => {
       const custom: PaperSettings = {
         defaultPenType: "fountain",
-        defaultColorId: "ink-blue",
+        defaultColorId: "#2563eb|#60a5fa",
         defaultWidth: 3,
         pressureSensitivity: 0.8,
         defaultPaperType: "lined",

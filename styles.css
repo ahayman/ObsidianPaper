@@ -257,7 +257,11 @@
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  background: var(--preset-color, transparent);
+  background: linear-gradient(
+    135deg,
+    var(--preset-color-dark, transparent) 50%,
+    var(--preset-color-light, transparent) 50%
+  );
   pointer-events: none;
 }
 
@@ -300,7 +304,7 @@
 .paper-popover {
   position: fixed;
   z-index: 1000;
-  width: 300px;
+  width: 340px;
   max-height: 80vh;
   overflow-y: auto;
   background: var(--background-primary);
@@ -332,6 +336,12 @@
   right: var(--popover-right);
   top: var(--popover-top);
   transform: translateY(-50%);
+}
+
+.paper-popover[data-anchor="fixed"] {
+  top: var(--popover-top);
+  left: var(--popover-left);
+  transform: none;
 }
 
 .paper-popover__content {
@@ -405,7 +415,11 @@
   transition: border-color 0.15s, transform 0.1s;
   appearance: none;
   -webkit-appearance: none;
-  background: var(--swatch-color, transparent);
+  background: linear-gradient(
+    135deg,
+    var(--swatch-color-dark, transparent) 50%,
+    var(--swatch-color-light, transparent) 50%
+  );
 }
 
 .paper-popover__color-swatch:hover {
@@ -540,4 +554,344 @@
   background: var(--interactive-accent);
   color: var(--text-on-accent);
   border-color: var(--interactive-accent);
+}
+
+/* ─── Color Picker Panel ─────────────────────────────────── */
+
+.paper-color-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.paper-color-picker .is-hidden {
+  display: none;
+}
+
+/* Mode tabs (Simple / Spectrum) */
+.paper-color-picker__tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.paper-color-picker__tab {
+  flex: 1;
+  padding: 5px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+  text-align: center;
+}
+
+.paper-color-picker__tab:hover {
+  background: var(--background-modifier-hover);
+}
+
+.paper-color-picker__tab.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
+/* Simple mode — color grid */
+.paper-color-picker__grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 3px;
+}
+
+.paper-color-picker__grid .paper-popover__color-swatch {
+  width: 100%;
+  height: 0;
+  padding-bottom: 100%;
+  border-radius: 4px;
+  min-width: 0;
+}
+
+/* Spectrum mode — two-column HSL pickers */
+.paper-color-picker__spectrum {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.paper-color-picker__pickers {
+  display: flex;
+  gap: 10px;
+}
+
+.paper-color-picker__picker-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.paper-color-picker__picker-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  text-align: center;
+}
+
+/* SL plane canvas */
+.paper-color-picker__sl-canvas {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 4px;
+  cursor: crosshair;
+  border: 1px solid var(--background-modifier-border);
+}
+
+/* Hue strip canvas */
+.paper-color-picker__hue-canvas {
+  width: 100%;
+  height: 16px;
+  border-radius: 4px;
+  cursor: crosshair;
+  border: 1px solid var(--background-modifier-border);
+}
+
+/* Hex input row in spectrum mode */
+.paper-color-picker__hex-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.paper-color-picker__hex-prefix {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.paper-color-picker__hex-input {
+  flex: 1;
+  padding: 3px 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  font-size: 12px;
+  font-family: var(--font-monospace);
+  min-width: 0;
+}
+
+/* Preview + Select row */
+.paper-color-picker__preview-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+}
+
+.paper-color-picker__preview-swatch {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 2px solid var(--background-modifier-border);
+  background: linear-gradient(
+    135deg,
+    var(--preview-dark, #888) 50%,
+    var(--preview-light, #ccc) 50%
+  );
+  flex-shrink: 0;
+}
+
+.paper-color-picker__select-btn {
+  padding: 6px 16px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-size: 12px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.paper-color-picker__select-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* ─── Page Menu Hit Areas ─────────────────────────────────── */
+
+.paper-page-menu-hit {
+  position: absolute;
+  z-index: 4;
+  cursor: pointer;
+  border-radius: 50%;
+  pointer-events: auto;
+  /* Invisible — tap target only */
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+/* ─── Page Menu Popover ───────────────────────────────────── */
+
+.paper-page-menu-popover {
+  max-height: 70vh;
+}
+
+.paper-page-menu__delete-btn {
+  width: 100%;
+  text-align: center;
+}
+
+.paper-page-menu__delete-btn.is-disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
+.paper-page-menu__delete-confirm {
+  font-size: 11px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: default;
+  padding: 4px 0;
+}
+
+.paper-page-menu__confirm-row {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+
+.paper-page-menu__confirm-row .paper-popover__action-btn {
+  flex: 1;
+  text-align: center;
+}
+
+.paper-page-menu__subtitle {
+  margin-top: 6px;
+}
+
+/* Custom size section */
+.paper-page-menu__custom-size {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.paper-page-menu__custom-size.is-hidden {
+  display: none;
+}
+
+.paper-page-menu__select {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  font-size: 12px;
+}
+
+.paper-page-menu__input {
+  flex: 1;
+  width: 60px;
+  padding: 4px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  font-size: 12px;
+  font-family: var(--font-monospace);
+}
+
+/* Slider + input combo: input should be fixed-width alongside slider */
+.paper-page-menu__slider-input {
+  flex: 0 0 60px;
+  width: 60px;
+}
+
+/* Custom color section */
+.paper-page-menu__custom-color {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.paper-page-menu__custom-color.is-hidden {
+  display: none;
+}
+
+.paper-page-menu__color-input {
+  width: 36px;
+  height: 28px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 0;
+  cursor: pointer;
+  background: none;
+}
+
+.paper-page-menu__hex-input {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  font-size: 12px;
+  font-family: var(--font-monospace);
+}
+
+/* Pattern theme override */
+.paper-page-menu__pattern-theme {
+  margin-top: 6px;
+}
+
+.paper-page-menu__pattern-theme.is-hidden {
+  display: none;
+}
+
+/* Stroke resize overlay */
+.paper-page-menu__resize-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--background-primary);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.paper-page-menu__resize-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  text-align: center;
+}
+
+.paper-page-menu__resize-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-normal);
+}
+
+.paper-page-menu__resize-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.paper-page-menu__resize-dialog .paper-popover__action-btn {
+  width: 100%;
+  text-align: center;
 }

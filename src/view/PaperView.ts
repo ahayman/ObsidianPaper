@@ -1,5 +1,5 @@
 import { TextFileView, WorkspaceLeaf, Platform } from "obsidian";
-import type { PaperDocument, PenStyle, PenType, Stroke, StrokePoint, Page, PageSize } from "../types";
+import type { PaperDocument, PenStyle, PenType, Stroke, StrokePoint, Page, PageSize, PaperType, PageOrientation, PageBackgroundColor, PageBackgroundTheme, PageMargins } from "../types";
 import { Camera } from "../canvas/Camera";
 import { Renderer } from "../canvas/Renderer";
 import { InputManager } from "../input/InputManager";
@@ -17,8 +17,12 @@ import type { PaperSettings } from "../settings/PaperSettings";
 import { DEFAULT_SETTINGS, resolvePageSize, resolveMargins } from "../settings/PaperSettings";
 import { HoverCursor } from "../input/HoverCursor";
 import { SpatialIndex } from "../spatial/SpatialIndex";
-import { computePageLayout, findPageAtPoint, getDocumentBounds } from "../document/PageLayout";
+import { computePageLayout, findPageAtPoint, getDocumentBounds, getEffectiveSize } from "../document/PageLayout";
 import type { PageRect } from "../document/PageLayout";
+import { PageMenuButton } from "./PageMenuButton";
+import { PageMenuPopover } from "./PageMenuPopover";
+import { decodePoints, encodePoints } from "../document/PointEncoder";
+import { resolvePageBackground } from "../color/ColorUtils";
 
 export const VIEW_TYPE_PAPER = "paper-view";
 export const PAPER_EXTENSION = "paper";
@@ -37,6 +41,8 @@ export class PaperView extends TextFileView {
   private themeDetector: ThemeDetector | null = null;
   private toolbar: Toolbar | null = null;
   private hoverCursor: HoverCursor | null = null;
+  private pageMenuButton: PageMenuButton | null = null;
+  private activePopover: { destroy: () => void } | null = null;
   private pinchBaseZoom: number | null = null;
   private settings: PaperSettings = DEFAULT_SETTINGS;
   private staticRafId: number | null = null;
@@ -53,7 +59,7 @@ export class PaperView extends TextFileView {
   // Active tool state
   private activeTool: ActiveTool = "pen";
   private currentPenType: PenType = "ballpoint";
-  private currentColorId = "ink-black";
+  private currentColorId = "#1a1a1a|#e8e8e8";
   private currentWidth = 2;
   private currentSmoothing = 0.5;
   private currentNibAngle = Math.PI / 6;
@@ -135,6 +141,13 @@ export class PaperView extends TextFileView {
       this.themeDetector.isDarkMode
     );
 
+    // Page menu button (per-page settings icon + hit areas)
+    this.pageMenuButton = new PageMenuButton(container, this.camera, {
+      onPageMenuTap: (pageIndex, anchorEl) => {
+        this.openPageMenu(pageIndex, anchorEl);
+      },
+    });
+
     // Hover cursor
     this.hoverCursor = new HoverCursor(container);
 
@@ -165,6 +178,10 @@ export class PaperView extends TextFileView {
     this.inputManager = null;
     this.toolbar?.destroy();
     this.toolbar = null;
+    this.activePopover?.destroy();
+    this.activePopover = null;
+    this.pageMenuButton?.destroy();
+    this.pageMenuButton = null;
     this.hoverCursor?.destroy();
     this.hoverCursor = null;
     this.renderer?.destroy();
@@ -202,7 +219,7 @@ export class PaperView extends TextFileView {
     }
 
     this.renderer?.invalidateCache();
-    this.renderer?.renderStaticLayer(this.document, this.pageLayout, this.spatialIndex);
+    this.renderStaticWithIcons();
     this.precompressLoadedStrokes();
   }
 
@@ -215,7 +232,7 @@ export class PaperView extends TextFileView {
     this.spatialIndex.clear();
     this.recomputeLayout();
     this.renderer?.invalidateCache();
-    this.renderer?.renderStaticLayer(this.document, this.pageLayout, this.spatialIndex);
+    this.renderStaticWithIcons();
   }
 
   setSettings(settings: PaperSettings): void {
@@ -305,7 +322,7 @@ export class PaperView extends TextFileView {
       }
     }
 
-    this.renderer?.renderStaticLayer(this.document, this.pageLayout, this.spatialIndex);
+    this.renderStaticWithIcons();
     this.toolbar?.refreshUndoRedo();
     this.requestSave();
   }
@@ -347,7 +364,7 @@ export class PaperView extends TextFileView {
       }
     }
 
-    this.renderer?.renderStaticLayer(this.document, this.pageLayout, this.spatialIndex);
+    this.renderStaticWithIcons();
     this.toolbar?.refreshUndoRedo();
     this.requestSave();
   }
@@ -409,6 +426,218 @@ export class PaperView extends TextFileView {
     this.recomputeLayout();
     this.requestStaticRender();
     this.requestSave();
+  }
+
+  // ─── Page Management ─────────────────────────────────────────
+
+  /**
+   * Open the page settings popover for a specific page.
+   */
+  private openPageMenu(pageIndex: number, anchorEl: HTMLElement): void {
+    // Close any existing popover
+    this.activePopover?.destroy();
+    this.activePopover = null;
+
+    const page = this.document.pages[pageIndex];
+    if (!page) return;
+
+    const hasStrokes = this.document.strokes.some(s => s.pageIndex === pageIndex);
+
+    this.activePopover = new PageMenuPopover(
+      {
+        page,
+        pageIndex,
+        totalPages: this.document.pages.length,
+        hasStrokes,
+        isDarkMode: this.themeDetector?.isDarkMode ?? false,
+        spacingUnit: this.settings.spacingUnit,
+      },
+      anchorEl,
+      {
+        onDeletePage: (idx) => {
+          this.deletePage(idx);
+        },
+        onUpdateStyle: (idx, changes) => {
+          this.updatePageStyle(idx, changes);
+        },
+        onUpdateBackground: (idx, bg, bgt) => {
+          this.updatePageBackground(idx, bg, bgt);
+        },
+        onUpdateSize: (idx, size, orientation, scale) => {
+          this.updatePageSize(idx, size, orientation, scale);
+        },
+        onDismiss: () => {
+          this.activePopover?.destroy();
+          this.activePopover = null;
+        },
+      },
+    );
+  }
+
+  /**
+   * Delete a page and its strokes.
+   */
+  deletePage(pageIndex: number): void {
+    if (this.document.pages.length <= 1) return; // Can't delete last page
+
+    // Remove all strokes belonging to this page
+    this.document.strokes = this.document.strokes.filter(s => s.pageIndex !== pageIndex);
+
+    // Update pageIndex for strokes on later pages
+    for (const stroke of this.document.strokes) {
+      if (stroke.pageIndex > pageIndex) {
+        stroke.pageIndex--;
+      }
+    }
+
+    // Remove the page
+    this.document.pages.splice(pageIndex, 1);
+
+    // Rebuild spatial index (stroke indices changed)
+    this.spatialIndex.buildFromStrokes(this.document.strokes);
+    this.renderer?.invalidateCache();
+
+    this.recomputeLayout();
+    this.requestStaticRender();
+    this.requestSave();
+  }
+
+  /**
+   * Update a page's paper type, line spacing, and grid size.
+   */
+  updatePageStyle(
+    pageIndex: number,
+    changes: { paperType?: PaperType; lineSpacing?: number; gridSize?: number; margins?: Partial<PageMargins> },
+  ): void {
+    const page = this.document.pages[pageIndex];
+    if (!page) return;
+
+    if (changes.paperType !== undefined) page.paperType = changes.paperType;
+    if (changes.lineSpacing !== undefined) page.lineSpacing = changes.lineSpacing;
+    if (changes.gridSize !== undefined) page.gridSize = changes.gridSize;
+    if (changes.margins) {
+      if (changes.margins.top !== undefined) page.margins.top = changes.margins.top;
+      if (changes.margins.bottom !== undefined) page.margins.bottom = changes.margins.bottom;
+      if (changes.margins.left !== undefined) page.margins.left = changes.margins.left;
+      if (changes.margins.right !== undefined) page.margins.right = changes.margins.right;
+    }
+
+    this.requestStaticRender();
+    this.requestSave();
+  }
+
+  /**
+   * Update a page's background color and optional pattern theme override.
+   */
+  updatePageBackground(
+    pageIndex: number,
+    backgroundColor: PageBackgroundColor,
+    backgroundColorTheme?: PageBackgroundTheme,
+  ): void {
+    const page = this.document.pages[pageIndex];
+    if (!page) return;
+
+    page.backgroundColor = backgroundColor;
+    page.backgroundColorTheme = backgroundColorTheme ?? "auto";
+
+    this.requestStaticRender();
+    this.requestSave();
+  }
+
+  /**
+   * Update a page's size and orientation.
+   * If scaleStrokes is true, existing strokes are scaled to fit the new dimensions.
+   */
+  updatePageSize(
+    pageIndex: number,
+    newSize: PageSize,
+    newOrientation: PageOrientation,
+    scaleStrokes: boolean,
+  ): void {
+    const page = this.document.pages[pageIndex];
+    if (!page) return;
+
+    const oldEffective = getEffectiveSize(page);
+
+    page.size = newSize;
+    page.orientation = newOrientation;
+
+    if (scaleStrokes) {
+      const newEffective = getEffectiveSize(page);
+      this.scaleStrokesForPage(pageIndex, oldEffective, newEffective);
+    }
+
+    this.recomputeLayout();
+    this.renderer?.invalidateCache();
+    this.requestStaticRender();
+    this.requestSave();
+  }
+
+  /**
+   * Scale all strokes on a page from old dimensions to new dimensions.
+   */
+  private scaleStrokesForPage(
+    pageIndex: number,
+    oldSize: { width: number; height: number },
+    newSize: { width: number; height: number },
+  ): void {
+    if (oldSize.width === 0 || oldSize.height === 0) return;
+
+    const scaleX = newSize.width / oldSize.width;
+    const scaleY = newSize.height / oldSize.height;
+
+    if (scaleX === 1 && scaleY === 1) return;
+
+    // Compute old layout (before size change) to find old page origin.
+    // page.size/orientation are already updated, so reconstruct old page temporarily.
+    const oldLayout = computePageLayout(this.document.pages.map((p, i) => {
+      if (i === pageIndex) {
+        return { ...p, size: { width: oldSize.width, height: oldSize.height }, orientation: "portrait" as const };
+      }
+      return p;
+    }), this.document.layoutDirection);
+
+    // Compute new layout (with updated size) to find new page origin.
+    const newLayout = computePageLayout(this.document.pages, this.document.layoutDirection);
+
+    const oldPageRect = oldLayout[pageIndex];
+    const newPageRect = newLayout[pageIndex];
+    if (!oldPageRect || !newPageRect) return;
+
+    for (const stroke of this.document.strokes) {
+      if (stroke.pageIndex !== pageIndex) continue;
+
+      // Decode points
+      const points = decodePoints(stroke.pts);
+
+      // Scale relative to old page origin, remap to new page origin
+      for (const pt of points) {
+        const relX = pt.x - oldPageRect.x;
+        const relY = pt.y - oldPageRect.y;
+        pt.x = newPageRect.x + relX * scaleX;
+        pt.y = newPageRect.y + relY * scaleY;
+      }
+
+      // Re-encode
+      stroke.pts = encodePoints(points);
+      stroke.pointCount = points.length;
+
+      // Recompute bbox
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const pt of points) {
+        if (pt.x < minX) minX = pt.x;
+        if (pt.y < minY) minY = pt.y;
+        if (pt.x > maxX) maxX = pt.x;
+        if (pt.y > maxY) maxY = pt.y;
+      }
+      stroke.bbox = [minX, minY, maxX, maxY];
+
+      // Invalidate path cache for this stroke
+      this.renderer?.invalidateCache(stroke.id);
+    }
+
+    // Rebuild spatial index since bboxes changed
+    this.spatialIndex.buildFromStrokes(this.document.strokes);
   }
 
   // ─── Page Layout ───────────────────────────────────────────────
@@ -477,11 +706,30 @@ export class PaperView extends TextFileView {
   /**
    * Coalesce multiple static layer render requests into a single RAF frame.
    */
+  /**
+   * Render the static layer with page menu icons and update hit areas.
+   */
+  private renderStaticWithIcons(): void {
+    const isDark = this.themeDetector?.isDarkMode ?? false;
+    this.renderer?.renderStaticLayer(
+      this.document,
+      this.pageLayout,
+      this.spatialIndex,
+      (ctx, visibleRect) => {
+        this.pageMenuButton?.renderIcons(ctx, this.pageLayout, this.document.pages, visibleRect, isDark);
+      },
+    );
+    this.pageMenuButton?.updateHitAreas(this.pageLayout);
+  }
+
+  /**
+   * Coalesce multiple static layer render requests into a single RAF frame.
+   */
   private requestStaticRender(): void {
     if (this.staticRafId !== null) return;
     this.staticRafId = requestAnimationFrame(() => {
       this.staticRafId = null;
-      this.renderer?.renderStaticLayer(this.document, this.pageLayout, this.spatialIndex);
+      this.renderStaticWithIcons();
     });
   }
 
@@ -505,7 +753,7 @@ export class PaperView extends TextFileView {
     this.renderer?.resize(width, height);
     this.updateZoomLimits();
     this.camera.clampPan(width, height);
-    this.renderer?.renderStaticLayer(this.document, this.pageLayout, this.spatialIndex);
+    this.renderStaticWithIcons();
   }
 
   // ─── Precompression ─────────────────────────────────────────────
@@ -616,11 +864,30 @@ export class PaperView extends TextFileView {
     return this.pageLayout[this.activeStrokePageIndex];
   }
 
+  /**
+   * Compute whether strokes on the active page should use dark-mode colors,
+   * based on the page's background color and theme settings.
+   */
+  private getActivePageDarkColors(): boolean | undefined {
+    if (this.activeStrokePageIndex < 0 || this.activeStrokePageIndex >= this.document.pages.length) {
+      return undefined;
+    }
+    const page = this.document.pages[this.activeStrokePageIndex];
+    const isDark = this.themeDetector?.isDarkMode ?? false;
+    const { patternTheme } = resolvePageBackground(
+      page.backgroundColor,
+      page.backgroundColorTheme,
+      isDark,
+    );
+    return patternTheme === "dark";
+  }
+
   private createInputCallbacks(): InputCallbacks {
     return {
       onStrokeStart: (point: StrokePoint) => {
         this.hoverCursor?.hide();
         this.toolbar?.notifyStrokeStart();
+        this.pageMenuButton?.setDrawingActive(true);
         if (this.activeTool === "eraser") return;
 
         const world = this.camera.screenToWorld(point.x, point.y);
@@ -658,6 +925,7 @@ export class PaperView extends TextFileView {
         if (!this.strokeBuilder) return;
         const style = this.getCurrentStyle();
         const pageRect = this.getActivePageRect();
+        const pageDark = this.getActivePageDarkColors();
 
         for (const point of points) {
           const world = this.camera.screenToWorld(point.x, point.y);
@@ -667,7 +935,8 @@ export class PaperView extends TextFileView {
         this.renderer?.renderActiveStroke(
           this.strokeBuilder.getPoints(),
           style,
-          pageRect
+          pageRect,
+          pageDark,
         );
 
         // Render prediction
@@ -680,13 +949,15 @@ export class PaperView extends TextFileView {
             this.strokeBuilder.getPoints(),
             predictedWorld,
             style,
-            pageRect
+            pageRect,
+            pageDark,
           );
         }
       },
 
       onStrokeEnd: (point: StrokePoint) => {
         this.toolbar?.notifyStrokeEnd();
+        this.pageMenuButton?.setDrawingActive(false);
         if (!this.strokeBuilder) return;
 
         const world = this.camera.screenToWorld(point.x, point.y);
@@ -698,6 +969,7 @@ export class PaperView extends TextFileView {
           const styleName = this.getCurrentStyleName();
           const docStyles = this.document.styles;
           const pageRect = this.getActivePageRect();
+          const pageDark = this.getActivePageDarkColors();
 
           if (!docStyles[styleName]) {
             docStyles[styleName] = style;
@@ -710,7 +982,7 @@ export class PaperView extends TextFileView {
             this.spatialIndex.insert(stroke, this.document.strokes.length - 1);
             this.undoManager.pushAddStroke(stroke);
 
-            this.renderer?.bakeStroke(stroke, this.document.styles, pageRect);
+            this.renderer?.bakeStroke(stroke, this.document.styles, pageRect, pageDark);
 
             precompressStroke(stroke);
             this.renderer?.clearActiveLayer();
@@ -727,6 +999,7 @@ export class PaperView extends TextFileView {
       },
 
       onStrokeCancel: () => {
+        this.pageMenuButton?.setDrawingActive(false);
         this.strokeBuilder?.discard();
         this.strokeBuilder = null;
         this.activeStrokePageIndex = -1;

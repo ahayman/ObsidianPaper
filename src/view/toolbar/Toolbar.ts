@@ -133,6 +133,12 @@ export class Toolbar {
     const preset = this.presetManager.getPreset(presetId);
     if (!preset) return;
 
+    // If tapping the already-active preset, open its settings panel
+    if (this.state.activePresetId === presetId && this.state.activeTool === "pen") {
+      this.openPopover();
+      return;
+    }
+
     this.applyPreset(preset);
     this.state.activePresetId = presetId;
     this.presetStrip?.setActivePreset(presetId);

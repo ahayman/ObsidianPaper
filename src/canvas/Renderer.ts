@@ -15,6 +15,7 @@ import type { LodLevel } from "../stroke/StrokeSimplifier";
 import { detectInkPools, renderInkPools } from "../stroke/InkPooling";
 import { BackgroundRenderer } from "./BackgroundRenderer";
 import type { BackgroundConfig } from "./BackgroundRenderer";
+import { resolvePageBackground } from "../color/ColorUtils";
 
 /**
  * Multi-layer canvas renderer managing:
@@ -48,7 +49,7 @@ export class Renderer {
   // RAF batching
   private rafId: number | null = null;
   private pendingActiveRender: (() => void) | null = null;
-  private pendingBakes: { stroke: Stroke; styles: Record<string, PenStyle>; pageRect?: PageRect }[] = [];
+  private pendingBakes: { stroke: Stroke; styles: Record<string, PenStyle>; pageRect?: PageRect; useDarkColors?: boolean }[] = [];
   private pendingFinalizations: (() => void)[] = [];
 
   constructor(container: HTMLElement, camera: Camera, isMobile: boolean) {
@@ -125,7 +126,12 @@ export class Renderer {
     this.bgConfig = { ...this.bgConfig, ...config };
   }
 
-  renderStaticLayer(doc: PaperDocument, pageLayout: PageRect[], spatialIndex?: SpatialIndex): void {
+  renderStaticLayer(
+    doc: PaperDocument,
+    pageLayout: PageRect[],
+    spatialIndex?: SpatialIndex,
+    afterBackground?: (ctx: CanvasRenderingContext2D, visibleRect: [number, number, number, number]) => void,
+  ): void {
     this.flushFinalizations();
     this.pendingBakes = [];
     const ctx = this.staticCtx;
@@ -133,7 +139,7 @@ export class Renderer {
 
     // Render background on dedicated layer
     this.bgConfig.isDarkMode = this.isDarkMode;
-    this.backgroundRenderer.render(this.bgConfig, pageLayout, doc.pages);
+    this.backgroundRenderer.render(this.bgConfig, pageLayout, doc.pages, afterBackground);
 
     // Apply camera
     this.camera.applyToContext(ctx);
@@ -164,6 +170,18 @@ export class Renderer {
         continue;
       }
 
+      // Determine per-page stroke color mode (dark backgrounds → dark-mode colors)
+      const page = doc.pages[pageRect.pageIndex];
+      let pageDark = this.isDarkMode;
+      if (page) {
+        const { patternTheme } = resolvePageBackground(
+          page.backgroundColor,
+          page.backgroundColorTheme,
+          this.isDarkMode,
+        );
+        pageDark = patternTheme === "dark";
+      }
+
       ctx.save();
       ctx.beginPath();
       ctx.rect(pageRect.x, pageRect.y, pageRect.width, pageRect.height);
@@ -174,11 +192,11 @@ export class Renderer {
 
         if (visibleIds) {
           if (visibleIds.has(stroke.id)) {
-            this.renderStrokeToContext(ctx, stroke, doc.styles, lod);
+            this.renderStrokeToContext(ctx, stroke, doc.styles, lod, pageDark);
           }
         } else {
           if (bboxOverlaps(stroke.bbox, visibleRect)) {
-            this.renderStrokeToContext(ctx, stroke, doc.styles, lod);
+            this.renderStrokeToContext(ctx, stroke, doc.styles, lod, pageDark);
           }
         }
       }
@@ -194,7 +212,7 @@ export class Renderer {
    * O(1) — doesn't re-render all strokes.
    * Clips to the page rect if provided.
    */
-  bakeStroke(stroke: Stroke, styles: Record<string, PenStyle>, pageRect?: PageRect): void {
+  bakeStroke(stroke: Stroke, styles: Record<string, PenStyle>, pageRect?: PageRect, useDarkColors?: boolean): void {
     const ctx = this.staticCtx;
 
     // Apply DPR + camera transform
@@ -209,7 +227,7 @@ export class Renderer {
       ctx.clip();
     }
 
-    this.renderStrokeToContext(ctx, stroke, styles);
+    this.renderStrokeToContext(ctx, stroke, styles, 0, useDarkColors);
 
     if (pageRect) {
       ctx.restore();
@@ -258,8 +276,8 @@ export class Renderer {
    * Schedule a stroke bake for the next RAF frame.
    * Non-blocking — returns immediately so the event loop stays free for the next pointerdown.
    */
-  scheduleBake(stroke: Stroke, styles: Record<string, PenStyle>, pageRect?: PageRect): void {
-    this.pendingBakes.push({ stroke, styles, pageRect });
+  scheduleBake(stroke: Stroke, styles: Record<string, PenStyle>, pageRect?: PageRect, useDarkColors?: boolean): void {
+    this.pendingBakes.push({ stroke, styles, pageRect, useDarkColors });
     this.scheduleFrame();
   }
 
@@ -303,7 +321,8 @@ export class Renderer {
   renderActiveStroke(
     points: readonly StrokePoint[],
     style: PenStyle,
-    pageRect?: PageRect
+    pageRect?: PageRect,
+    useDarkColors?: boolean,
   ): void {
     this.pendingActiveRender = () => {
       this.clearCanvas(this.activeCtx);
@@ -320,7 +339,8 @@ export class Renderer {
 
       const path = generateStrokePath(points, style);
       if (path) {
-        const color = resolveColor(style.color, this.isDarkMode);
+        const dark = useDarkColors ?? this.isDarkMode;
+        const color = resolveColor(style.color, dark);
         const penConfig = getPenConfig(style.pen);
 
         if (penConfig.highlighterMode) {
@@ -356,7 +376,8 @@ export class Renderer {
     allPoints: readonly StrokePoint[],
     predictedPoints: readonly StrokePoint[],
     style: PenStyle,
-    pageRect?: PageRect
+    pageRect?: PageRect,
+    useDarkColors?: boolean,
   ): void {
     this.clearCanvas(this.predictionCtx);
 
@@ -382,7 +403,8 @@ export class Renderer {
 
     const path = generateStrokePath(combined, style);
     if (path) {
-      const color = resolveColor(style.color, this.isDarkMode);
+      const dark = useDarkColors ?? this.isDarkMode;
+      const color = resolveColor(style.color, dark);
       this.predictionCtx.fillStyle = color;
       this.predictionCtx.globalAlpha = style.opacity * 0.5; // Predictions are semi-transparent
       this.predictionCtx.fill(path);
@@ -441,7 +463,8 @@ export class Renderer {
     ctx: CanvasRenderingContext2D,
     stroke: Stroke,
     styles: Record<string, PenStyle>,
-    lod: LodLevel = 0
+    lod: LodLevel = 0,
+    useDarkColors?: boolean,
   ): void {
     // Get or generate Path2D (LOD-aware cache key)
     const cacheKey = lodCacheKey(stroke.id, lod);
@@ -463,7 +486,8 @@ export class Renderer {
     if (!path) return;
 
     const style = resolveStyle(stroke, styles);
-    const color = resolveColor(style.color, this.isDarkMode);
+    const dark = useDarkColors ?? this.isDarkMode;
+    const color = resolveColor(style.color, dark);
     const penConfig = getPenConfig(style.pen);
 
     if (penConfig.highlighterMode) {
@@ -512,8 +536,8 @@ export class Renderer {
       }
       // 2. Standalone bakes (from scheduleBake calls)
       if (this.pendingBakes.length > 0) {
-        for (const { stroke, styles, pageRect } of this.pendingBakes) {
-          this.bakeStroke(stroke, styles, pageRect);
+        for (const { stroke, styles, pageRect, useDarkColors } of this.pendingBakes) {
+          this.bakeStroke(stroke, styles, pageRect, useDarkColors);
         }
         this.pendingBakes = [];
       }

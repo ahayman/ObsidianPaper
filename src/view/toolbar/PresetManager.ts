@@ -1,5 +1,5 @@
 import type { PenPreset, ToolbarState } from "./ToolbarTypes";
-import { getSemanticColor } from "../../color/ColorPalette";
+import { getColorDisplayName } from "../../color/ColorUtils";
 
 const MAX_PRESETS = 20;
 
@@ -17,8 +17,7 @@ const PEN_TYPE_LABELS: Record<string, string> = {
  */
 export function generatePresetName(penType: string, colorId: string): string {
   const typeLabel = PEN_TYPE_LABELS[penType] ?? penType;
-  const semantic = getSemanticColor(colorId);
-  const colorLabel = semantic ? semantic.name : colorId;
+  const colorLabel = getColorDisplayName(colorId);
   return `${typeLabel} (${colorLabel})`;
 }
 
