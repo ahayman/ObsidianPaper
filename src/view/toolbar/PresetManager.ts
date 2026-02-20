@@ -5,7 +5,6 @@ const MAX_PRESETS = 20;
 
 const PEN_TYPE_LABELS: Record<string, string> = {
   ballpoint: "Ballpoint",
-  brush: "Brush",
   "felt-tip": "Felt tip",
   pencil: "Pencil",
   fountain: "Fountain",

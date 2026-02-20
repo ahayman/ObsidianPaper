@@ -25,11 +25,6 @@ const PEN_ICON_SHAPES: Record<PenType, IconShape[]> = {
     { type: "circle", cx: 12, cy: 22.5, r: 2, fill: "white", fillOpacity: "0.85" },
   ],
 
-  // Brush: handle widening to splayed bristle tip
-  brush: [
-    { type: "path", d: "M8 1 L16 1 L17 10 L21 16 Q22 21 17 23 L12 24 L7 23 Q2 21 3 16 L7 10 Z", fill: "white", fillOpacity: "0.85" },
-  ],
-
   // Felt tip: rectangular marker body, flat chisel end
   "felt-tip": [
     { type: "path", d: "M5 1 L19 1 L20 14 L4 14 Z", fill: "white", fillOpacity: "0.85" },

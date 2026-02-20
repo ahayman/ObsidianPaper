@@ -63,14 +63,6 @@ describe("OutlineGenerator", () => {
       expect(options.simulatePressure).toBe(false);
     });
 
-    it("should map brush style correctly", () => {
-      const options = penStyleToOutlineOptions(makeStyle({ pen: "brush", width: 8 }));
-      expect(options.size).toBe(8);
-      expect(options.thinning).toBe(0.8);
-      expect(options.taperStart).toBe(20);
-      expect(options.taperEnd).toBe(30);
-    });
-
     it("should map highlighter style correctly", () => {
       const options = penStyleToOutlineOptions(makeStyle({ pen: "highlighter", width: 24 }));
       expect(options.size).toBe(24);
@@ -80,7 +72,6 @@ describe("OutlineGenerator", () => {
     it("should always set simulatePressure to false", () => {
       const penTypes = [
         "ballpoint",
-        "brush",
         "felt-tip",
         "pencil",
         "fountain",

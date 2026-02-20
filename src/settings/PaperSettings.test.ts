@@ -28,6 +28,11 @@ describe("PaperSettings", () => {
       expect(DEFAULT_SETTINGS.defaultSmoothing).toBeLessThanOrEqual(1);
     });
 
+    it("should have valid grain strength defaults", () => {
+      expect(DEFAULT_SETTINGS.pencilGrainStrength).toBeGreaterThanOrEqual(0);
+      expect(DEFAULT_SETTINGS.pencilGrainStrength).toBeLessThanOrEqual(1);
+    });
+
     it("should have valid file defaults", () => {
       expect(DEFAULT_SETTINGS.defaultFolder).toBe("");
       expect(DEFAULT_SETTINGS.fileNameTemplate).toBe("Untitled Paper");
@@ -47,10 +52,10 @@ describe("PaperSettings", () => {
 
     it("should override specific fields", () => {
       const result = mergeSettings({
-        defaultPenType: "brush",
+        defaultPenType: "felt-tip",
         defaultWidth: 5,
       });
-      expect(result.defaultPenType).toBe("brush");
+      expect(result.defaultPenType).toBe("felt-tip");
       expect(result.defaultWidth).toBe(5);
       // Rest should be defaults
       expect(result.defaultColorId).toBe("#1a1a1a|#e8e8e8");
@@ -82,6 +87,7 @@ describe("PaperSettings", () => {
         palmRejection: false,
         fingerAction: "draw",
         defaultSmoothing: 0.7,
+        pencilGrainStrength: 0.6,
         defaultNibAngle: Math.PI / 4,
         defaultNibThickness: 0.3,
         defaultNibPressure: 0.6,
@@ -95,6 +101,11 @@ describe("PaperSettings", () => {
       };
       const result = mergeSettings(custom);
       expect(result).toEqual(custom);
+    });
+
+    it("should handle grain strength fields", () => {
+      const result = mergeSettings({ pencilGrainStrength: 0.8 });
+      expect(result.pencilGrainStrength).toBe(0.8);
     });
 
     it("should not mutate the input", () => {

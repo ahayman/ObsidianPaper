@@ -4,10 +4,9 @@ import type { PenConfig } from "./PenConfigs";
 describe("PenConfigs", () => {
   const penTypes = Object.keys(PEN_CONFIGS) as (keyof typeof PEN_CONFIGS)[];
 
-  it("should have configs for all 6 pen types", () => {
-    expect(penTypes).toHaveLength(6);
+  it("should have configs for all 5 pen types", () => {
+    expect(penTypes).toHaveLength(5);
     expect(penTypes).toContain("ballpoint");
-    expect(penTypes).toContain("brush");
     expect(penTypes).toContain("felt-tip");
     expect(penTypes).toContain("pencil");
     expect(penTypes).toContain("fountain");
@@ -66,19 +65,13 @@ describe("PenConfigs", () => {
       expect(range).toBeLessThan(0.5);
     });
 
-    it("brush should have wide width range", () => {
-      const config = getPenConfig("brush");
-      const range = config.pressureWidthRange[1] - config.pressureWidthRange[0];
-      expect(range).toBeGreaterThan(0.5);
-    });
-
     it("highlighter should use highlighter mode", () => {
       const config = getPenConfig("highlighter");
       expect(config.highlighterMode).toBe(true);
     });
 
     it("non-highlighter pens should not use highlighter mode", () => {
-      for (const type of ["ballpoint", "brush", "felt-tip", "pencil", "fountain"] as const) {
+      for (const type of ["ballpoint", "felt-tip", "pencil", "fountain"] as const) {
         expect(getPenConfig(type).highlighterMode).toBe(false);
       }
     });
@@ -97,6 +90,20 @@ describe("PenConfigs", () => {
     it("pencil should have pressure-opacity mapping", () => {
       const config = getPenConfig("pencil");
       expect(config.pressureOpacityRange).not.toBeNull();
+    });
+
+    it("pencil should have grain enabled with valid strength", () => {
+      const config = getPenConfig("pencil");
+      expect(config.grain).not.toBeNull();
+      expect(config.grain!.enabled).toBe(true);
+      expect(config.grain!.strength).toBeGreaterThan(0);
+      expect(config.grain!.strength).toBeLessThanOrEqual(1);
+    });
+
+    it("other pen types should have grain = null", () => {
+      for (const type of ["ballpoint", "felt-tip", "fountain", "highlighter"] as const) {
+        expect(getPenConfig(type).grain).toBeNull();
+      }
     });
   });
 });

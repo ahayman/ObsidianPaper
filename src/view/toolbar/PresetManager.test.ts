@@ -61,7 +61,7 @@ describe("PresetManager", () => {
       const mgr = new PresetManager([]);
       const result = mgr.addPreset({
         name: "New",
-        penType: "brush",
+        penType: "felt-tip",
         colorId: "#dc2626|#f87171",
         width: 5,
         smoothing: 0.5,

@@ -10,6 +10,8 @@ import {
 } from "../stroke/OutlineGenerator";
 import { resolveColor } from "../color/ColorPalette";
 import { getPenConfig } from "../stroke/PenConfigs";
+import type { PenType } from "../types";
+import { GrainTextureGenerator } from "./GrainTextureGenerator";
 import { selectLodLevel, lodCacheKey, simplifyPoints } from "../stroke/StrokeSimplifier";
 import type { LodLevel } from "../stroke/StrokeSimplifier";
 import { detectInkPools, renderInkPools } from "../stroke/InkPooling";
@@ -42,6 +44,11 @@ export class Renderer {
   private cssWidth = 0;
   private cssHeight = 0;
   isDarkMode = false;
+  private grainGenerator: GrainTextureGenerator | null = null;
+  private grainPatternCache = new WeakMap<CanvasRenderingContext2D, CanvasPattern>();
+  private grainStrengthOverrides = new Map<PenType, number>();
+  private grainOffscreen: HTMLCanvasElement | null = null;
+  private grainOffscreenCtx: CanvasRenderingContext2D | null = null;
   private bgConfig: BackgroundConfig = {
     isDarkMode: false,
   };
@@ -254,6 +261,16 @@ export class Renderer {
       const color = resolveColor(style.color, this.isDarkMode);
       const penConfig = getPenConfig(style.pen);
 
+      // Grain-enabled strokes rendered in isolation
+      if (penConfig.grain?.enabled && points.length > 0) {
+        const strength = this.grainStrengthOverrides.get(style.pen) ?? penConfig.grain.strength;
+        if (strength > 0) {
+          this.renderStrokeWithGrain(ctx, path, color, style.opacity, strength, points[0].x, points[0].y);
+          this.camera.resetContext(ctx);
+          return;
+        }
+      }
+
       if (penConfig.highlighterMode) {
         ctx.save();
         ctx.globalAlpha = penConfig.baseOpacity;
@@ -356,6 +373,14 @@ export class Renderer {
           this.activeCtx.fill(path);
           this.activeCtx.globalAlpha = 1;
         }
+
+        // Grain overlay for active stroke
+        if (penConfig.grain?.enabled && points.length > 0) {
+          const strength = this.grainStrengthOverrides.get(style.pen) ?? penConfig.grain.strength;
+          if (strength > 0) {
+            this.applyGrainToStroke(this.activeCtx, path, strength, points[0].x, points[0].y);
+          }
+        }
       }
 
       if (pageRect) {
@@ -439,6 +464,21 @@ export class Renderer {
   }
 
   /**
+   * Initialize the grain texture generator.
+   */
+  initGrain(): void {
+    this.grainGenerator = new GrainTextureGenerator();
+    this.grainGenerator.initialize();
+  }
+
+  /**
+   * Set a per-pen-type grain strength override from user settings.
+   */
+  setGrainStrength(penType: PenType, strength: number): void {
+    this.grainStrengthOverrides.set(penType, strength);
+  }
+
+  /**
    * Clean up resources.
    */
   destroy(): void {
@@ -449,6 +489,10 @@ export class Renderer {
     this.pendingBakes = [];
     this.pendingFinalizations = [];
     this.pathCache.clear();
+    this.grainGenerator?.destroy();
+    this.grainGenerator = null;
+    this.grainOffscreen = null;
+    this.grainOffscreenCtx = null;
     this.backgroundCanvas.remove();
     this.staticCanvas.remove();
     this.activeCanvas.remove();
@@ -490,6 +534,17 @@ export class Renderer {
     const color = resolveColor(style.color, dark);
     const penConfig = getPenConfig(style.pen);
 
+    // Grain-enabled strokes are rendered in isolation on an offscreen canvas
+    // so destination-out only affects this stroke, allowing overlapping strokes
+    // to show through grain holes correctly.
+    if (lod === 0 && penConfig.grain?.enabled) {
+      const strength = this.grainStrengthOverrides.get(style.pen) ?? penConfig.grain.strength;
+      if (strength > 0) {
+        this.renderStrokeWithGrain(ctx, path, color, style.opacity, strength, stroke.bbox[0], stroke.bbox[1]);
+        return;
+      }
+    }
+
     if (penConfig.highlighterMode) {
       // Highlighter: render at full opacity, then composite at reduced alpha
       // This prevents intra-stroke opacity stacking artifacts
@@ -514,6 +569,116 @@ export class Renderer {
         renderInkPools(ctx, pools, color);
       }
     }
+  }
+
+  private getGrainPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
+    const cached = this.grainPatternCache.get(ctx);
+    if (cached) return cached;
+
+    if (!this.grainGenerator) return null;
+    const pattern = this.grainGenerator.getPattern(ctx);
+    if (pattern) {
+      this.grainPatternCache.set(ctx, pattern);
+    }
+    return pattern;
+  }
+
+  private applyGrainToStroke(
+    ctx: CanvasRenderingContext2D,
+    path: Path2D,
+    grainStrength: number,
+    anchorX: number,
+    anchorY: number,
+  ): void {
+    const pattern = this.getGrainPattern(ctx);
+    if (!pattern) return;
+
+    ctx.save();
+    ctx.clip(path);
+    // Anchor the grain pattern to the stroke's starting point so each stroke
+    // gets a unique grain alignment. Two strokes crossing the same area will
+    // have different grain because they start at different positions.
+    // Scale of 0.3 = each tile pixel maps to 0.3 world units, producing grain
+    // features of ~1.2 world units (~3-6 screen pixels at typical iPad zoom).
+    pattern.setTransform(
+      new DOMMatrix().translateSelf(anchorX, anchorY).scaleSelf(0.3, 0.3)
+    );
+    // destination-out: the pattern's alpha punches transparency holes in the
+    // stroke, simulating paper texture gaps where graphite didn't deposit.
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.globalAlpha = grainStrength;
+    ctx.fillStyle = pattern;
+    ctx.fill(path);
+    ctx.restore();
+  }
+
+  /**
+   * Ensure the reusable offscreen canvas for grain-isolated rendering
+   * exists and matches the static canvas dimensions.
+   */
+  private ensureGrainOffscreen(): CanvasRenderingContext2D | null {
+    const w = this.staticCanvas.width;
+    const h = this.staticCanvas.height;
+
+    if (!this.grainOffscreen || this.grainOffscreen.width !== w || this.grainOffscreen.height !== h) {
+      if (!this.grainOffscreen) {
+        this.grainOffscreen = document.createElement("canvas");
+      }
+      this.grainOffscreen.width = w;
+      this.grainOffscreen.height = h;
+      this.grainOffscreenCtx = this.grainOffscreen.getContext("2d");
+    }
+
+    return this.grainOffscreenCtx;
+  }
+
+  /**
+   * Render a single stroke with grain in isolation on an offscreen canvas,
+   * then composite back to the target. This ensures destination-out grain
+   * only affects this stroke, so overlapping strokes show through grain holes.
+   */
+  private renderStrokeWithGrain(
+    targetCtx: CanvasRenderingContext2D,
+    path: Path2D,
+    color: string,
+    opacity: number,
+    grainStrength: number,
+    anchorX: number,
+    anchorY: number,
+  ): void {
+    const offCtx = this.ensureGrainOffscreen();
+    if (!offCtx || !this.grainOffscreen) {
+      // Fallback: draw directly without isolation
+      targetCtx.fillStyle = color;
+      targetCtx.globalAlpha = opacity;
+      targetCtx.fill(path);
+      targetCtx.globalAlpha = 1;
+      return;
+    }
+
+    // Clear the offscreen canvas
+    offCtx.setTransform(1, 0, 0, 1, 0, 0);
+    offCtx.clearRect(0, 0, this.grainOffscreen.width, this.grainOffscreen.height);
+
+    // Copy the current transform (DPR + camera) from the target context
+    offCtx.setTransform(targetCtx.getTransform());
+
+    // Draw stroke fill on the isolated offscreen canvas
+    offCtx.fillStyle = color;
+    offCtx.globalAlpha = opacity;
+    offCtx.fill(path);
+    offCtx.globalAlpha = 1;
+
+    // Apply grain — destination-out only affects this one stroke
+    this.applyGrainToStroke(offCtx, path, grainStrength, anchorX, anchorY);
+
+    // Composite the grain-textured stroke back to the main canvas.
+    // Identity transform so offscreen pixels map 1:1 to target pixels.
+    // Any active clip region (e.g., page rect) from the target is preserved.
+    targetCtx.save();
+    targetCtx.setTransform(1, 0, 0, 1, 0, 0);
+    targetCtx.drawImage(this.grainOffscreen, 0, 0);
+    targetCtx.restore();
   }
 
   private clearCanvas(ctx: CanvasRenderingContext2D): void {

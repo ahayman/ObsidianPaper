@@ -26,7 +26,7 @@ module.exports = {
   coverageReporters: ["text", "lcov", "html"],
   moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
   transformIgnorePatterns: [
-    "node_modules/(?!(rbush|quickselect)/)",
+    "node_modules/(?!(rbush|quickselect|simplex-noise)/)",
   ],
   clearMocks: true,
   restoreMocks: true,

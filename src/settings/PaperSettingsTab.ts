@@ -6,7 +6,6 @@ import type { PenType, PaperType, PageSizePreset, PageOrientation, LayoutDirecti
 
 const PEN_TYPE_OPTIONS: Record<PenType, string> = {
   ballpoint: "Ballpoint",
-  brush: "Brush",
   "felt-tip": "Felt tip",
   pencil: "Pencil",
   fountain: "Fountain",
@@ -404,6 +403,23 @@ export class PaperSettingsTab extends PluginSettingTab {
           const num = parseFloat(value);
           if (!isNaN(num) && num >= 0 && num <= 1) {
             this.settings.defaultSmoothing = num;
+            this.notifyChange();
+          }
+        });
+      });
+
+    // --- Grain Texture Section ---
+    new Setting(containerEl).setName("Grain texture").setHeading();
+
+    new Setting(containerEl)
+      .setName("Pencil grain strength")
+      .setDesc("Amount of paper grain visible on pencil strokes (0 = none, 1 = maximum)")
+      .addText((text) => {
+        text.setValue(String(this.settings.pencilGrainStrength));
+        text.onChange((value: string) => {
+          const num = parseFloat(value);
+          if (!isNaN(num) && num >= 0 && num <= 1) {
+            this.settings.pencilGrainStrength = num;
             this.notifyChange();
           }
         });

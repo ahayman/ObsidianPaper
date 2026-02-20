@@ -6,7 +6,6 @@
 
 export type PenType =
   | "ballpoint"
-  | "brush"
   | "felt-tip"
   | "pencil"
   | "fountain"

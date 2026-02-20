@@ -108,6 +108,8 @@ export class PaperView extends TextFileView {
     // Create multi-layer renderer
     this.renderer = new Renderer(container, this.camera, Platform.isMobile);
     this.renderer.isDarkMode = this.themeDetector.isDarkMode;
+    this.renderer.initGrain();
+    this.renderer.setGrainStrength("pencil", this.settings.pencilGrainStrength);
 
     // Initial resize
     const rect = container.getBoundingClientRect();
@@ -238,6 +240,7 @@ export class PaperView extends TextFileView {
   setSettings(settings: PaperSettings): void {
     this.settings = settings;
     this.useBarrelRotation = settings.useBarrelRotation;
+    this.renderer?.setGrainStrength("pencil", settings.pencilGrainStrength);
 
     // If there's an active preset, load its values
     if (settings.activePresetId) {

@@ -5,7 +5,6 @@ import { ColorPickerPanel } from "./ColorPickerPanel";
 
 const PEN_TYPES: { type: PenType; label: string }[] = [
   { type: "ballpoint", label: "Ballpoint" },
-  { type: "brush", label: "Brush" },
   { type: "felt-tip", label: "Felt tip" },
   { type: "pencil", label: "Pencil" },
   { type: "fountain", label: "Fountain" },

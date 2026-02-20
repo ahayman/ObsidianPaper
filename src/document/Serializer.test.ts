@@ -82,7 +82,7 @@ describe("Serializer", () => {
     it("should round-trip custom styles", () => {
       const doc = createEmptyDocument();
       const blueStyle: PenStyle = {
-        pen: "brush",
+        pen: "felt-tip",
         color: "#2563eb|#60a5fa",
         colorDark: "#60a5fa",
         width: 8,
@@ -97,7 +97,7 @@ describe("Serializer", () => {
       const restored = deserializeDocument(json);
 
       expect(restored.styles["my-blue"]).toBeDefined();
-      expect(restored.styles["my-blue"].pen).toBe("brush");
+      expect(restored.styles["my-blue"].pen).toBe("felt-tip");
       expect(restored.styles["my-blue"].color).toBe("#2563eb|#60a5fa");
       expect(restored.styles["my-blue"].colorDark).toBe("#60a5fa");
       expect(restored.styles["my-blue"].width).toBe(8);

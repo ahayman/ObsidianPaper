@@ -1,5 +1,11 @@
 import type { PenType } from "../types";
 
+export interface PenGrainConfig {
+  enabled: boolean;
+  /** Default grain strength 0-1 */
+  strength: number;
+}
+
 /**
  * Full configuration for a pen type.
  * All pen types are handled by the same engine with different parameters.
@@ -35,6 +41,8 @@ export interface PenConfig {
   nibThickness: number | null;
   /** Whether to use barrel rotation (twist) as dynamic nib angle (Apple Pencil Pro) */
   useBarrelRotation: boolean;
+  /** Grain texture configuration (pencil/brush), null = no grain */
+  grain: PenGrainConfig | null;
 }
 
 export const PEN_CONFIGS: Record<PenType, PenConfig> = {
@@ -55,25 +63,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     nibAngle: null,
     nibThickness: null,
     useBarrelRotation: false,
-  },
-
-  brush: {
-    type: "brush",
-    baseWidth: 8,
-    pressureWidthRange: [0.05, 1.0],
-    pressureOpacityRange: null,
-    thinning: 0.8,
-    smoothing: 0.6,
-    streamline: 0.5,
-    taperStart: 20,
-    taperEnd: 30,
-    tiltSensitivity: 0,
-    pressureCurve: 1.0,
-    baseOpacity: 1.0,
-    highlighterMode: false,
-    nibAngle: null,
-    nibThickness: null,
-    useBarrelRotation: false,
+    grain: null,
   },
 
   "felt-tip": {
@@ -93,6 +83,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     nibAngle: null,
     nibThickness: null,
     useBarrelRotation: false,
+    grain: null,
   },
 
   pencil: {
@@ -112,6 +103,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     nibAngle: null,
     nibThickness: null,
     useBarrelRotation: false,
+    grain: { enabled: true, strength: 0.5 },
   },
 
   fountain: {
@@ -131,6 +123,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     nibAngle: Math.PI / 6,
     nibThickness: 0.25,
     useBarrelRotation: true,
+    grain: null,
   },
 
   highlighter: {
@@ -150,6 +143,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     nibAngle: null,
     nibThickness: null,
     useBarrelRotation: false,
+    grain: null,
   },
 };
 

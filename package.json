@@ -43,6 +43,7 @@
   "dependencies": {
     "fflate": "^0.8.2",
     "perfect-freehand": "^1.2.3",
-    "rbush": "^4.0.1"
+    "rbush": "^4.0.1",
+    "simplex-noise": "^4.0.3"
   }
 }

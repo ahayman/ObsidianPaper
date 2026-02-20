@@ -26,8 +26,8 @@ describe("PenEngine", () => {
       expect(highP.width).toBeGreaterThan(lowP.width);
     });
 
-    it("should produce wider stroke at higher pressure (brush)", () => {
-      const config = getPenConfig("brush");
+    it("should produce wider stroke at higher pressure (felt-tip)", () => {
+      const config = getPenConfig("felt-tip");
       const lowP = computePointAttributes(makePoint({ pressure: 0.1 }), config);
       const highP = computePointAttributes(makePoint({ pressure: 0.9 }), config);
 
@@ -203,7 +203,7 @@ describe("PenEngine", () => {
 
   describe("velocity thinning", () => {
     it("should thin strokes at high velocity", () => {
-      const config = getPenConfig("brush");
+      const config = getPenConfig("felt-tip");
       const prev = makePoint({ x: 100, y: 200, timestamp: 0 });
 
       // Slow movement

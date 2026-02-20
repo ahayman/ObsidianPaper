@@ -30,13 +30,6 @@ export function penStyleToOutlineOptions(style: PenStyle): StrokeOutlineOptions 
       smoothing = 0.3;
       streamline = 0.4;
       break;
-    case "brush":
-      thinning = 0.8;
-      smoothing = 0.6;
-      streamline = 0.5;
-      taperStart = 20;
-      taperEnd = 30;
-      break;
     case "felt-tip":
       thinning = 0.3;
       smoothing = 0.5;
