@@ -185,6 +185,41 @@ describe("Camera", () => {
     });
   });
 
+  describe("getOverscanVisibleRect", () => {
+    it("returns wider rect than viewport for 2x overscan", () => {
+      const cam = new Camera({ x: 0, y: 0, zoom: 1 });
+      // Viewport: 800x600, overscan: 1600x1200, offset: -400, -300
+      const rect = cam.getOverscanVisibleRect(1600, 1200, -400, -300);
+      // screenToWorld(-400, -300) = { x: -400, y: -300 }
+      // screenToWorld(-400+1600, -300+1200) = { x: 1200, y: 900 }
+      expect(rect).toEqual([-400, -300, 1200, 900]);
+    });
+
+    it("accounts for camera pan", () => {
+      const cam = new Camera({ x: 100, y: 200, zoom: 1 });
+      const rect = cam.getOverscanVisibleRect(1600, 1200, -400, -300);
+      // screenToWorld(-400, -300) = { x: -400 + 100, y: -300 + 200 } = { x: -300, y: -100 }
+      // screenToWorld(1200, 900) = { x: 1200 + 100, y: 900 + 200 } = { x: 1300, y: 1100 }
+      expect(rect).toEqual([-300, -100, 1300, 1100]);
+    });
+
+    it("accounts for zoom", () => {
+      const cam = new Camera({ x: 0, y: 0, zoom: 2 });
+      // At 2x zoom, screenToWorld divides by zoom
+      const rect = cam.getOverscanVisibleRect(1600, 1200, -400, -300);
+      // screenToWorld(-400, -300) = { x: -200, y: -150 }
+      // screenToWorld(1200, 900) = { x: 600, y: 450 }
+      expect(rect).toEqual([-200, -150, 600, 450]);
+    });
+
+    it("with zero offset matches getVisibleRect", () => {
+      const cam = new Camera({ x: 50, y: 75, zoom: 1.5 });
+      const viewportRect = cam.getVisibleRect(800, 600);
+      const overscanRect = cam.getOverscanVisibleRect(800, 600, 0, 0);
+      expect(overscanRect).toEqual(viewportRect);
+    });
+  });
+
   describe("getState / setState", () => {
     it("should round-trip state", () => {
       const cam = new Camera({ x: 10, y: 20, zoom: 1.5 });

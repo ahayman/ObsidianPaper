@@ -44,6 +44,10 @@ export class PaperView extends TextFileView {
   private pageMenuButton: PageMenuButton | null = null;
   private activePopover: { destroy: () => void } | null = null;
   private pinchBaseZoom: number | null = null;
+  private gestureBaseCamera: { x: number; y: number; zoom: number } | null = null;
+  private midGestureRenderPending = false;
+  private lastMidGestureRenderTime = 0;
+  private static readonly MID_GESTURE_THROTTLE_MS = 250;
   private settings: PaperSettings = DEFAULT_SETTINGS;
   private staticRafId: number | null = null;
   private precompressTimeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -787,6 +791,83 @@ export class PaperView extends TextFileView {
     }
   }
 
+  /**
+   * Compute and apply a CSS transform to all canvas layers based on the
+   * delta from gestureBaseCamera to the current camera. This provides a
+   * smooth preview during gestures without re-rendering strokes.
+   */
+  private applyGestureTransform(): void {
+    if (!this.gestureBaseCamera || !this.renderer) return;
+    const base = this.gestureBaseCamera;
+    const cam = this.camera;
+    const scale = cam.zoom / base.zoom;
+    const tx = (base.x - cam.x) * cam.zoom;
+    const ty = (base.y - cam.y) * cam.zoom;
+    this.renderer.setGestureTransform(tx, ty, scale);
+
+    // If the CSS-transformed overscan canvas no longer covers the viewport,
+    // trigger a throttled re-render to recenter the buffer.
+    if (!this.isOverscanSufficient(tx, ty, scale)) {
+      this.requestMidGestureRender();
+    }
+  }
+
+  /**
+   * Check whether the CSS-transformed overscan canvas still fully covers the viewport.
+   */
+  private isOverscanSufficient(tx: number, ty: number, scale: number): boolean {
+    if (!this.renderer) return true;
+    const { x: ox, y: oy } = this.renderer.getOverscanOffset();
+    const { width: ow, height: oh } = this.renderer.getOverscanCssSize();
+
+    // Adjusted translation for overscan canvas (same math as setGestureTransform)
+    const txAdj = tx + ox * (scale - 1);
+    const tyAdj = ty + oy * (scale - 1);
+
+    // Edges of the overscan canvas after CSS transform, relative to viewport
+    const leftEdge = ox + txAdj;
+    const topEdge = oy + tyAdj;
+    const rightEdge = ox + txAdj + ow * scale;
+    const bottomEdge = oy + tyAdj + oh * scale;
+
+    // Allow 2px tolerance to avoid jitter
+    return leftEdge <= 2 && topEdge <= 2
+      && rightEdge >= this.cssWidth - 2
+      && bottomEdge >= this.cssHeight - 2;
+  }
+
+  private requestMidGestureRender(): void {
+    if (this.midGestureRenderPending) return;
+
+    const now = performance.now();
+    const elapsed = now - this.lastMidGestureRenderTime;
+
+    if (elapsed < PaperView.MID_GESTURE_THROTTLE_MS) {
+      this.midGestureRenderPending = true;
+      setTimeout(() => {
+        this.midGestureRenderPending = false;
+        this.executeMidGestureRender();
+      }, PaperView.MID_GESTURE_THROTTLE_MS - elapsed);
+    } else {
+      this.executeMidGestureRender();
+    }
+  }
+
+  private executeMidGestureRender(): void {
+    if (!this.renderer) return;
+
+    this.lastMidGestureRenderTime = performance.now();
+
+    // Reset gesture base to current camera position
+    this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom };
+
+    // Clear CSS transform (base = current, so delta is zero)
+    this.renderer.clearGestureTransform();
+
+    // Re-render centered on new viewport (synchronous)
+    this.renderStaticWithIcons();
+  }
+
   // ─── Style Helpers ──────────────────────────────────────────────
 
   private getCurrentStyle(): PenStyle {
@@ -1009,16 +1090,26 @@ export class PaperView extends TextFileView {
         this.renderer?.clearActiveLayer();
       },
 
-      onPanStart: () => {},
+      onPanStart: () => {
+        this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom };
+      },
 
       onPanMove: (dx: number, dy: number) => {
         this.camera.pan(dx, dy);
         const rect = this.contentEl.getBoundingClientRect();
         this.camera.clampPan(rect.width, rect.height);
-        this.requestStaticRender();
+        // Snapshot base on first move if not set (e.g. pinch-to-pan transition)
+        if (!this.gestureBaseCamera) {
+          this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom };
+        }
+        this.applyGestureTransform();
       },
 
       onPanEnd: () => {
+        this.midGestureRenderPending = false;
+        this.gestureBaseCamera = null;
+        this.renderer?.clearGestureTransform();
+        this.requestStaticRender();
         this.requestSave();
       },
 
@@ -1032,11 +1123,19 @@ export class PaperView extends TextFileView {
         this.camera.zoomAt(centerX, centerY, newZoom);
         const rect = this.contentEl.getBoundingClientRect();
         this.camera.clampPan(rect.width, rect.height);
-        this.requestStaticRender();
+        // Snapshot base on first pinch move
+        if (!this.gestureBaseCamera) {
+          this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom };
+        }
+        this.applyGestureTransform();
       },
 
       onPinchEnd: () => {
+        this.midGestureRenderPending = false;
         this.pinchBaseZoom = null;
+        this.gestureBaseCamera = null;
+        this.renderer?.clearGestureTransform();
+        this.requestStaticRender();
         this.requestSave();
       },
 

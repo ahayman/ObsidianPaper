@@ -146,6 +146,26 @@ export class Camera {
   }
 
   /**
+   * Get the visible world-space rectangle for an overscan canvas.
+   * The overscan canvas covers screen-space from (offsetX, offsetY)
+   * to (offsetX + overscanWidth, offsetY + overscanHeight),
+   * where offsetX/offsetY are negative.
+   */
+  getOverscanVisibleRect(
+    overscanCssWidth: number,
+    overscanCssHeight: number,
+    overscanOffsetX: number,
+    overscanOffsetY: number,
+  ): [number, number, number, number] {
+    const topLeft = this.screenToWorld(overscanOffsetX, overscanOffsetY);
+    const bottomRight = this.screenToWorld(
+      overscanOffsetX + overscanCssWidth,
+      overscanOffsetY + overscanCssHeight,
+    );
+    return [topLeft.x, topLeft.y, bottomRight.x, bottomRight.y];
+  }
+
+  /**
    * Check if a bounding box overlaps the current viewport.
    */
   isVisible(

@@ -66,6 +66,8 @@ export class BackgroundRenderer {
     pageLayout: PageRect[],
     pages: Page[],
     afterPages?: (ctx: CanvasRenderingContext2D, visibleRect: [number, number, number, number]) => void,
+    overscanOffsetX = 0,
+    overscanOffsetY = 0,
   ): void {
     const ctx = this.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -75,11 +77,18 @@ export class BackgroundRenderer {
     ctx.fillStyle = config.isDarkMode ? DESK_COLORS.dark : DESK_COLORS.light;
     ctx.fillRect(0, 0, this.cssWidth, this.cssHeight);
 
-    // 2. Apply camera transform
-    this.camera.applyToContext(ctx);
+    // 2. Apply camera transform with overscan offset compensation
+    ctx.save();
+    ctx.transform(
+      this.camera.zoom, 0, 0, this.camera.zoom,
+      -this.camera.x * this.camera.zoom - overscanOffsetX,
+      -this.camera.y * this.camera.zoom - overscanOffsetY,
+    );
 
-    // Get visible world rect for culling
-    const visibleRect = this.camera.getVisibleRect(this.cssWidth, this.cssHeight);
+    // Get visible world rect for culling (overscan area)
+    const visibleRect = this.camera.getOverscanVisibleRect(
+      this.cssWidth, this.cssHeight, overscanOffsetX, overscanOffsetY,
+    );
     const [visMinX, visMinY, visMaxX, visMaxY] = visibleRect;
 
     // 3. For each page, render shadow + background + patterns

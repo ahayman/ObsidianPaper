@@ -12,14 +12,17 @@
   left: 0;
   display: block;
   touch-action: none;
+  transform-origin: 0 0;
 }
 
 .paper-background-canvas {
   z-index: 0;
+  will-change: transform;
 }
 
 .paper-static-canvas {
   z-index: 1;
+  will-change: transform;
 }
 
 .paper-active-canvas {
