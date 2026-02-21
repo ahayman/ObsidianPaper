@@ -937,3 +937,35 @@
   width: 100%;
   text-align: center;
 }
+
+/* ─── Document Settings Popover ──────────────────────────── */
+
+.paper-doc-settings-popover {
+  max-height: 70vh;
+}
+
+.paper-doc-settings__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.paper-doc-settings__reset {
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  border: none;
+  background: none;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.paper-doc-settings__reset:hover {
+  color: var(--text-normal);
+}
+
+.paper-doc-settings__subtitle {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-weight: normal;
+}

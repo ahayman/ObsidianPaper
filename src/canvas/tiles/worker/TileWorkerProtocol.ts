@@ -21,6 +21,7 @@ export interface WorkerDocUpdateMessage {
   pages: Page[];
   pageLayout: PageRect[];
   layoutDirection: LayoutDirection;
+  renderPipeline?: string; // RenderPipeline
 }
 
 export interface WorkerGrainUpdateMessage {

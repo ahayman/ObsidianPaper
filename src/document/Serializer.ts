@@ -3,15 +3,20 @@ import type {
   PenStyle,
   Stroke,
   Page,
+  PageDefaults,
   PageBackgroundTheme,
   SerializedDocument,
   SerializedStroke,
   SerializedPenStyle,
   SerializedPage,
+  SerializedPageDefaults,
   PaperType,
   PenType,
   PageOrientation,
+  PageSizePreset,
+  PageUnit,
   LayoutDirection,
+  RenderPipeline,
 } from "../types";
 import { createEmptyDocument } from "./Document";
 import {
@@ -71,6 +76,19 @@ export function serializeDocument(doc: PaperDocument): string {
     serialized.layout = doc.layoutDirection;
   }
 
+  // Omit renderPipeline if undefined (use global default)
+  if (doc.renderPipeline) {
+    serialized.rp = doc.renderPipeline;
+  }
+
+  // Omit pageDefaults if undefined or empty
+  if (doc.pageDefaults) {
+    const spd = serializePageDefaults(doc.pageDefaults);
+    if (spd) {
+      serialized.pd = spd;
+    }
+  }
+
   return JSON.stringify(serialized);
 }
 
@@ -98,7 +116,7 @@ export function deserializeDocument(data: string): PaperDocument {
     (parsed.strokes ?? []).map((s) => s.pts)
   ) >= COMPRESSION_THRESHOLD;
 
-  return {
+  const doc: PaperDocument = {
     version: parsed.v,
     meta: {
       created: parsed.meta?.created ?? Date.now(),
@@ -107,6 +125,7 @@ export function deserializeDocument(data: string): PaperDocument {
     },
     pages: (parsed.pages ?? []).map((p) => deserializePage(p)),
     layoutDirection: (parsed.layout as LayoutDirection) ?? "vertical",
+    renderPipeline: (parsed.rp as RenderPipeline) ?? undefined,
     viewport: {
       x: parsed.viewport?.x ?? 0,
       y: parsed.viewport?.y ?? 0,
@@ -116,6 +135,62 @@ export function deserializeDocument(data: string): PaperDocument {
     styles: deserializeStyles(parsed.styles ?? {}),
     strokes: (parsed.strokes ?? []).map((s) => deserializeStroke(s, useCompression)),
   };
+
+  if (parsed.pd) {
+    doc.pageDefaults = deserializePageDefaults(parsed.pd);
+  }
+
+  return doc;
+}
+
+function serializePageDefaults(pd: PageDefaults): SerializedPageDefaults | undefined {
+  const result: SerializedPageDefaults = {};
+  let hasAny = false;
+
+  if (pd.pageSize !== undefined) { result.ps = pd.pageSize; hasAny = true; }
+  if (pd.orientation !== undefined) { result.o = pd.orientation; hasAny = true; }
+  if (pd.paperType !== undefined) { result.pt = pd.paperType; hasAny = true; }
+  if (pd.backgroundColor !== undefined) { result.bg = pd.backgroundColor; hasAny = true; }
+  if (pd.backgroundColorTheme !== undefined) { result.bgt = pd.backgroundColorTheme; hasAny = true; }
+  if (pd.lineSpacing !== undefined) { result.ls = pd.lineSpacing; hasAny = true; }
+  if (pd.gridSize !== undefined) { result.gs = pd.gridSize; hasAny = true; }
+  if (pd.margins?.top !== undefined) { result.mt = pd.margins.top; hasAny = true; }
+  if (pd.margins?.bottom !== undefined) { result.mb = pd.margins.bottom; hasAny = true; }
+  if (pd.margins?.left !== undefined) { result.ml = pd.margins.left; hasAny = true; }
+  if (pd.margins?.right !== undefined) { result.mr = pd.margins.right; hasAny = true; }
+  if (pd.customPageUnit !== undefined) { result.cpu = pd.customPageUnit; hasAny = true; }
+  if (pd.customPageWidth !== undefined) { result.cpw = pd.customPageWidth; hasAny = true; }
+  if (pd.customPageHeight !== undefined) { result.cph = pd.customPageHeight; hasAny = true; }
+
+  return hasAny ? result : undefined;
+}
+
+function deserializePageDefaults(s: SerializedPageDefaults): PageDefaults | undefined {
+  const pd: PageDefaults = {};
+  let hasAny = false;
+
+  if (s.ps !== undefined) { pd.pageSize = s.ps as PageSizePreset; hasAny = true; }
+  if (s.o !== undefined) { pd.orientation = s.o as PageOrientation; hasAny = true; }
+  if (s.pt !== undefined) { pd.paperType = s.pt as PaperType; hasAny = true; }
+  if (s.bg !== undefined) { pd.backgroundColor = s.bg; hasAny = true; }
+  if (s.bgt !== undefined) { pd.backgroundColorTheme = s.bgt as PageBackgroundTheme; hasAny = true; }
+  if (s.ls !== undefined) { pd.lineSpacing = s.ls; hasAny = true; }
+  if (s.gs !== undefined) { pd.gridSize = s.gs; hasAny = true; }
+
+  // Margins
+  const margins: Partial<PageDefaults["margins"] & object> = {};
+  let hasMargins = false;
+  if (s.mt !== undefined) { margins.top = s.mt; hasMargins = true; }
+  if (s.mb !== undefined) { margins.bottom = s.mb; hasMargins = true; }
+  if (s.ml !== undefined) { margins.left = s.ml; hasMargins = true; }
+  if (s.mr !== undefined) { margins.right = s.mr; hasMargins = true; }
+  if (hasMargins) { pd.margins = margins; hasAny = true; }
+
+  if (s.cpu !== undefined) { pd.customPageUnit = s.cpu as PageUnit; hasAny = true; }
+  if (s.cpw !== undefined) { pd.customPageWidth = s.cpw; hasAny = true; }
+  if (s.cph !== undefined) { pd.customPageHeight = s.cph; hasAny = true; }
+
+  return hasAny ? pd : undefined;
 }
 
 function serializePage(page: Page): SerializedPage {

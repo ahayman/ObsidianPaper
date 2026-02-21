@@ -33,6 +33,7 @@ export class Toolbar {
   private redoBtn: ToolbarButton | null = null;
   private eraserBtn: ToolbarButton | null = null;
   private addPageBtn: ToolbarButton | null = null;
+  private docSettingsBtn: ToolbarButton | null = null;
   private moreBtn: ToolbarButton | null = null;
 
   constructor(
@@ -107,6 +108,14 @@ export class Toolbar {
     // Add page
     this.addPageBtn = new ToolbarButton(this.el, "+ Page", "paper-toolbar__btn--add-page", () => {
       this.callbacks.onAddPage();
+    });
+
+    // Separator
+    this.el.createEl("div", { cls: "paper-toolbar__separator" });
+
+    // Document settings (gear)
+    this.docSettingsBtn = new ToolbarButton(this.el, "\u2699", "paper-toolbar__btn--doc-settings", () => {
+      this.callbacks.onOpenDocumentSettings();
     });
 
     // More / Customize
@@ -303,6 +312,10 @@ export class Toolbar {
     this.presetStrip?.updatePresets(presets, activePresetId);
   }
 
+  getDocSettingsAnchor(): HTMLElement {
+    return this.docSettingsBtn!.el;
+  }
+
   destroy(): void {
     this.closePopover();
     this.autoMinimizer.destroy();
@@ -311,6 +324,7 @@ export class Toolbar {
     this.redoBtn?.destroy();
     this.eraserBtn?.destroy();
     this.addPageBtn?.destroy();
+    this.docSettingsBtn?.destroy();
     this.moreBtn?.destroy();
     this.el.remove();
   }

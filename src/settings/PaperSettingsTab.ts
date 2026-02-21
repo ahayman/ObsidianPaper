@@ -2,7 +2,7 @@ import { PluginSettingTab, App, Setting } from "obsidian";
 import type { Plugin } from "obsidian";
 import type { PaperSettings, PaperFormat } from "./PaperSettings";
 import { formatSpacingDisplay, displayToWorldUnits } from "./PaperSettings";
-import type { PenType, PaperType, PageSizePreset, PageOrientation, LayoutDirection, PageUnit, SpacingUnit } from "../types";
+import type { PenType, PaperType, PageSizePreset, PageOrientation, LayoutDirection, PageUnit, SpacingUnit, RenderPipeline } from "../types";
 
 const PEN_TYPE_OPTIONS: Record<PenType, string> = {
   ballpoint: "Ballpoint",
@@ -422,6 +422,23 @@ export class PaperSettingsTab extends PluginSettingTab {
             this.settings.pencilGrainStrength = num;
             this.notifyChange();
           }
+        });
+      });
+
+    // --- Rendering Section ---
+    new Setting(containerEl).setName("Rendering").setHeading();
+
+    new Setting(containerEl)
+      .setName("Default render pipeline")
+      .setDesc("Controls stroke rendering quality and performance")
+      .addDropdown((dropdown) => {
+        dropdown.addOption("basic", "Basic (fastest)");
+        dropdown.addOption("textures", "Textures (default)");
+        dropdown.addOption("stamps", "Stamps (advanced)");
+        dropdown.setValue(this.settings.defaultRenderPipeline);
+        dropdown.onChange((value: string) => {
+          this.settings.defaultRenderPipeline = value as RenderPipeline;
+          this.notifyChange();
         });
       });
 

@@ -1,4 +1,4 @@
-import type { Stroke, PenStyle, StrokePoint, PaperDocument } from "../types";
+import type { Stroke, PenStyle, StrokePoint, PaperDocument, RenderPipeline } from "../types";
 import type { SpatialIndex } from "../spatial/SpatialIndex";
 import type { PageRect } from "../document/PageLayout";
 import { Camera } from "./Camera";
@@ -75,6 +75,9 @@ export class Renderer {
   private bgConfig: BackgroundConfig = {
     isDarkMode: false,
   };
+
+  // Rendering pipeline
+  private pipeline: RenderPipeline = "textures";
 
   // Tile-based rendering (when enabled, replaces overscan static canvas)
   private tiledLayer: TiledStaticLayer | null = null;
@@ -274,6 +277,11 @@ export class Renderer {
     this.bgConfig = { ...this.bgConfig, ...config };
   }
 
+  setPipeline(pipeline: RenderPipeline): void {
+    this.pipeline = pipeline;
+    this.tiledLayer?.setPipeline(pipeline);
+  }
+
   renderStaticLayer(
     doc: PaperDocument,
     pageLayout: PageRect[],
@@ -461,7 +469,7 @@ export class Renderer {
       const penConfig = getPenConfig(style.pen);
 
       // Grain-enabled strokes rendered in isolation
-      if (penConfig.grain?.enabled && points.length > 0) {
+      if (this.pipeline !== "basic" && penConfig.grain?.enabled && points.length > 0) {
         const strength = this.grainStrengthOverrides.get(style.pen) ?? penConfig.grain.strength;
         if (strength > 0) {
           let bMinX = Infinity, bMinY = Infinity, bMaxX = -Infinity, bMaxY = -Infinity;
@@ -604,7 +612,7 @@ export class Renderer {
         }
 
         // Grain overlay for active stroke
-        if (penConfig.grain?.enabled && points.length > 0) {
+        if (this.pipeline !== "basic" && penConfig.grain?.enabled && points.length > 0) {
           const strength = this.grainStrengthOverrides.get(style.pen) ?? penConfig.grain.strength;
           if (strength > 0) {
             this.applyGrainToStrokeLocal(this.activeCtx, path, strength, points[0].x, points[0].y);
@@ -843,6 +851,7 @@ export class Renderer {
     return {
       generator: this.grainGenerator,
       strengthOverrides: this.grainStrengthOverrides,
+      pipeline: this.pipeline,
       getOffscreen: (minW: number, minH: number) => {
         const ctx = this.ensureGrainOffscreen(minW, minH);
         if (!ctx || !this.grainOffscreen) return null;
@@ -996,6 +1005,8 @@ class TiledStaticLayer {
   private docVersion = 0;
   /** Last docVersion sent to workers. */
   private workerDocVersion = -1;
+  /** Current rendering pipeline. */
+  private pipeline: RenderPipeline = "textures";
 
   // Cached state for scheduler callbacks
   private currentDoc: PaperDocument | null = null;
@@ -1051,13 +1062,21 @@ class TiledStaticLayer {
     this.workerScheduler.updateGrain(grainGenerator, strengthOverrides);
   }
 
+  /** Update the rendering pipeline for the tile renderer and workers. */
+  setPipeline(pipeline: RenderPipeline): void {
+    this.pipeline = pipeline;
+    this.tileRenderer.setPipeline(pipeline);
+    // Force doc resync so workers pick up the new pipeline
+    this.bumpDocVersion();
+  }
+
   /** Send document state to workers only if it changed since last sync. */
   syncDocumentToWorkers(): void {
     if (this.useMainThreadFallback) return;
     if (!this.currentDoc) return;
     if (this.workerDocVersion === this.docVersion) return;
     this.workerDocVersion = this.docVersion;
-    this.workerScheduler.updateDocument(this.currentDoc, this.currentPageLayout);
+    this.workerScheduler.updateDocument(this.currentDoc, this.currentPageLayout, this.pipeline);
   }
 
   /** Mark document as changed so next syncDocumentToWorkers() sends an update. */

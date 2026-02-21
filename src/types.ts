@@ -56,6 +56,7 @@ export type PaperType = "blank" | "lined" | "grid" | "dot-grid";
 export type PageSizePreset = "us-letter" | "us-legal" | "a4" | "a5" | "a3" | "custom";
 export type PageOrientation = "portrait" | "landscape";
 export type LayoutDirection = "vertical" | "horizontal";
+export type RenderPipeline = "basic" | "textures" | "stamps";
 export type PageUnit = "in" | "cm";
 export type SpacingUnit = "in" | "cm" | "wu";
 
@@ -109,11 +110,28 @@ export interface Viewport {
   zoom: number;
 }
 
+export interface PageDefaults {
+  pageSize?: PageSizePreset;
+  orientation?: PageOrientation;
+  paperType?: PaperType;
+  backgroundColor?: PageBackgroundColor;
+  backgroundColorTheme?: PageBackgroundTheme;
+  lineSpacing?: number;   // World units
+  gridSize?: number;      // World units
+  margins?: Partial<PageMargins>;
+  // Custom page size (only used when pageSize === "custom")
+  customPageUnit?: PageUnit;
+  customPageWidth?: number;
+  customPageHeight?: number;
+}
+
 export interface PaperDocument {
   version: number;
   meta: DocumentMeta;
   pages: Page[];
   layoutDirection: LayoutDirection;
+  renderPipeline?: RenderPipeline; // undefined = use global default
+  pageDefaults?: PageDefaults;     // undefined = use global defaults for new pages
   viewport: Viewport;
   channels: string[];
   styles: Record<string, PenStyle>;
@@ -146,10 +164,29 @@ export interface SerializedPage {
   bgt?: string;     // backgroundColorTheme, omit if "auto" or undefined
 }
 
+export interface SerializedPageDefaults {
+  ps?: string;   // pageSize preset
+  o?: string;    // orientation
+  pt?: string;   // paperType
+  bg?: string;   // backgroundColor
+  bgt?: string;  // backgroundColorTheme
+  ls?: number;   // lineSpacing
+  gs?: number;   // gridSize
+  mt?: number;   // margin top
+  mb?: number;   // margin bottom
+  ml?: number;   // margin left
+  mr?: number;   // margin right
+  cpu?: string;  // customPageUnit
+  cpw?: number;  // customPageWidth
+  cph?: number;  // customPageHeight
+}
+
 export interface SerializedDocument {
   v: number;
   meta: { created: number; app: string };
   layout?: string;  // "vertical" | "horizontal", omit if "vertical"
+  rp?: string;      // RenderPipeline, omit if undefined
+  pd?: SerializedPageDefaults; // Page defaults, omit if undefined
   pages: SerializedPage[];
   viewport: { x: number; y: number; zoom: number };
   channels: string[];

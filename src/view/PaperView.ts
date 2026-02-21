@@ -1,5 +1,6 @@
 import { TextFileView, WorkspaceLeaf, Platform } from "obsidian";
-import type { PaperDocument, PenStyle, PenType, Stroke, StrokePoint, Page, PageSize, PaperType, PageOrientation, PageBackgroundColor, PageBackgroundTheme, PageMargins } from "../types";
+import type { PaperDocument, PenStyle, PenType, Stroke, StrokePoint, Page, PageSize, PageDefaults, PaperType, PageOrientation, PageBackgroundColor, PageBackgroundTheme, PageMargins, RenderPipeline } from "../types";
+import { PAGE_SIZE_PRESETS, PPI, CM_PER_INCH } from "../types";
 import { Camera } from "../canvas/Camera";
 import { Renderer } from "../canvas/Renderer";
 import { InputManager } from "../input/InputManager";
@@ -21,6 +22,7 @@ import { computePageLayout, findPageAtPoint, getDocumentBounds, getEffectiveSize
 import type { PageRect } from "../document/PageLayout";
 import { PageMenuButton } from "./PageMenuButton";
 import { PageMenuPopover } from "./PageMenuPopover";
+import { DocumentSettingsPopover } from "./toolbar/DocumentSettingsPopover";
 import { decodePoints, encodePoints } from "../document/PointEncoder";
 import { resolvePageBackground } from "../color/ColorUtils";
 
@@ -43,6 +45,7 @@ export class PaperView extends TextFileView {
   private hoverCursor: HoverCursor | null = null;
   private pageMenuButton: PageMenuButton | null = null;
   private activePopover: { destroy: () => void } | null = null;
+  private docSettingsPopover: DocumentSettingsPopover | null = null;
   private pinchBaseZoom: number | null = null;
   private gestureBaseCamera: { x: number; y: number; zoom: number } | null = null;
   private midGestureRenderPending = false;
@@ -189,6 +192,8 @@ export class PaperView extends TextFileView {
     this.toolbar = null;
     this.activePopover?.destroy();
     this.activePopover = null;
+    this.docSettingsPopover?.destroy();
+    this.docSettingsPopover = null;
     this.pageMenuButton?.destroy();
     this.pageMenuButton = null;
     this.hoverCursor?.destroy();
@@ -227,6 +232,7 @@ export class PaperView extends TextFileView {
       this.camera.setState({ x: vp.x, y: vp.y, zoom: vp.zoom });
     }
 
+    this.renderer?.setPipeline(this.getResolvedPipeline());
     this.renderer?.invalidateCache();
     this.renderStaticWithIcons();
     this.precompressLoadedStrokes();
@@ -236,7 +242,9 @@ export class PaperView extends TextFileView {
     this.cancelPrecompression();
     this.renderer?.flushFinalizations();
     this.document = createEmptyDocument();
-    this.camera = new Camera();
+    // Reset the existing camera — do NOT replace with `new Camera()`.
+    // Renderer, InputManager, and TiledStaticLayer hold references to this object.
+    this.camera.setState({ x: 0, y: 0, zoom: 1.0 });
     this.undoManager.clear();
     this.spatialIndex.clear();
     this.recomputeLayout();
@@ -247,6 +255,7 @@ export class PaperView extends TextFileView {
   setSettings(settings: PaperSettings): void {
     this.settings = settings;
     this.useBarrelRotation = settings.useBarrelRotation;
+    this.renderer?.setPipeline(this.getResolvedPipeline());
     this.renderer?.setGrainStrength("pencil", settings.pencilGrainStrength);
 
     // If there's an active preset, load its values
@@ -383,19 +392,44 @@ export class PaperView extends TextFileView {
    * Add a new page to the document.
    */
   addPage(size?: PageSize, orientation?: Page["orientation"], paperType?: Page["paperType"]): void {
+    const pd = this.document.pageDefaults;
     const page: Page = {
       id: generatePageId(),
-      size: size ?? resolvePageSize(this.settings),
-      orientation: orientation ?? this.settings.defaultOrientation,
-      paperType: paperType ?? this.settings.defaultPaperType,
-      lineSpacing: this.settings.lineSpacing,
-      gridSize: this.settings.gridSize,
-      margins: resolveMargins(this.settings),
+      size: size ?? this.resolveNewPageSize(pd),
+      orientation: orientation ?? pd?.orientation ?? this.settings.defaultOrientation,
+      paperType: paperType ?? pd?.paperType ?? this.settings.defaultPaperType,
+      lineSpacing: pd?.lineSpacing ?? this.settings.lineSpacing,
+      gridSize: pd?.gridSize ?? this.settings.gridSize,
+      margins: {
+        top: pd?.margins?.top ?? this.settings.marginTop,
+        bottom: pd?.margins?.bottom ?? this.settings.marginBottom,
+        left: pd?.margins?.left ?? this.settings.marginLeft,
+        right: pd?.margins?.right ?? this.settings.marginRight,
+      },
     };
+    // Background from page defaults
+    if (pd?.backgroundColor) {
+      page.backgroundColor = pd.backgroundColor;
+      page.backgroundColorTheme = pd.backgroundColorTheme;
+    }
     this.document.pages.push(page);
     this.recomputeLayout();
     this.requestStaticRender();
     this.requestSave();
+  }
+
+  private resolveNewPageSize(pd?: PageDefaults): PageSize {
+    if (pd?.pageSize) {
+      if (pd.pageSize === "custom") {
+        const unit = pd.customPageUnit ?? this.settings.customPageUnit;
+        const w = pd.customPageWidth ?? this.settings.customPageWidth;
+        const h = pd.customPageHeight ?? this.settings.customPageHeight;
+        const factor = unit === "in" ? PPI : PPI / CM_PER_INCH;
+        return { width: Math.round(w * factor), height: Math.round(h * factor) };
+      }
+      return PAGE_SIZE_PRESETS[pd.pageSize];
+    }
+    return resolvePageSize(this.settings);
   }
 
   /**
@@ -435,6 +469,51 @@ export class PaperView extends TextFileView {
     this.document.layoutDirection = direction;
     this.recomputeLayout();
     this.requestStaticRender();
+    this.requestSave();
+  }
+
+  // ─── Rendering Pipeline ──────────────────────────────────────
+
+  private getResolvedPipeline(): RenderPipeline {
+    return this.document.renderPipeline ?? this.settings.defaultRenderPipeline;
+  }
+
+  updateRenderPipeline(pipeline: RenderPipeline): void {
+    this.document.renderPipeline = pipeline;
+    this.renderer?.setPipeline(pipeline);
+    this.renderer?.invalidateCache();
+    this.requestStaticRender();
+    this.requestSave();
+  }
+
+  // ─── Document Settings ──────────────────────────────────────
+
+  openDocumentSettings(): void {
+    this.docSettingsPopover?.destroy();
+
+    this.docSettingsPopover = new DocumentSettingsPopover(
+      {
+        renderPipeline: this.getResolvedPipeline(),
+        pageDefaults: this.document.pageDefaults ?? {},
+        globalSettings: this.settings,
+        spacingUnit: this.settings.spacingUnit,
+        isDarkMode: this.themeDetector?.isDarkMode ?? false,
+      },
+      this.toolbar!.getDocSettingsAnchor(),
+      {
+        onRenderPipelineChange: (pipeline) => this.updateRenderPipeline(pipeline),
+        onPageDefaultsChange: (defaults) => this.updatePageDefaults(defaults),
+        onDismiss: () => {
+          this.docSettingsPopover?.destroy();
+          this.docSettingsPopover = null;
+        },
+      },
+    );
+  }
+
+  updatePageDefaults(defaults: PageDefaults): void {
+    const hasAny = Object.values(defaults).some(v => v !== undefined);
+    this.document.pageDefaults = hasAny ? defaults : undefined;
     this.requestSave();
   }
 
@@ -929,6 +1008,9 @@ export class PaperView extends TextFileView {
       },
       onAddPage: () => {
         this.addPage();
+      },
+      onOpenDocumentSettings: () => {
+        this.openDocumentSettings();
       },
       onPresetSave: (presets, activePresetId) => {
         this.settings.penPresets = presets;

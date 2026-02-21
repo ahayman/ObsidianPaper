@@ -12,7 +12,7 @@ import { tileKeyString, tileSizePhysicalForBand } from "./TileTypes";
 import type { TileCache } from "./TileCache";
 import type { TileGrid } from "./TileGrid";
 import type { SpatialIndex } from "../../spatial/SpatialIndex";
-import type { PaperDocument, PenType } from "../../types";
+import type { PaperDocument, PenType, RenderPipeline } from "../../types";
 import type { PageRect } from "../../document/PageLayout";
 import type { GrainTextureGenerator } from "../GrainTextureGenerator";
 import type {
@@ -150,7 +150,7 @@ export class WorkerTileScheduler {
   /**
    * Send document state to all workers. Call on mutation (add/remove/undo).
    */
-  updateDocument(doc: PaperDocument, pageLayout: PageRect[]): void {
+  updateDocument(doc: PaperDocument, pageLayout: PageRect[], pipeline?: RenderPipeline): void {
     if (this.fallbackToMainThread) return;
 
     const msg: WorkerDocUpdateMessage = {
@@ -160,6 +160,7 @@ export class WorkerTileScheduler {
       pages: doc.pages,
       pageLayout: pageLayout,
       layoutDirection: doc.layoutDirection,
+      renderPipeline: pipeline,
     };
 
     for (const slot of this.pool) {

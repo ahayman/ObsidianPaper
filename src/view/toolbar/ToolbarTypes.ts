@@ -33,6 +33,7 @@ export interface ToolbarCallbacks {
   onUndo: () => void;
   onRedo: () => void;
   onAddPage: () => void;
+  onOpenDocumentSettings: () => void;
   onPresetSave: (presets: PenPreset[], activePresetId: string | null) => void;
   onPositionChange: (position: ToolbarPosition) => void;
 }

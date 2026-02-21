@@ -1,4 +1,4 @@
-import type { Stroke, PenStyle, StrokePoint, PenType } from "../types";
+import type { Stroke, PenStyle, StrokePoint, PenType, RenderPipeline } from "../types";
 import { decodePoints } from "../document/PointEncoder";
 import {
   generateStrokePath,
@@ -18,6 +18,8 @@ import { detectInkPools, renderInkPools } from "../stroke/InkPooling";
 export interface GrainRenderContext {
   generator: GrainTextureGenerator | null;
   strengthOverrides: Map<PenType, number>;
+  /** Active rendering pipeline. "basic" skips grain and ink pooling. */
+  pipeline: RenderPipeline;
   /**
    * Get or ensure an offscreen canvas of at least the given dimensions.
    * Returns null if grain rendering is unavailable.
@@ -97,7 +99,7 @@ export function renderStrokeToContext(
 
   // Grain-enabled strokes are rendered in isolation on an offscreen canvas
   // so destination-out only affects this stroke
-  if (lod === 0 && penConfig.grain?.enabled) {
+  if (grainCtx.pipeline !== "basic" && lod === 0 && penConfig.grain?.enabled) {
     const strength = grainCtx.strengthOverrides.get(style.pen) ?? penConfig.grain.strength;
     if (strength > 0) {
       const anchorX = stroke.grainAnchor?.[0] ?? stroke.bbox[0];
@@ -125,8 +127,8 @@ export function renderStrokeToContext(
     ctx.globalAlpha = 1;
   }
 
-  // Fountain pen ink pooling (skip at high LOD and for italic nib strokes)
-  if (style.pen === "fountain" && lod === 0 && style.nibAngle == null) {
+  // Fountain pen ink pooling (skip at high LOD, italic nib strokes, and basic pipeline)
+  if (grainCtx.pipeline !== "basic" && style.pen === "fountain" && lod === 0 && style.nibAngle == null) {
     const points = decodedPoints ?? decodePoints(stroke.pts);
     const pools = detectInkPools(points, style.width);
     if (pools.length > 0) {

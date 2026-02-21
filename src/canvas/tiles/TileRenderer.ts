@@ -1,4 +1,4 @@
-import type { PaperDocument } from "../../types";
+import type { PaperDocument, RenderPipeline } from "../../types";
 import type { PenType } from "../../types";
 import type { SpatialIndex } from "../../spatial/SpatialIndex";
 import type { PageRect } from "../../document/PageLayout";
@@ -31,6 +31,7 @@ export class TileRenderer {
   private pathCache: StrokePathCache;
   private grainGenerator: GrainTextureGenerator | null = null;
   private grainStrengthOverrides = new Map<PenType, number>();
+  private pipeline: RenderPipeline = "textures";
   private grainOffscreen: OffscreenCanvas | null = null;
   private grainOffscreenCtx: OffscreenCanvasRenderingContext2D | null = null;
 
@@ -51,6 +52,10 @@ export class TileRenderer {
 
   setGrainStrength(penType: PenType, strength: number): void {
     this.grainStrengthOverrides.set(penType, strength);
+  }
+
+  setPipeline(pipeline: RenderPipeline): void {
+    this.pipeline = pipeline;
   }
 
   /**
@@ -150,6 +155,7 @@ export class TileRenderer {
     return {
       generator: this.grainGenerator,
       strengthOverrides: this.grainStrengthOverrides,
+      pipeline: this.pipeline,
       getOffscreen: (minW: number, minH: number) => {
         const ctx = this.ensureGrainOffscreen(minW, minH);
         if (!ctx || !this.grainOffscreen) return null;

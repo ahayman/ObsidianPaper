@@ -98,6 +98,7 @@ describe("PaperSettings", () => {
         penPresets: [],
         activePresetId: null,
         toolbarPosition: "bottom",
+        defaultRenderPipeline: "textures",
       };
       const result = mergeSettings(custom);
       expect(result).toEqual(custom);

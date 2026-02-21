@@ -41,6 +41,7 @@ let strokes: Stroke[] = [];
 let styles: Record<string, PenStyle> = {};
 let pages: Page[] = [];
 let pageLayout: PageRect[] = [];
+let renderPipeline = "textures";
 
 const pathCache = new StrokePathCache();
 
@@ -441,7 +442,7 @@ function renderStroke(
   const penConfig = getPenConfig(style.pen);
 
   // Grain-enabled strokes rendered in isolation
-  if (lod === 0 && penConfig.grain?.enabled) {
+  if (renderPipeline !== "basic" && lod === 0 && penConfig.grain?.enabled) {
     const strength = grainStrengthOverrides.get(style.pen) ?? penConfig.grain.strength;
     if (strength > 0) {
       const anchorX = stroke.grainAnchor?.[0] ?? stroke.bbox[0];
@@ -470,7 +471,7 @@ function renderStroke(
   }
 
   // Fountain pen ink pooling
-  if (style.pen === "fountain" && lod === 0 && style.nibAngle == null) {
+  if (renderPipeline !== "basic" && style.pen === "fountain" && lod === 0 && style.nibAngle == null) {
     const points = decodedPoints ?? decodePoints(stroke.pts);
     const pools = detectInkPools(points, style.width);
     if (pools.length > 0) {
@@ -602,6 +603,9 @@ workerSelf.onmessage = (event: MessageEvent<MainToWorkerMessage>) => {
       styles = msg.styles;
       pages = msg.pages;
       pageLayout = msg.pageLayout;
+      if (msg.renderPipeline) {
+        renderPipeline = msg.renderPipeline;
+      }
       // Clear path cache since strokes may have changed
       pathCache.clear();
       break;

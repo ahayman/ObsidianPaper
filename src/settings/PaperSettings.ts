@@ -8,6 +8,7 @@ import type {
   PageSize,
   SpacingUnit,
   PageMargins,
+  RenderPipeline,
 } from "../types";
 import { PAGE_SIZE_PRESETS, PPI, CM_PER_INCH } from "../types";
 import type { PenPreset, ToolbarPosition } from "../view/toolbar/ToolbarTypes";
@@ -60,6 +61,9 @@ export interface PaperSettings {
   defaultNibThickness: number;   // Ratio 0-1 (default: 0.25)
   defaultNibPressure: number;    // Pressure sensitivity 0-1 (default: 0.5)
   useBarrelRotation: boolean;    // Use Apple Pencil Pro twist for nib angle
+
+  // Rendering pipeline
+  defaultRenderPipeline: RenderPipeline;
 
   // File
   defaultFolder: string;
@@ -151,6 +155,8 @@ export const DEFAULT_SETTINGS: PaperSettings = {
   defaultNibThickness: 0.25,       // 4:1 aspect ratio
   defaultNibPressure: 0.5,         // Moderate pressure sensitivity
   useBarrelRotation: true,
+
+  defaultRenderPipeline: "textures",
 
   defaultFolder: "",
   fileNameTemplate: "Untitled Paper",
