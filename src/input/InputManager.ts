@@ -446,9 +446,15 @@ export class InputManager {
     if (e.pointerType === "touch") {
       this.activeTouches.delete(e.pointerId);
       if (this.activeTouches.size === 0) {
-        this.isPanning = false;
+        if (this.isPanning) {
+          this.isPanning = false;
+          this.callbacks.onPanEnd();
+        }
+        if (this.isPinchActive) {
+          this.isPinchActive = false;
+          this.callbacks.onPinchEnd();
+        }
         this.initialPinchDistance = null;
-        this.isPinchActive = false;
         this.touchStartCount = 0;
       }
     }

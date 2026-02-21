@@ -532,6 +532,7 @@ export class PaperView extends TextFileView {
       if (changes.margins.right !== undefined) page.margins.right = changes.margins.right;
     }
 
+    this.renderer?.invalidateCache();
     this.requestStaticRender();
     this.requestSave();
   }
@@ -550,6 +551,7 @@ export class PaperView extends TextFileView {
     page.backgroundColor = backgroundColor;
     page.backgroundColorTheme = backgroundColorTheme ?? "auto";
 
+    this.renderer?.invalidateCache();
     this.requestStaticRender();
     this.requestSave();
   }

@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Always write research to `Claude/Research` as a markdown file in the format `{YYYY-MM-DD}-{research title}.md`
 - Always use Yarn. Never use npm.
 - Never implement a feature directly. Always create a plan first and write it to the `Claude/Plans` folder.
+- After a successful `yarn build` and `yarn test`, always run `yarn build:copy` to deploy to the local Obsidian vault.
 
 ## Project Overview
 
@@ -18,6 +19,7 @@ ObsidianPaper is an Obsidian plugin for handwriting notes with an Apple Pencil. 
 yarn install              # Install dependencies
 yarn dev                  # Development build with watch mode
 yarn build                # Production build (type check + minified bundle)
+yarn build:copy           # Production build + copy to local Obsidian vault
 yarn lint                 # Run ESLint
 yarn test                 # Run all tests
 yarn test:watch           # Run tests in watch mode

@@ -119,6 +119,18 @@ export class GrainTextureGenerator {
   }
 
   /**
+   * Get the raw pixel data of the grain texture tile.
+   * Returns 256x256 RGBA ImageData (256KB) for transfer to Web Workers.
+   * Returns null if not yet initialized.
+   */
+  getImageData(): ImageData | null {
+    if (!this.initialized || !this.tileCanvas) return null;
+    const ctx = this.tileCanvas.getContext("2d");
+    if (!ctx) return null;
+    return ctx.getImageData(0, 0, this.config.tileSize, this.config.tileSize);
+  }
+
+  /**
    * Whether the generator has been initialized.
    */
   isInitialized(): boolean {

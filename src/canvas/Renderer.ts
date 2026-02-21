@@ -26,6 +26,7 @@ import { TileCache } from "./tiles/TileCache";
 import { TileRenderer } from "./tiles/TileRenderer";
 import { TileCompositor } from "./tiles/TileCompositor";
 import { TileRenderScheduler } from "./tiles/TileRenderScheduler";
+import { WorkerTileScheduler } from "./tiles/WorkerTileScheduler";
 import {
   zoomToZoomBand, tileKeyString,
   DEFAULT_TILE_CONFIG,
@@ -701,6 +702,7 @@ export class Renderer {
     this.grainGenerator.initialize();
     if (this.tiledLayer) {
       this.tiledLayer.tileRenderer.setGrainGenerator(this.grainGenerator);
+      this.tiledLayer.initWorkerGrain(this.grainGenerator);
     }
   }
 
@@ -710,6 +712,7 @@ export class Renderer {
   setGrainStrength(penType: PenType, strength: number): void {
     this.grainStrengthOverrides.set(penType, strength);
     this.tiledLayer?.tileRenderer.setGrainStrength(penType, strength);
+    this.tiledLayer?.updateWorkerGrain(this.grainGenerator, this.grainStrengthOverrides);
   }
 
   /**
@@ -814,12 +817,16 @@ export class Renderer {
       this.pathCache,
     );
 
-    // Share grain resources
+    // Share grain resources with main-thread tile renderer
     if (this.grainGenerator) {
       this.tiledLayer.tileRenderer.setGrainGenerator(this.grainGenerator);
+      this.tiledLayer.initWorkerGrain(this.grainGenerator);
     }
     for (const [penType, strength] of this.grainStrengthOverrides) {
       this.tiledLayer.tileRenderer.setGrainStrength(penType, strength);
+    }
+    if (this.grainStrengthOverrides.size > 0) {
+      this.tiledLayer.updateWorkerGrain(this.grainGenerator, this.grainStrengthOverrides);
     }
   }
 
@@ -964,6 +971,9 @@ function bboxOverlaps(
  * Orchestrates tile-based static stroke rendering.
  * Manages TileGrid, TileCache, TileRenderer, TileCompositor, and TileRenderScheduler.
  *
+ * Uses WorkerTileScheduler for concurrent off-thread rendering when available,
+ * falling back to main-thread TileRenderScheduler if Worker creation fails.
+ *
  * Tiles have a fixed world size. The grid never changes with zoom — only the
  * rendering resolution (canvas pixel size) varies per zoom band. Each grid
  * position has one cache slot.
@@ -975,8 +985,17 @@ class TiledStaticLayer {
   private cache: TileCache;
   readonly tileRenderer: TileRenderer;
   private compositor: TileCompositor;
-  private scheduler: TileRenderScheduler;
+  /** Main-thread fallback scheduler. Used only when workers are unavailable. */
+  private mainThreadScheduler: TileRenderScheduler;
+  /** Worker-based scheduler for concurrent tile rendering. */
+  private workerScheduler: WorkerTileScheduler;
+  /** True if worker scheduler failed init → all async work goes through main thread. */
+  private useMainThreadFallback = false;
   private gestureActive = false;
+  /** Monotonic counter incremented on doc mutation. Workers sync only when stale. */
+  private docVersion = 0;
+  /** Last docVersion sent to workers. */
+  private workerDocVersion = -1;
 
   // Cached state for scheduler callbacks
   private currentDoc: PaperDocument | null = null;
@@ -998,11 +1017,81 @@ class TiledStaticLayer {
     this.tileRenderer = new TileRenderer(this.grid, config, pathCache);
     this.compositor = new TileCompositor(this.grid, config);
 
-    this.scheduler = new TileRenderScheduler(
+    // Main-thread fallback scheduler (used if workers fail)
+    this.mainThreadScheduler = new TileRenderScheduler(
       (key) => this.renderOneTile(key),
       () => this.onSchedulerBatchComplete(),
     );
+
+    // Worker-based scheduler
+    this.workerScheduler = new WorkerTileScheduler(
+      config,
+      this.cache,
+      this.grid,
+      () => this.onSchedulerBatchComplete(),
+    );
+
+    this.useMainThreadFallback = this.workerScheduler.fallbackToMainThread;
   }
+
+  // ─── Worker Grain / Document Sync ────────────────────────────
+
+  /** Send grain texture to all workers. */
+  initWorkerGrain(grainGenerator: GrainTextureGenerator | null): void {
+    if (this.useMainThreadFallback) return;
+    this.workerScheduler.initGrain(grainGenerator);
+  }
+
+  /** Send grain update (new texture + strength overrides) to all workers. */
+  updateWorkerGrain(
+    grainGenerator: GrainTextureGenerator | null,
+    strengthOverrides: Map<PenType, number>,
+  ): void {
+    if (this.useMainThreadFallback) return;
+    this.workerScheduler.updateGrain(grainGenerator, strengthOverrides);
+  }
+
+  /** Send document state to workers only if it changed since last sync. */
+  syncDocumentToWorkers(): void {
+    if (this.useMainThreadFallback) return;
+    if (!this.currentDoc) return;
+    if (this.workerDocVersion === this.docVersion) return;
+    this.workerDocVersion = this.docVersion;
+    this.workerScheduler.updateDocument(this.currentDoc, this.currentPageLayout);
+  }
+
+  /** Mark document as changed so next syncDocumentToWorkers() sends an update. */
+  private bumpDocVersion(): void {
+    this.docVersion++;
+  }
+
+  // ─── Scheduling Helper ───────────────────────────────────────
+
+  /** Schedule tiles using workers or main-thread fallback. */
+  private scheduleAsync(
+    tiles: TileKey[],
+    visibleKeySet: Set<string>,
+  ): void {
+    if (this.useMainThreadFallback) {
+      this.mainThreadScheduler.schedule(tiles, visibleKeySet);
+    } else {
+      if (!this.currentSpatialIndex) return;
+      const zoomBand = zoomToZoomBand(this.camera.zoom);
+      // Ensure workers have current document state
+      this.syncDocumentToWorkers();
+      this.workerScheduler.schedule(
+        tiles, visibleKeySet, this.currentSpatialIndex,
+        this.currentIsDarkMode, zoomBand,
+      );
+    }
+  }
+
+  private cancelAsync(): void {
+    this.mainThreadScheduler.cancel();
+    this.workerScheduler.cancel();
+  }
+
+  // ─── Render Visible ──────────────────────────────────────────
 
   /**
    * Render visible tiles and composite them onto the static canvas.
@@ -1021,6 +1110,9 @@ class TiledStaticLayer {
     spatialIndex: SpatialIndex,
     isDarkMode: boolean,
   ): void {
+    // renderVisible is called on load/undo/redo — doc may have changed
+    this.bumpDocVersion();
+
     this.currentDoc = doc;
     this.currentPageLayout = pageLayout;
     this.currentSpatialIndex = spatialIndex;
@@ -1030,7 +1122,7 @@ class TiledStaticLayer {
     this.currentScreenWidth = screenWidth;
     this.currentScreenHeight = screenHeight;
 
-    this.scheduler.cancel();
+    this.cancelAsync();
 
     const currentZoomBand = zoomToZoomBand(this.camera.zoom);
     const visibleTiles = this.grid.getVisibleTiles(this.camera, screenWidth, screenHeight);
@@ -1068,7 +1160,7 @@ class TiledStaticLayer {
       }
     }
     if (toSchedule.length > 0) {
-      this.scheduler.schedule(toSchedule, visibleKeySet);
+      this.scheduleAsync(toSchedule, visibleKeySet);
     }
 
     // Composite with whatever is available (stale tiles shown at old resolution)
@@ -1078,6 +1170,8 @@ class TiledStaticLayer {
 
   /**
    * Incrementally add a stroke to affected tiles and re-composite.
+   * Renders synchronously on main thread for immediate feedback,
+   * then syncs doc state to workers for future async renders.
    */
   bakeStroke(
     stroke: Stroke,
@@ -1090,6 +1184,9 @@ class TiledStaticLayer {
     spatialIndex: SpatialIndex,
     isDarkMode: boolean,
   ): void {
+    // bakeStroke adds a new stroke — doc has changed
+    this.bumpDocVersion();
+
     this.currentDoc = doc;
     this.currentPageLayout = pageLayout;
     this.currentSpatialIndex = spatialIndex;
@@ -1106,6 +1203,7 @@ class TiledStaticLayer {
     const visibleTiles = this.grid.getVisibleTiles(this.camera, screenWidth, screenHeight);
     this.cache.protect(new Set(visibleTiles.map(tileKeyString)));
 
+    // Sync-render affected tiles on main thread for immediate feedback
     for (const key of affectedTiles) {
       const worldBounds = this.grid.tileBounds(key.col, key.row);
       let entry = this.cache.getStale(key);
@@ -1118,6 +1216,9 @@ class TiledStaticLayer {
     }
 
     this.cache.unprotect();
+
+    // Sync doc state to workers so they have the new stroke for future renders
+    this.syncDocumentToWorkers();
 
     // Re-composite
     this.compositor.composite(ctx, canvas, this.camera, screenWidth, screenHeight, this.cache);
@@ -1165,9 +1266,9 @@ class TiledStaticLayer {
     // Protect visible tiles from eviction by async renders
     this.cache.protect(visibleKeySet);
 
-    // Schedule missing tiles for async rendering
+    // Schedule missing tiles for async rendering (via workers or fallback)
     if (missing.length > 0) {
-      this.scheduler.schedule(missing, visibleKeySet);
+      this.scheduleAsync(missing, visibleKeySet);
     }
   }
 
@@ -1177,7 +1278,7 @@ class TiledStaticLayer {
    */
   endGesture(): void {
     this.gestureActive = false;
-    this.scheduler.cancel();
+    this.cancelAsync();
     this.cache.unprotect();
   }
 
@@ -1211,8 +1312,8 @@ class TiledStaticLayer {
   }
 
   /**
-   * Render a single tile. Called by the scheduler during async processing.
-   * Renders at the current zoom band (the zoom at the moment of rendering).
+   * Render a single tile. Called by the main-thread fallback scheduler
+   * during async processing. Renders at the current zoom band.
    *
    * Skips tiles that are already clean at the correct zoom band.
    */
@@ -1235,7 +1336,7 @@ class TiledStaticLayer {
   }
 
   /**
-   * Called by the scheduler after each batch of background tiles finishes.
+   * Called by the scheduler (worker or main-thread) after tiles finish.
    * Re-composites so newly rendered tiles become visible.
    *
    * During a gesture, skip — the next gestureUpdate() (every ~16ms) will
@@ -1254,7 +1355,8 @@ class TiledStaticLayer {
   }
 
   destroy(): void {
-    this.scheduler.destroy();
+    this.mainThreadScheduler.destroy();
+    this.workerScheduler.destroy();
     this.cache.clear();
     this.overlayCallback = null;
     this.currentDoc = null;

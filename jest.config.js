@@ -16,6 +16,7 @@ module.exports = {
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/src/$1",
     "^obsidian$": "<rootDir>/__mocks__/obsidian.ts",
+    "^tile-worker-code$": "<rootDir>/__mocks__/tile-worker-code.ts",
   },
   collectCoverageFrom: [
     "src/**/*.{ts,tsx}",

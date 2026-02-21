@@ -49,6 +49,7 @@ export default tseslint.config(
   globalIgnores([
     "node_modules",
     "main.js",
+    "build",
     "*.json",
     "coverage",
     "__mocks__",
