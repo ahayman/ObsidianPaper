@@ -1,5 +1,6 @@
 import { PresetManager } from "./PresetManager";
 import type { PenPreset, ToolbarState } from "./ToolbarTypes";
+import { DEFAULT_GRAIN_VALUE } from "../../stamp/GrainMapping";
 
 function makePreset(overrides: Partial<PenPreset> = {}): PenPreset {
   return {
@@ -24,6 +25,7 @@ function makeState(overrides: Partial<ToolbarState> = {}): ToolbarState {
     nibAngle: Math.PI / 6,
     nibThickness: 0.25,
     nibPressure: 0.5,
+    grain: DEFAULT_GRAIN_VALUE,
     ...overrides,
   };
 }

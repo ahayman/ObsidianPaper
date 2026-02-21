@@ -34,6 +34,9 @@ import { getPenConfig } from "../../../stroke/PenConfigs";
 import { resolvePageBackground } from "../../../color/ColorUtils";
 import { detectInkPools } from "../../../stroke/InkPooling";
 import { zoomBandBaseZoom } from "../TileTypes";
+import { generateStampTexture } from "../../../stamp/StampTexture";
+import { computeAllStamps, drawStamps } from "../../../stamp/StampRenderer";
+import { grainSliderToConfig, grainConfigKey, DEFAULT_GRAIN_VALUE, grainToTextureStrength } from "../../../stamp/GrainMapping";
 
 // ─── Worker State ────────────────────────────────────────────
 
@@ -53,6 +56,11 @@ let grainStrengthOverrides = new Map<PenType, number>();
 // Reusable offscreen canvas for grain-isolated stroke rendering
 let grainOffscreen: OffscreenCanvas | null = null;
 let grainOffscreenCtx: OffscreenCanvasRenderingContext2D | null = null;
+
+// Stamp texture state (multi-grain: each grain config key → alpha template)
+let stampEnabled = false;
+let stampTextureCache = new Map<string, OffscreenCanvas>(); // configKey → alpha template
+let stampColorCaches = new Map<string, Map<string, OffscreenCanvas>>(); // configKey → (color → colored)
 
 // ─── Grain Helpers ───────────────────────────────────────────
 
@@ -117,6 +125,50 @@ function ensureGrainOffscreen(
   }
 
   return grainOffscreenCtx;
+}
+
+// ─── Stamp Helpers ────────────────────────────────────────────
+
+function getStampAlpha(configKey: string, grainValue: number): OffscreenCanvas {
+  const cached = stampTextureCache.get(configKey);
+  if (cached) return cached;
+
+  const config = grainSliderToConfig(grainValue);
+  const canvas = generateStampTexture(config);
+  stampTextureCache.set(configKey, canvas);
+  return canvas;
+}
+
+function getColoredStampForGrain(grainValue: number, color: string): OffscreenCanvas | null {
+  if (!stampEnabled) return null;
+
+  const config = grainSliderToConfig(grainValue);
+  const configKey = grainConfigKey(config);
+
+  // Get or create color cache for this grain config
+  let colorCache = stampColorCaches.get(configKey);
+  if (!colorCache) {
+    colorCache = new Map();
+    stampColorCaches.set(configKey, colorCache);
+  }
+
+  const cached = colorCache.get(color);
+  if (cached) return cached;
+
+  // Generate alpha template and color it
+  const alpha = getStampAlpha(configKey, grainValue);
+  const size = alpha.width;
+  const canvas = new OffscreenCanvas(size, size);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+
+  ctx.drawImage(alpha, 0, 0);
+  ctx.globalCompositeOperation = "source-in";
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, size, size);
+
+  colorCache.set(color, canvas);
+  return canvas;
 }
 
 // ─── Background Rendering ────────────────────────────────────
@@ -419,11 +471,22 @@ function renderStroke(
   canvasWidth: number,
   canvasHeight: number,
 ): void {
+  const style = resolveStyle(stroke, styles);
+  const penConfig = getPenConfig(style.pen);
+
+  // Stamp-based rendering for pencil at LOD 0
+  if (stampEnabled && renderPipeline === "stamps" && penConfig.stamp && lod === 0) {
+    const color = resolveColor(style.color, useDarkColors);
+    const points = decodePoints(stroke.pts);
+    const stamps = computeAllStamps(points, style, penConfig, penConfig.stamp);
+    drawStamps(ctx, stamps, color, ctx.getTransform(), style.opacity);
+    return;
+  }
+
   const cacheKey = lodCacheKey(stroke.id, lod);
   let path = pathCache.get(cacheKey);
   let decodedPoints: StrokePoint[] | undefined;
   if (!path) {
-    const style = resolveStyle(stroke, styles);
     decodedPoints = decodePoints(stroke.pts);
     let points = decodedPoints;
     if (lod > 0) {
@@ -437,13 +500,13 @@ function renderStroke(
 
   if (!path) return;
 
-  const style = resolveStyle(stroke, styles);
   const color = resolveColor(style.color, useDarkColors);
-  const penConfig = getPenConfig(style.pen);
 
   // Grain-enabled strokes rendered in isolation
   if (renderPipeline !== "basic" && lod === 0 && penConfig.grain?.enabled) {
-    const strength = grainStrengthOverrides.get(style.pen) ?? penConfig.grain.strength;
+    const baseStrength = grainStrengthOverrides.get(style.pen) ?? penConfig.grain.strength;
+    const grainValue = style.grain ?? DEFAULT_GRAIN_VALUE;
+    const strength = grainToTextureStrength(baseStrength, grainValue);
     if (strength > 0) {
       const anchorX = stroke.grainAnchor?.[0] ?? stroke.bbox[0];
       const anchorY = stroke.grainAnchor?.[1] ?? stroke.bbox[1];
@@ -629,6 +692,14 @@ workerSelf.onmessage = (event: MessageEvent<MainToWorkerMessage>) => {
       }
       break;
 
+    case "stamp-init":
+      stampEnabled = msg.enabled;
+      if (!stampEnabled) {
+        stampTextureCache.clear();
+        stampColorCaches.clear();
+      }
+      break;
+
     case "cancel":
       // Currently tiles render synchronously in the worker,
       // so cancel is a no-op. Could be extended for async rendering.
@@ -640,6 +711,9 @@ workerSelf.onmessage = (event: MessageEvent<MainToWorkerMessage>) => {
       grainCtx = null;
       grainOffscreen = null;
       grainOffscreenCtx = null;
+      stampEnabled = false;
+      stampTextureCache.clear();
+      stampColorCaches.clear();
       workerSelf.close();
       break;
   }

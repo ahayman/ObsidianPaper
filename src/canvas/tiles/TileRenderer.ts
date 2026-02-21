@@ -11,7 +11,8 @@ import { GrainTextureGenerator } from "../GrainTextureGenerator";
 import { selectLodLevel } from "../../stroke/StrokeSimplifier";
 import { resolvePageBackground } from "../../color/ColorUtils";
 import { renderStrokeToContext } from "../StrokeRenderCore";
-import type { GrainRenderContext } from "../StrokeRenderCore";
+import type { GrainRenderContext, StampRenderContext } from "../StrokeRenderCore";
+import type { StampTextureManager } from "../../stamp/StampTextureManager";
 import { renderDeskFill, renderPageBackground } from "../BackgroundRenderer";
 
 function bboxOverlaps(
@@ -34,6 +35,7 @@ export class TileRenderer {
   private pipeline: RenderPipeline = "textures";
   private grainOffscreen: OffscreenCanvas | null = null;
   private grainOffscreenCtx: OffscreenCanvasRenderingContext2D | null = null;
+  private stampManager: StampTextureManager | null = null;
 
   constructor(grid: TileGrid, config: TileGridConfig, pathCache: StrokePathCache) {
     this.grid = grid;
@@ -56,6 +58,10 @@ export class TileRenderer {
 
   setPipeline(pipeline: RenderPipeline): void {
     this.pipeline = pipeline;
+  }
+
+  setStampManager(manager: StampTextureManager | null): void {
+    this.stampManager = manager;
   }
 
   /**
@@ -114,6 +120,9 @@ export class TileRenderer {
 
     const strokeIdSet = new Set(strokeIds);
     const grainCtx = this.getGrainRenderContext(tilePhysical, tilePhysical);
+    const stampCtx: StampRenderContext | null = this.stampManager
+      ? { getCache: (gv) => this.stampManager!.getCache(gv) }
+      : null;
 
     for (const pageRect of pageLayout) {
       const pageBbox: [number, number, number, number] = [
@@ -142,7 +151,7 @@ export class TileRenderer {
 
         renderStrokeToContext(
           ctx, stroke, doc.styles, lod, pageDark,
-          this.pathCache, grainCtx,
+          this.pathCache, grainCtx, stampCtx,
         );
         tile.strokeIds.add(stroke.id);
       }

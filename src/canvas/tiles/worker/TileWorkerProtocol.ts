@@ -47,6 +47,12 @@ export interface WorkerCancelMessage {
   tileKey?: string;           // Cancel specific tile, or all if omitted
 }
 
+export interface WorkerStampInitMessage {
+  type: "stamp-init";
+  /** Signal to enable stamp-based rendering. Workers generate textures locally. */
+  enabled: boolean;
+}
+
 export interface WorkerDestroyMessage {
   type: "destroy";
 }
@@ -57,6 +63,7 @@ export type MainToWorkerMessage =
   | WorkerGrainUpdateMessage
   | WorkerRenderTileMessage
   | WorkerCancelMessage
+  | WorkerStampInitMessage
   | WorkerDestroyMessage;
 
 // ─── Worker → Main Messages ──────────────────────────────────

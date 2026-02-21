@@ -25,6 +25,7 @@ import { PageMenuPopover } from "./PageMenuPopover";
 import { DocumentSettingsPopover } from "./toolbar/DocumentSettingsPopover";
 import { decodePoints, encodePoints } from "../document/PointEncoder";
 import { resolvePageBackground } from "../color/ColorUtils";
+import { DEFAULT_GRAIN_VALUE } from "../stamp/GrainMapping";
 
 export const VIEW_TYPE_PAPER = "paper-view";
 export const PAPER_EXTENSION = "paper";
@@ -72,6 +73,7 @@ export class PaperView extends TextFileView {
   private currentNibAngle = Math.PI / 6;
   private currentNibThickness = 0.25;
   private currentNibPressure = 0.5;
+  private currentGrain = DEFAULT_GRAIN_VALUE;
   private useBarrelRotation = true;
 
   /**
@@ -116,6 +118,7 @@ export class PaperView extends TextFileView {
     this.renderer = new Renderer(container, this.camera, Platform.isMobile);
     this.renderer.isDarkMode = this.themeDetector.isDarkMode;
     this.renderer.initGrain();
+    this.renderer.initStamps();
     this.renderer.setGrainStrength("pencil", this.settings.pencilGrainStrength);
 
     // Enable tile-based rendering for better zoom/pan performance
@@ -147,6 +150,7 @@ export class PaperView extends TextFileView {
         nibAngle: this.currentNibAngle,
         nibThickness: this.currentNibThickness,
         nibPressure: this.currentNibPressure,
+        grain: this.currentGrain,
       },
       this.settings.penPresets,
       this.settings.toolbarPosition,
@@ -266,6 +270,7 @@ export class PaperView extends TextFileView {
         this.currentColorId = preset.colorId;
         this.currentWidth = preset.width;
         this.currentSmoothing = preset.smoothing;
+        this.currentGrain = preset.grain ?? DEFAULT_GRAIN_VALUE;
         if (preset.nibAngle !== undefined) this.currentNibAngle = preset.nibAngle;
         if (preset.nibThickness !== undefined) this.currentNibThickness = preset.nibThickness;
         if (preset.nibPressure !== undefined) this.currentNibPressure = preset.nibPressure;
@@ -288,6 +293,7 @@ export class PaperView extends TextFileView {
       nibAngle: this.currentNibAngle,
       nibThickness: this.currentNibThickness,
       nibPressure: this.currentNibPressure,
+      grain: this.currentGrain,
       activePresetId: settings.activePresetId,
     });
     this.toolbar?.updatePresets(settings.penPresets, settings.activePresetId);
@@ -977,6 +983,10 @@ export class PaperView extends TextFileView {
       style.nibThickness = this.currentNibThickness;
       style.nibPressure = this.currentNibPressure;
     }
+    // Store grain for stamp-based pens (pencil)
+    if (penConfig.stamp) {
+      style.grain = this.currentGrain;
+    }
     return style;
   }
 
@@ -999,6 +1009,7 @@ export class PaperView extends TextFileView {
         this.currentNibAngle = state.nibAngle;
         this.currentNibThickness = state.nibThickness;
         this.currentNibPressure = state.nibPressure;
+        this.currentGrain = state.grain;
       },
       onUndo: () => {
         this.undo();
@@ -1319,6 +1330,7 @@ function computeStyleOverrides(
   if (current.nibAngle !== base.nibAngle) { overrides.nibAngle = current.nibAngle; has = true; }
   if (current.nibThickness !== base.nibThickness) { overrides.nibThickness = current.nibThickness; has = true; }
   if (current.nibPressure !== base.nibPressure) { overrides.nibPressure = current.nibPressure; has = true; }
+  if (current.grain !== base.grain) { overrides.grain = current.grain; has = true; }
 
   return has ? overrides : undefined;
 }

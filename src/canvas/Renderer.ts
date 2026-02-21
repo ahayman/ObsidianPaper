@@ -20,7 +20,14 @@ import {
   applyGrainToStroke,
   computeScreenBBox,
 } from "./StrokeRenderCore";
-import type { GrainRenderContext } from "./StrokeRenderCore";
+import type { GrainRenderContext, StampRenderContext } from "./StrokeRenderCore";
+import { StampTextureManager } from "../stamp/StampTextureManager";
+import { DEFAULT_GRAIN_VALUE, grainToTextureStrength } from "../stamp/GrainMapping";
+import {
+  computeAllStamps,
+  drawStamps,
+} from "../stamp/StampRenderer";
+import { quantizePoints } from "../document/PointEncoder";
 import { TileGrid } from "./tiles/TileGrid";
 import { TileCache } from "./tiles/TileCache";
 import { TileRenderer } from "./tiles/TileRenderer";
@@ -78,6 +85,11 @@ export class Renderer {
 
   // Rendering pipeline
   private pipeline: RenderPipeline = "textures";
+
+  // Stamp-based rendering
+  private stampManager: StampTextureManager | null = null;
+  /** Number of stamps already drawn on the active canvas (for incremental draw) */
+  private activeStampCount: number = 0;
 
   // Tile-based rendering (when enabled, replaces overscan static canvas)
   private tiledLayer: TiledStaticLayer | null = null;
@@ -463,14 +475,27 @@ export class Renderer {
     ctx.scale(this.dpr, this.dpr);
     this.applyOverscanCameraTransform(ctx);
 
+    const penConfig = getPenConfig(style.pen);
+
+    // Stamp-based rendering for pencil
+    if (this.stampManager && this.pipeline === "stamps" && penConfig.stamp && points.length > 0) {
+      const color = resolveColor(style.color, this.isDarkMode);
+      const qPoints = quantizePoints(points);
+      const stamps = computeAllStamps(qPoints, style, penConfig, penConfig.stamp);
+      drawStamps(ctx, stamps, color, ctx.getTransform(), style.opacity);
+      this.camera.resetContext(ctx);
+      return;
+    }
+
     const path = generateStrokePath(points, style);
     if (path) {
       const color = resolveColor(style.color, this.isDarkMode);
-      const penConfig = getPenConfig(style.pen);
 
       // Grain-enabled strokes rendered in isolation
       if (this.pipeline !== "basic" && penConfig.grain?.enabled && points.length > 0) {
-        const strength = this.grainStrengthOverrides.get(style.pen) ?? penConfig.grain.strength;
+        const baseStrength = this.grainStrengthOverrides.get(style.pen) ?? penConfig.grain.strength;
+        const grainValue = style.grain ?? DEFAULT_GRAIN_VALUE;
+        const strength = grainToTextureStrength(baseStrength, grainValue);
         if (strength > 0) {
           let bMinX = Infinity, bMinY = Infinity, bMaxX = -Infinity, bMaxY = -Infinity;
           for (const pt of points) {
@@ -578,6 +603,57 @@ export class Renderer {
     pageRect?: PageRect,
     useDarkColors?: boolean,
   ): void {
+    const penConfig = getPenConfig(style.pen);
+
+    // Stamp-based incremental rendering for pencil
+    if (this.stampManager && this.pipeline === "stamps" && penConfig.stamp && points.length > 0) {
+      this.pendingActiveRender = () => {
+        if (!this.stampManager || !penConfig.stamp) return;
+
+        // Clear canvas on first frame of new stroke
+        if (this.activeStampCount === 0) {
+          this.clearCanvas(this.activeCtx);
+        }
+
+        const dark = useDarkColors ?? this.isDarkMode;
+        const color = resolveColor(style.color, dark);
+
+        // Setup transform
+        this.activeCtx.setTransform(1, 0, 0, 1, 0, 0);
+        this.activeCtx.scale(this.dpr, this.dpr);
+        this.camera.applyToContext(this.activeCtx);
+
+        if (pageRect) {
+          this.activeCtx.save();
+          this.activeCtx.beginPath();
+          this.activeCtx.rect(pageRect.x, pageRect.y, pageRect.width, pageRect.height);
+          this.activeCtx.clip();
+        }
+
+        const baseTransform = this.activeCtx.getTransform();
+
+        // Quantize points to match encode→decode precision used by final render.
+        // Compute ALL stamps from scratch — only draw new ones.
+        const qPoints = quantizePoints(points);
+        const allStamps = computeAllStamps(qPoints, style, penConfig, penConfig.stamp);
+
+        if (allStamps.length > this.activeStampCount) {
+          const newStamps = allStamps.slice(this.activeStampCount);
+          drawStamps(this.activeCtx, newStamps, color, baseTransform, style.opacity);
+          this.activeStampCount = allStamps.length;
+        }
+
+        if (pageRect) {
+          this.activeCtx.restore();
+        }
+
+        this.camera.resetContext(this.activeCtx);
+      };
+
+      this.scheduleFrame();
+      return;
+    }
+
     this.pendingActiveRender = () => {
       this.clearCanvas(this.activeCtx);
       this.activeCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -595,7 +671,6 @@ export class Renderer {
       if (path) {
         const dark = useDarkColors ?? this.isDarkMode;
         const color = resolveColor(style.color, dark);
-        const penConfig = getPenConfig(style.pen);
 
         if (penConfig.highlighterMode) {
           this.activeCtx.save();
@@ -613,7 +688,9 @@ export class Renderer {
 
         // Grain overlay for active stroke
         if (this.pipeline !== "basic" && penConfig.grain?.enabled && points.length > 0) {
-          const strength = this.grainStrengthOverrides.get(style.pen) ?? penConfig.grain.strength;
+          const baseStrength = this.grainStrengthOverrides.get(style.pen) ?? penConfig.grain.strength;
+          const grainValue = style.grain ?? DEFAULT_GRAIN_VALUE;
+          const strength = grainToTextureStrength(baseStrength, grainValue);
           if (strength > 0) {
             this.applyGrainToStrokeLocal(this.activeCtx, path, strength, points[0].x, points[0].y);
           }
@@ -687,6 +764,7 @@ export class Renderer {
     this.clearCanvas(this.activeCtx);
     this.clearCanvas(this.predictionCtx);
     this.pendingActiveRender = null;
+    this.activeStampCount = 0;
   }
 
   /**
@@ -711,6 +789,19 @@ export class Renderer {
     if (this.tiledLayer) {
       this.tiledLayer.tileRenderer.setGrainGenerator(this.grainGenerator);
       this.tiledLayer.initWorkerGrain(this.grainGenerator);
+    }
+  }
+
+  /**
+   * Initialize the stamp texture manager for stamp-based pencil rendering.
+   */
+  initStamps(): void {
+    this.stampManager = new StampTextureManager();
+    // Pre-generate the default grain cache
+    this.stampManager.getCache(DEFAULT_GRAIN_VALUE);
+    if (this.tiledLayer) {
+      this.tiledLayer.tileRenderer.setStampManager(this.stampManager);
+      this.tiledLayer.initWorkerStamps();
     }
   }
 
@@ -740,6 +831,9 @@ export class Renderer {
     this.grainGenerator = null;
     this.grainOffscreen = null;
     this.grainOffscreenCtx = null;
+    this.stampManager?.clear();
+    this.stampManager = null;
+    this.activeStampCount = 0;
     this.backgroundCanvas.remove();
     this.staticCanvas.remove();
     this.activeCanvas.remove();
@@ -836,6 +930,12 @@ export class Renderer {
     if (this.grainStrengthOverrides.size > 0) {
       this.tiledLayer.updateWorkerGrain(this.grainGenerator, this.grainStrengthOverrides);
     }
+
+    // Share stamp resources
+    if (this.stampManager) {
+      this.tiledLayer.tileRenderer.setStampManager(this.stampManager);
+      this.tiledLayer.initWorkerStamps();
+    }
   }
 
   disableTiling(): void {
@@ -862,6 +962,11 @@ export class Renderer {
     };
   }
 
+  private getStampRenderContext(): StampRenderContext | null {
+    if (!this.stampManager) return null;
+    return { getCache: (gv) => this.stampManager!.getCache(gv) };
+  }
+
   private renderStrokeToContext(
     ctx: CanvasRenderingContext2D,
     stroke: Stroke,
@@ -874,7 +979,8 @@ export class Renderer {
       this.staticCanvas.width,
       this.staticCanvas.height,
     );
-    renderStrokeToContext(ctx, stroke, styles, lod, dark, this.pathCache, grainCtx);
+    const stampCtx = this.getStampRenderContext();
+    renderStrokeToContext(ctx, stroke, styles, lod, dark, this.pathCache, grainCtx, stampCtx);
   }
 
   private applyGrainToStrokeLocal(
@@ -1060,6 +1166,12 @@ class TiledStaticLayer {
   ): void {
     if (this.useMainThreadFallback) return;
     this.workerScheduler.updateGrain(grainGenerator, strengthOverrides);
+  }
+
+  /** Signal workers to enable stamp rendering (workers generate textures locally). */
+  initWorkerStamps(): void {
+    if (this.useMainThreadFallback) return;
+    this.workerScheduler.initStamps();
   }
 
   /** Update the rendering pipeline for the tile renderer and workers. */

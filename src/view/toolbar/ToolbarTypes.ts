@@ -10,6 +10,7 @@ export interface PenPreset {
   nibAngle?: number;       // Radians, fountain only
   nibThickness?: number;   // 0-1, fountain only
   nibPressure?: number;    // 0-1, fountain only
+  grain?: number;          // 0-1, pencil only (grain slider value)
 }
 
 export type ToolbarPosition = "top" | "bottom" | "left" | "right";
@@ -25,6 +26,7 @@ export interface ToolbarState {
   nibAngle: number;
   nibThickness: number;
   nibPressure: number;
+  grain: number;
 }
 
 export interface ToolbarCallbacks {

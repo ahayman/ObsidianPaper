@@ -6,6 +6,15 @@ export interface PenGrainConfig {
   strength: number;
 }
 
+export interface PenStampConfig {
+  /** Stamp texture size in pixels (default 48) */
+  textureSize: number;
+  /** Spacing between stamps as fraction of diameter (default 0.12) */
+  spacing: number;
+  /** Maximum rotation jitter per stamp in radians (default ~15 degrees) */
+  rotationJitter: number;
+}
+
 /**
  * Full configuration for a pen type.
  * All pen types are handled by the same engine with different parameters.
@@ -43,6 +52,8 @@ export interface PenConfig {
   useBarrelRotation: boolean;
   /** Grain texture configuration (pencil/brush), null = no grain */
   grain: PenGrainConfig | null;
+  /** Stamp-based rendering configuration, null = not supported */
+  stamp: PenStampConfig | null;
 }
 
 export const PEN_CONFIGS: Record<PenType, PenConfig> = {
@@ -64,6 +75,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     nibThickness: null,
     useBarrelRotation: false,
     grain: null,
+    stamp: null,
   },
 
   "felt-tip": {
@@ -84,19 +96,20 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     nibThickness: null,
     useBarrelRotation: false,
     grain: null,
+    stamp: null,
   },
 
   pencil: {
     type: "pencil",
     baseWidth: 3,
-    pressureWidthRange: [0.5, 1.5],
-    pressureOpacityRange: [0.15, 0.85],
+    pressureWidthRange: [0.85, 1.15],       // Narrow width range — pressure affects density, not size
+    pressureOpacityRange: [0.15, 1.0],       // Maps to draw probability — light touch = sparse, heavy = solid
     thinning: 0.5,
     smoothing: 0.4,
     streamline: 0.35,
     taperStart: 0,
     taperEnd: 0,
-    tiltSensitivity: 0.8,
+    tiltSensitivity: 0,                       // No tilt for stamp rendering — even small values create visible ovals
     pressureCurve: 1.0,
     baseOpacity: 0.85,
     highlighterMode: false,
@@ -104,6 +117,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     nibThickness: null,
     useBarrelRotation: false,
     grain: { enabled: true, strength: 0.5 },
+    stamp: { textureSize: 48, spacing: 0.5, rotationJitter: Math.PI / 12 },
   },
 
   fountain: {
@@ -124,6 +138,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     nibThickness: 0.25,
     useBarrelRotation: true,
     grain: null,
+    stamp: null,
   },
 
   highlighter: {
@@ -144,6 +159,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     nibThickness: null,
     useBarrelRotation: false,
     grain: null,
+    stamp: null,
   },
 };
 

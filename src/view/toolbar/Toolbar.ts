@@ -11,6 +11,7 @@ import { PresetStrip } from "./PresetStrip";
 import { PresetManager } from "./PresetManager";
 import { CustomizePopover } from "./CustomizePopover";
 import { AutoMinimizer } from "./AutoMinimizer";
+import { DEFAULT_GRAIN_VALUE } from "../../stamp/GrainMapping";
 
 /**
  * Main toolbar orchestrator. Replaces ToolPalette.
@@ -173,6 +174,7 @@ export class Toolbar {
     this.state.colorId = preset.colorId;
     this.state.width = preset.width;
     this.state.smoothing = preset.smoothing;
+    this.state.grain = preset.grain ?? DEFAULT_GRAIN_VALUE;
     if (preset.nibAngle !== undefined) this.state.nibAngle = preset.nibAngle;
     if (preset.nibThickness !== undefined) this.state.nibThickness = preset.nibThickness;
     if (preset.nibPressure !== undefined) this.state.nibPressure = preset.nibPressure;

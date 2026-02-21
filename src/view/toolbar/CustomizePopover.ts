@@ -2,6 +2,7 @@ import type { PenType } from "../../types";
 import type { PenPreset, ToolbarPosition, ToolbarState } from "./ToolbarTypes";
 import { getPenConfig } from "../../stroke/PenConfigs";
 import { ColorPickerPanel } from "./ColorPickerPanel";
+import { DEFAULT_GRAIN_VALUE } from "../../stamp/GrainMapping";
 
 const PEN_TYPES: { type: PenType; label: string }[] = [
   { type: "ballpoint", label: "Ballpoint" },
@@ -40,6 +41,9 @@ export class CustomizePopover {
   private callbacks: CustomizePopoverCallbacks;
 
   // Element refs for updates
+  private grainSection: HTMLElement | null = null;
+  private grainSlider: HTMLInputElement | null = null;
+  private grainValue: HTMLElement | null = null;
   private nibSection: HTMLElement | null = null;
   private presetActionsSection: HTMLElement | null = null;
   private widthSlider: HTMLInputElement | null = null;
@@ -118,7 +122,30 @@ export class CustomizePopover {
     }, (el, valEl) => { this.smoothingSlider = el; this.smoothingValue = valEl; },
     this.state.smoothing.toFixed(2));
 
-    // 5. Nib Settings (fountain only)
+    // 5. Grain (pencil only)
+    this.grainSection = content.createEl("div", { cls: "paper-popover__section paper-popover__grain" });
+    const grainRow = this.grainSection.createEl("div", { cls: "paper-popover__slider-row" });
+    grainRow.createEl("span", { cls: "paper-popover__slider-label", text: "Grain" });
+    const grainSlider = grainRow.createEl("input", {
+      cls: "paper-popover__slider",
+      type: "range",
+      attr: { min: "0", max: "1", step: "0.05", value: String(this.state.grain) },
+    });
+    this.grainSlider = grainSlider;
+    const grainHints = grainRow.createEl("span", { cls: "paper-popover__slider-value" });
+    grainHints.textContent = this.state.grain.toFixed(2);
+    this.grainValue = grainHints;
+
+    grainSlider.addEventListener("input", () => {
+      const v = parseFloat(grainSlider.value);
+      this.state.grain = v;
+      this.grainValue!.textContent = v.toFixed(2);
+      this.callbacks.onStateChange({ grain: v });
+    });
+
+    this.updateGrainVisibility();
+
+    // 6. Nib Settings (fountain only)
     this.nibSection = content.createEl("div", { cls: "paper-popover__section paper-popover__nib" });
     this.nibSection.createEl("div", { cls: "paper-popover__section-title", text: "Nib settings" });
 
@@ -149,11 +176,11 @@ export class CustomizePopover {
 
     this.updateNibVisibility();
 
-    // 6. Preset Actions
+    // 7. Preset Actions
     this.presetActionsSection = content.createEl("div", { cls: "paper-popover__section paper-popover__preset-actions" });
     this.buildPresetActions();
 
-    // 7. Toolbar Position
+    // 8. Toolbar Position
     this.buildPositionSection(content);
   }
 
@@ -176,6 +203,7 @@ export class CustomizePopover {
         for (const [, b] of this.penTypeBtns) b.removeClass("is-active");
         btn.addClass("is-active");
         this.state.penType = pt.type;
+        this.updateGrainVisibility();
         this.updateNibVisibility();
         this.callbacks.onStateChange({ penType: pt.type });
       });
@@ -249,6 +277,15 @@ export class CustomizePopover {
     slider.addEventListener("input", () => {
       onChange(parseFloat(slider.value));
     });
+  }
+
+  // ─── Grain Visibility ──────────────────────────────────────
+
+  private updateGrainVisibility(): void {
+    if (!this.grainSection) return;
+    const penConfig = getPenConfig(this.state.penType);
+    const hasStamp = penConfig.stamp !== null;
+    this.grainSection.toggleClass("is-hidden", !hasStamp);
   }
 
   // ─── Nib Visibility ────────────────────────────────────────

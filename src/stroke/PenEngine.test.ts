@@ -61,7 +61,7 @@ describe("PenEngine", () => {
   });
 
   describe("pencil tilt", () => {
-    it("should widen stroke when tilted", () => {
+    it("should not widen stroke when tilted (tiltSensitivity=0 for stamp rendering)", () => {
       const config = getPenConfig("pencil");
       const upright = computePointAttributes(
         makePoint({ tiltX: 0, tiltY: 0 }),
@@ -72,10 +72,10 @@ describe("PenEngine", () => {
         config
       );
 
-      expect(tilted.width).toBeGreaterThan(upright.width);
+      expect(tilted.width).toBeCloseTo(upright.width, 5);
     });
 
-    it("should reduce opacity when tilted", () => {
+    it("should not reduce opacity when tilted (tiltSensitivity=0 for stamp rendering)", () => {
       const config = getPenConfig("pencil");
       const upright = computePointAttributes(
         makePoint({ tiltX: 0, tiltY: 0 }),
@@ -86,7 +86,7 @@ describe("PenEngine", () => {
         config
       );
 
-      expect(tilted.opacity).toBeLessThan(upright.opacity);
+      expect(tilted.opacity).toBeCloseTo(upright.opacity, 5);
     });
 
     it("should not affect non-pencil pens", () => {

@@ -23,6 +23,7 @@ export interface PenStyle {
   nibAngle?: number; // Nib angle in radians (0 = horizontal). Fountain pen / directional pens.
   nibThickness?: number; // Minor/major axis ratio (0-1, e.g. 0.25 = 4:1 aspect)
   nibPressure?: number; // Pressure sensitivity 0-1 (0 = none, 1 = max)
+  grain?: number; // Grain slider value 0-1 (pencil only). Controls stamp texture character.
 }
 
 // --- Stroke Data ---
@@ -206,6 +207,7 @@ export interface SerializedPenStyle {
   nibAngle?: number;
   nibThickness?: number;
   nibPressure?: number;
+  grain?: number;
 }
 
 export interface SerializedStroke {

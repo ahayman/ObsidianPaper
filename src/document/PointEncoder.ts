@@ -105,6 +105,15 @@ function integersToPoint(values: number[]): StrokePoint {
 }
 
 /**
+ * Quantize points to match the encode→decode round-trip precision.
+ * This is cheaper than full encode+decode but produces the same coordinates,
+ * ensuring stamp scatter is identical between active and finalized rendering.
+ */
+export function quantizePoints(points: readonly StrokePoint[]): StrokePoint[] {
+  return points.map(p => integersToPoint(pointToIntegers(p)));
+}
+
+/**
  * Compute the bounding box from an array of StrokePoints.
  * Returns [minX, minY, maxX, maxY].
  */

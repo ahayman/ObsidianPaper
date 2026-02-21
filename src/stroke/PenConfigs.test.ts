@@ -82,9 +82,9 @@ describe("PenConfigs", () => {
       expect(config.nibThickness).not.toBeNull();
     });
 
-    it("pencil should have tilt sensitivity", () => {
+    it("pencil should have no tilt sensitivity (stamp-based rendering)", () => {
       const config = getPenConfig("pencil");
-      expect(config.tiltSensitivity).toBeGreaterThan(0);
+      expect(config.tiltSensitivity).toBe(0);
     });
 
     it("pencil should have pressure-opacity mapping", () => {

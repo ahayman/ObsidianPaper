@@ -10,6 +10,9 @@ import type { GrainTextureGenerator } from "./GrainTextureGenerator";
 import { lodCacheKey, simplifyPoints } from "../stroke/StrokeSimplifier";
 import type { LodLevel } from "../stroke/StrokeSimplifier";
 import { detectInkPools, renderInkPools } from "../stroke/InkPooling";
+import type { StampCache } from "../stamp/StampCache";
+import { computeAllStamps, drawStamps } from "../stamp/StampRenderer";
+import { DEFAULT_GRAIN_VALUE, grainToTextureStrength } from "../stamp/GrainMapping";
 
 /**
  * Abstraction over grain rendering resources that works with both
@@ -32,6 +35,13 @@ export interface GrainRenderContext {
   canvasWidth: number;
   /** Current canvas height in physical pixels (for screen-bbox computation). */
   canvasHeight: number;
+}
+
+/**
+ * Context for stamp-based rendering. Null when stamps are not initialized.
+ */
+export interface StampRenderContext {
+  getCache(grainValue: number): StampCache;
 }
 
 type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -73,13 +83,25 @@ export function renderStrokeToContext(
   useDarkColors: boolean,
   pathCache: StrokePathCache,
   grainCtx: GrainRenderContext,
+  stampCtx?: StampRenderContext | null,
 ): void {
+  const style = resolveStyle(stroke, styles);
+  const penConfig = getPenConfig(style.pen);
+
+  // Stamp-based rendering for pencil at LOD 0
+  if (stampCtx && grainCtx.pipeline === "stamps" && penConfig.stamp && lod === 0) {
+    const color = resolveColor(style.color, useDarkColors);
+    const points = decodePoints(stroke.pts);
+    const stamps = computeAllStamps(points, style, penConfig, penConfig.stamp);
+    drawStamps(ctx, stamps, color, ctx.getTransform(), style.opacity);
+    return;
+  }
+
   // Get or generate Path2D (LOD-aware cache key)
   const cacheKey = lodCacheKey(stroke.id, lod);
   let path = pathCache.get(cacheKey);
   let decodedPoints: StrokePoint[] | undefined;
   if (!path) {
-    const style = resolveStyle(stroke, styles);
     decodedPoints = decodePoints(stroke.pts);
     let points = decodedPoints;
     if (lod > 0) {
@@ -93,14 +115,14 @@ export function renderStrokeToContext(
 
   if (!path) return;
 
-  const style = resolveStyle(stroke, styles);
   const color = resolveColor(style.color, useDarkColors);
-  const penConfig = getPenConfig(style.pen);
 
   // Grain-enabled strokes are rendered in isolation on an offscreen canvas
   // so destination-out only affects this stroke
   if (grainCtx.pipeline !== "basic" && lod === 0 && penConfig.grain?.enabled) {
-    const strength = grainCtx.strengthOverrides.get(style.pen) ?? penConfig.grain.strength;
+    const baseStrength = grainCtx.strengthOverrides.get(style.pen) ?? penConfig.grain.strength;
+    const grainValue = style.grain ?? DEFAULT_GRAIN_VALUE;
+    const strength = grainToTextureStrength(baseStrength, grainValue);
     if (strength > 0) {
       const anchorX = stroke.grainAnchor?.[0] ?? stroke.bbox[0];
       const anchorY = stroke.grainAnchor?.[1] ?? stroke.bbox[1];

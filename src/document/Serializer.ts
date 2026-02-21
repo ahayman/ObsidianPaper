@@ -275,6 +275,7 @@ function serializeStyles(
       ...(style.nibAngle != null ? { nibAngle: style.nibAngle } : {}),
       ...(style.nibThickness != null ? { nibThickness: style.nibThickness } : {}),
       ...(style.nibPressure != null ? { nibPressure: style.nibPressure } : {}),
+      ...(style.grain != null ? { grain: style.grain } : {}),
     };
   }
   return result;
@@ -297,6 +298,7 @@ function deserializeStyles(
       ...(s.nibAngle != null ? { nibAngle: s.nibAngle } : {}),
       ...(s.nibThickness != null ? { nibThickness: s.nibThickness } : {}),
       ...(s.nibPressure != null ? { nibPressure: s.nibPressure } : {}),
+      ...(s.grain != null ? { grain: s.grain } : {}),
     };
   }
   return result;

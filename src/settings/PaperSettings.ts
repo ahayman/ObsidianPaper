@@ -108,6 +108,7 @@ export const DEFAULT_PRESETS: PenPreset[] = [
     colorId: "#6b7280|#9ca3af",
     width: 3,
     smoothing: 0.4,
+    grain: 0.35,
   },
   {
     id: "preset-highlighter-yellow",

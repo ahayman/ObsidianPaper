@@ -21,6 +21,7 @@ import type {
   WorkerGrainUpdateMessage,
   WorkerInitMessage,
   WorkerRenderTileMessage,
+  WorkerStampInitMessage,
 } from "./worker/TileWorkerProtocol";
 
 // Virtual module injected by esbuild plugin at build time
@@ -140,6 +141,23 @@ export class WorkerTileScheduler {
       type: "grain-update",
       grainImageData: grainGenerator?.getImageData() ?? null,
       strengthOverrides: Array.from(strengthOverrides.entries()),
+    };
+
+    for (const slot of this.pool) {
+      slot.worker.postMessage(msg);
+    }
+  }
+
+  /**
+   * Signal workers to enable stamp-based rendering.
+   * Workers generate textures locally using grainSliderToConfig.
+   */
+  initStamps(): void {
+    if (this.fallbackToMainThread) return;
+
+    const msg: WorkerStampInitMessage = {
+      type: "stamp-init",
+      enabled: true,
     };
 
     for (const slot of this.pool) {

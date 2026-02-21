@@ -1,5 +1,7 @@
 import type { PenPreset, ToolbarState } from "./ToolbarTypes";
 import { getColorDisplayName } from "../../color/ColorUtils";
+import { DEFAULT_GRAIN_VALUE } from "../../stamp/GrainMapping";
+import { getPenConfig } from "../../stroke/PenConfigs";
 
 const MAX_PRESETS = 20;
 
@@ -96,6 +98,11 @@ export class PresetManager {
       width: state.width,
       smoothing: state.smoothing,
     };
+    // Include grain for pencil presets
+    const penConfig = getPenConfig(state.penType);
+    if (penConfig.stamp) {
+      preset.grain = state.grain;
+    }
     if (state.nibAngle !== undefined) preset.nibAngle = state.nibAngle;
     if (state.nibThickness !== undefined) preset.nibThickness = state.nibThickness;
     if (state.nibPressure !== undefined) preset.nibPressure = state.nibPressure;
@@ -115,7 +122,8 @@ export class PresetManager {
         p.smoothing === state.smoothing &&
         (p.nibAngle ?? state.nibAngle) === state.nibAngle &&
         (p.nibThickness ?? state.nibThickness) === state.nibThickness &&
-        (p.nibPressure ?? state.nibPressure) === state.nibPressure
+        (p.nibPressure ?? state.nibPressure) === state.nibPressure &&
+        (p.grain ?? DEFAULT_GRAIN_VALUE) === state.grain
       ) {
         return p.id;
       }
