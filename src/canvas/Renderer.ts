@@ -28,6 +28,7 @@ import {
   computeAllStamps,
   drawStamps,
 } from "../stamp/StampRenderer";
+import { computeAllInkStamps, drawInkShadingStamps } from "../stamp/InkStampRenderer";
 import { getInkPreset } from "../stamp/InkPresets";
 import { quantizePoints } from "../document/PointEncoder";
 import { TileGrid } from "./tiles/TileGrid";
@@ -609,6 +610,105 @@ export class Renderer {
     useDarkColors?: boolean,
   ): void {
     const penConfig = getPenConfig(style.pen);
+
+    // Ink-shaded active stroke for fountain pen: full redraw each frame
+    // with destination-out modulation on an offscreen canvas.
+    if (this.pipeline === "stamps" && penConfig.inkStamp && points.length > 1) {
+      this.pendingActiveRender = () => {
+        if (!penConfig.inkStamp) return;
+        if (!this.inkStampManager) this.initInkStamps();
+
+        this.clearCanvas(this.activeCtx);
+        this.activeCtx.setTransform(1, 0, 0, 1, 0, 0);
+        this.activeCtx.scale(this.dpr, this.dpr);
+        this.camera.applyToContext(this.activeCtx);
+
+        if (pageRect) {
+          this.activeCtx.save();
+          this.activeCtx.beginPath();
+          this.activeCtx.rect(pageRect.x, pageRect.y, pageRect.width, pageRect.height);
+          this.activeCtx.clip();
+        }
+
+        const path = generateStrokePath(points, style);
+        if (path) {
+          const dark = useDarkColors ?? this.isDarkMode;
+          const color = resolveColor(style.color, dark);
+          const presetConfig = getInkPreset(style.inkPreset ?? this.currentInkPreset);
+          const qPoints = quantizePoints(points);
+
+          // Compute bbox from points
+          let bMinX = Infinity, bMinY = Infinity, bMaxX = -Infinity, bMaxY = -Infinity;
+          for (const pt of qPoints) {
+            if (pt.x < bMinX) bMinX = pt.x;
+            if (pt.y < bMinY) bMinY = pt.y;
+            if (pt.x > bMaxX) bMaxX = pt.x;
+            if (pt.y > bMaxY) bMaxY = pt.y;
+          }
+          const m = style.width * 2;
+          const bbox: [number, number, number, number] = [bMinX - m, bMinY - m, bMaxX + m, bMaxY + m];
+
+          const transform = this.activeCtx.getTransform();
+          const region = computeScreenBBox(bbox, transform, this.activeCanvas.width, this.activeCanvas.height);
+
+          if (region && presetConfig.shading > 0) {
+            const offCtx = this.ensureGrainOffscreen(region.sw, region.sh);
+            if (offCtx && this.grainOffscreen) {
+              // 1. Solid fill on offscreen
+              offCtx.setTransform(1, 0, 0, 1, 0, 0);
+              offCtx.clearRect(0, 0, region.sw, region.sh);
+              offCtx.setTransform(
+                transform.a, transform.b, transform.c, transform.d,
+                transform.e - region.sx, transform.f - region.sy,
+              );
+              offCtx.fillStyle = color;
+              offCtx.globalAlpha = style.opacity;
+              offCtx.fill(path);
+              offCtx.globalAlpha = 1;
+
+              // 2. Destination-out stamps for velocity shading
+              offCtx.globalCompositeOperation = "destination-out";
+              const stamps = computeAllInkStamps(qPoints, style, penConfig, penConfig.inkStamp, presetConfig);
+              const inkCache = this.inkStampManager!.getCache(style.inkPreset ?? this.currentInkPreset);
+              const stampTexture = inkCache.getColored(color);
+              drawInkShadingStamps(offCtx, stamps, stampTexture, offCtx.getTransform());
+              offCtx.globalCompositeOperation = "source-over";
+
+              // 3. Composite back
+              this.activeCtx.save();
+              this.activeCtx.setTransform(1, 0, 0, 1, 0, 0);
+              this.activeCtx.drawImage(
+                this.grainOffscreen,
+                0, 0, region.sw, region.sh,
+                region.sx, region.sy, region.sw, region.sh,
+              );
+              this.activeCtx.restore();
+            } else {
+              // Fallback: plain fill
+              this.activeCtx.fillStyle = color;
+              this.activeCtx.globalAlpha = style.opacity;
+              this.activeCtx.fill(path);
+              this.activeCtx.globalAlpha = 1;
+            }
+          } else {
+            // No shading or off-screen: plain fill
+            this.activeCtx.fillStyle = color;
+            this.activeCtx.globalAlpha = style.opacity;
+            this.activeCtx.fill(path);
+            this.activeCtx.globalAlpha = 1;
+          }
+        }
+
+        if (pageRect) {
+          this.activeCtx.restore();
+        }
+
+        this.camera.resetContext(this.activeCtx);
+      };
+
+      this.scheduleFrame();
+      return;
+    }
 
     // Stamp-based incremental rendering for pencil
     if (this.stampManager && this.pipeline === "stamps" && penConfig.stamp && points.length > 0) {

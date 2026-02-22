@@ -328,8 +328,14 @@ function renderInkShadedStroke(
   grainCtx: GrainRenderContext,
   bbox: [number, number, number, number],
 ): void {
+  // Expand bbox by stroke width — the raw bbox is just centerline min/max
+  // and doesn't account for the italic nib projection width.
+  const wm = style.width * 1.5;
+  const expandedBbox: [number, number, number, number] = [
+    bbox[0] - wm, bbox[1] - wm, bbox[2] + wm, bbox[3] + wm,
+  ];
   const m = targetCtx.getTransform();
-  const region = computeScreenBBox(bbox, m, grainCtx.canvasWidth, grainCtx.canvasHeight);
+  const region = computeScreenBBox(expandedBbox, m, grainCtx.canvasWidth, grainCtx.canvasHeight);
   if (!region) return;
 
   const offscreen = grainCtx.getOffscreen(region.sw, region.sh);

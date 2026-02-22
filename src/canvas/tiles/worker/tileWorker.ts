@@ -533,8 +533,13 @@ function renderInkShadedStrokeWorker(
   canvasWidth: number,
   canvasHeight: number,
 ): void {
+  // Expand bbox by stroke width — raw bbox is centerline min/max only
+  const wm = style.width * 1.5;
+  const expandedBbox: [number, number, number, number] = [
+    bbox[0] - wm, bbox[1] - wm, bbox[2] + wm, bbox[3] + wm,
+  ];
   const m = targetCtx.getTransform();
-  const region = computeScreenBBox(bbox, m, canvasWidth, canvasHeight);
+  const region = computeScreenBBox(expandedBbox, m, canvasWidth, canvasHeight);
   if (!region) return;
 
   const offCtx = ensureGrainOffscreen(region.sw, region.sh);
