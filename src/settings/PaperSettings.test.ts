@@ -99,6 +99,8 @@ describe("PaperSettings", () => {
         activePresetId: null,
         toolbarPosition: "bottom",
         defaultRenderPipeline: "textures",
+        embedMaxWidth: 800,
+        embedMaxHeight: 300,
       };
       const result = mergeSettings(custom);
       expect(result).toEqual(custom);

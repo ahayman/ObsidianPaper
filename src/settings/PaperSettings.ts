@@ -74,6 +74,10 @@ export interface PaperSettings {
   penPresets: PenPreset[];
   activePresetId: string | null;
   toolbarPosition: ToolbarPosition;
+
+  // Embeds
+  embedMaxWidth: number;   // Max width in px for embedded previews (0 = fill container)
+  embedMaxHeight: number;  // Max height in px for embedded previews (0 = no limit)
 }
 
 export const DEFAULT_PRESETS: PenPreset[] = [
@@ -166,6 +170,9 @@ export const DEFAULT_SETTINGS: PaperSettings = {
   penPresets: DEFAULT_PRESETS,
   activePresetId: "preset-ballpoint-black",
   toolbarPosition: "top",
+
+  embedMaxWidth: 0,
+  embedMaxHeight: 400,
 };
 
 /**

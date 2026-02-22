@@ -7,14 +7,35 @@ import { deserializeDocument } from "../document/Serializer";
 import { computePageLayout, getDocumentBounds } from "../document/PageLayout";
 
 /**
+ * Parse embed dimension parameters from the display text.
+ * Supports: "600" (width only), "600x300" (width x height).
+ * Returns { width, height } where 0/NaN values become null.
+ */
+export function parseEmbedDimensions(
+  param: string | null
+): { width: number | null; height: number | null } {
+  if (!param) return { width: null, height: null };
+  const parts = param.split("x");
+  const w = parseInt(parts[0]);
+  const h = parts[1] ? parseInt(parts[1]) : NaN;
+  return {
+    width: isNaN(w) || w <= 0 ? null : w,
+    height: isNaN(h) || h <= 0 ? null : h,
+  };
+}
+
+/**
  * Render a static preview of a PaperDocument onto a canvas.
  * Renders pages with desk background, page backgrounds, and clipped strokes.
+ * When maxHeight is provided, the canvas is capped at that height (showing the
+ * top portion of the document).
  */
 export function renderEmbed(
   canvas: HTMLCanvasElement,
   data: string,
   isDarkMode: boolean,
-  maxWidth: number
+  maxWidth: number,
+  maxHeight?: number,
 ): void {
   const doc = deserializeDocument(data);
   const pageLayout = computePageLayout(doc.pages, doc.layoutDirection);
@@ -40,10 +61,15 @@ export function renderEmbed(
   const displayWidth = Math.round(contentWidth * scale);
   const displayHeight = Math.round(contentHeight * scale);
 
+  // Apply maxHeight clipping — show top portion of document
+  const clippedHeight = (maxHeight && maxHeight > 0 && displayHeight > maxHeight)
+    ? maxHeight
+    : displayHeight;
+
   canvas.width = displayWidth;
-  canvas.height = displayHeight;
+  canvas.height = clippedHeight;
   canvas.style.width = `${displayWidth}px`;
-  canvas.style.height = `${displayHeight}px`;
+  canvas.style.height = `${clippedHeight}px`;
 
   const ctx = canvas.getContext("2d");
   if (!ctx) return;

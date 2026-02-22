@@ -1,6 +1,8 @@
 import type { App, TFile } from "obsidian";
-import { renderEmbed } from "./EmbedRenderer";
+import { renderEmbed, parseEmbedDimensions } from "./EmbedRenderer";
 import { PAPER_EXTENSION } from "../view/PaperView";
+import type { PaperSettings } from "../settings/PaperSettings";
+import type { EmbedEntry } from "./EmbedPostProcessor";
 
 /**
  * Creates a CM6 EditorExtension that renders `.paper` embeds
@@ -11,14 +13,19 @@ import { PAPER_EXTENSION } from "../view/PaperView";
  * is provided by Obsidian at runtime. Since @codemirror is declared external
  * in our build config, we import it directly.
  */
-export function createEmbedExtension(app: App, isDarkMode: () => boolean) {
-  // Dynamically import @codemirror/view since it's external (provided by Obsidian)
-  // We use a lazy approach: the extension is registered in main.ts
-  // using Obsidian's registerEditorExtension() which handles CM6 integration.
-  // For now, we provide the widget rendering logic.
+export function createEmbedExtension(
+  app: App,
+  isDarkMode: () => boolean,
+  getSettings: () => PaperSettings,
+  embedRegistry: EmbedEntry[],
+  openModal: (file: TFile) => void,
+) {
   return {
     app,
     isDarkMode,
+    getSettings,
+    embedRegistry,
+    openModal,
     renderWidget: renderPaperWidget,
   };
 }
@@ -32,7 +39,10 @@ export function renderPaperWidget(
   app: App,
   filePath: string,
   isDarkMode: boolean,
-  maxWidth: number
+  maxWidth: number,
+  maxHeight?: number,
+  embedRegistry?: EmbedEntry[],
+  openModal?: (file: TFile) => void,
 ): void {
   container.classList.add("paper-embed-container");
 
@@ -42,18 +52,50 @@ export function renderPaperWidget(
     return;
   }
 
-  void app.vault.read(file).then((data: string) => {
+  const renderInto = (target: HTMLElement) => {
+    while (target.firstChild) target.firstChild.remove();
+
     const canvas = document.createElement("canvas");
     canvas.classList.add("paper-embed-canvas");
-    container.appendChild(canvas);
+    target.appendChild(canvas);
 
-    renderEmbed(canvas, data, isDarkMode, maxWidth);
+    if (openModal) {
+      const expandBtn = document.createElement("button");
+      expandBtn.classList.add("paper-embed-expand-btn");
+      expandBtn.setAttribute("aria-label", "Open fullscreen");
+      expandBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>`;
+      expandBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        openModal(file);
+      });
+      target.appendChild(expandBtn);
+    }
 
-    container.addEventListener("click", () => {
-      const leaf = app.workspace.getLeaf(false);
-      void leaf.openFile(file);
+    void app.vault.read(file).then((data: string) => {
+      renderEmbed(canvas, data, isDarkMode, maxWidth, maxHeight);
     });
+  };
+
+  renderInto(container);
+
+  if (maxHeight) {
+    container.dataset.maxHeight = String(maxHeight);
+  }
+
+  container.addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).closest(".paper-embed-expand-btn")) return;
+    const leaf = app.workspace.getLeaf(false);
+    void leaf.openFile(file);
   });
+
+  if (embedRegistry) {
+    embedRegistry.push({
+      filePath: file.path,
+      container,
+      reRender: () => renderInto(container),
+    });
+  }
 }
 
 /**

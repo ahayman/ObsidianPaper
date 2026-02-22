@@ -481,6 +481,37 @@ export class PaperSettingsTab extends PluginSettingTab {
           this.notifyChange();
         });
       });
+
+    // --- Embeds Section ---
+    new Setting(containerEl).setName("Embeds").setHeading();
+
+    new Setting(containerEl)
+      .setName("Max width")
+      .setDesc("Maximum width of embedded previews in pixels (0 = fill container)")
+      .addText((text) => {
+        text.setValue(String(this.settings.embedMaxWidth));
+        text.onChange((value: string) => {
+          const num = parseInt(value);
+          if (!isNaN(num) && num >= 0 && num <= 2000) {
+            this.settings.embedMaxWidth = num;
+            this.notifyChange();
+          }
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Max height")
+      .setDesc("Maximum height of embedded previews in pixels (0 = no limit)")
+      .addText((text) => {
+        text.setValue(String(this.settings.embedMaxHeight));
+        text.onChange((value: string) => {
+          const num = parseInt(value);
+          if (!isNaN(num) && num >= 0 && num <= 2000) {
+            this.settings.embedMaxHeight = num;
+            this.notifyChange();
+          }
+        });
+      });
   }
 
   updateSettings(settings: PaperSettings): void {

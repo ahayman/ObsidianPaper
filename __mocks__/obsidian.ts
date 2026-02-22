@@ -81,6 +81,7 @@ export class Vault {
   getMarkdownFiles = jest.fn(() => []);
   getAllLoadedFiles = jest.fn(() => []);
   getRoot = jest.fn(() => new TFolder("/"));
+  on = jest.fn();
 }
 
 export class Workspace {

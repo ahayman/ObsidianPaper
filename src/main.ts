@@ -6,11 +6,14 @@ import { DEFAULT_SETTINGS, mergeSettings, resolvePageSize, resolveMargins } from
 import type { PaperSettings } from "./settings/PaperSettings";
 import { PaperSettingsTab } from "./settings/PaperSettingsTab";
 import { createEmbedPostProcessor } from "./embed/EmbedPostProcessor";
+import type { EmbedEntry } from "./embed/EmbedPostProcessor";
+import { EmbeddedPaperModal } from "./embed/EmbeddedPaperModal";
 import { exportToSvg } from "./export/SvgExporter";
 
 export default class PaperPlugin extends Plugin {
   settings: PaperSettings = DEFAULT_SETTINGS;
   private settingsListeners: Set<(settings: PaperSettings) => void> = new Set();
+  private embedRegistry: EmbedEntry[] = [];
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -29,8 +32,21 @@ export default class PaperPlugin extends Plugin {
 
     // Register embed post processor for reading mode
     this.registerMarkdownPostProcessor(
-      createEmbedPostProcessor(this.app, () => {
-        return document.body.classList.contains("theme-dark");
+      createEmbedPostProcessor(
+        this.app,
+        () => document.body.classList.contains("theme-dark"),
+        () => this.settings,
+        this.embedRegistry,
+        (file: TFile) => this.openPaperModal(file),
+      )
+    );
+
+    // Auto-refresh embeds when .paper files are modified
+    this.registerEvent(
+      this.app.vault.on("modify", (file) => {
+        if (file instanceof TFile && file.extension === PAPER_EXTENSION) {
+          this.refreshEmbedsFor(file.path);
+        }
       })
     );
 
@@ -87,6 +103,7 @@ export default class PaperPlugin extends Plugin {
 
   onunload(): void {
     this.settingsListeners.clear();
+    this.embedRegistry.length = 0;
   }
 
   onSettingsChange(listener: (settings: PaperSettings) => void): () => void {
@@ -107,6 +124,34 @@ export default class PaperPlugin extends Plugin {
 
   private async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
+  }
+
+  private openPaperModal(file: TFile): void {
+    const modal = new EmbeddedPaperModal(
+      this.app,
+      file,
+      this.settings,
+      () => {
+        // On dismiss, embeds auto-refresh via the vault modify listener
+      },
+      (changes) => {
+        Object.assign(this.settings, changes);
+        void this.saveSettings();
+        this.notifySettingsListeners();
+      },
+    );
+    modal.open();
+  }
+
+  private refreshEmbedsFor(filePath: string): void {
+    // Remove stale entries (container no longer in DOM) and refresh matching ones
+    this.embedRegistry = this.embedRegistry.filter((entry) => {
+      if (!entry.container.isConnected) return false;
+      if (entry.filePath === filePath) {
+        entry.reRender();
+      }
+      return true;
+    });
   }
 
   private getActivePaperView(): PaperView | null {
