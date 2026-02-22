@@ -74,6 +74,7 @@ export class App {
 export class Vault {
   getAbstractFileByPath = jest.fn();
   create = jest.fn();
+  createFolder = jest.fn(() => Promise.resolve());
   read = jest.fn();
   modify = jest.fn();
   delete = jest.fn();
@@ -89,6 +90,7 @@ export class Workspace {
   getActiveFile = jest.fn();
   getActiveViewOfType = jest.fn(() => null);
   on = jest.fn();
+  onLayoutReady = jest.fn((cb: () => void) => cb());
 }
 
 export class WorkspaceLeaf {

@@ -1,6 +1,6 @@
 import { PluginSettingTab, App, Setting } from "obsidian";
 import type { Plugin } from "obsidian";
-import type { PaperSettings, PaperFormat } from "./PaperSettings";
+import type { PaperSettings, PaperFormat, NewNoteLocation } from "./PaperSettings";
 import { formatSpacingDisplay, displayToWorldUnits } from "./PaperSettings";
 import type { PenType, PaperType, PageSizePreset, PageOrientation, LayoutDirection, PageUnit, SpacingUnit, RenderPipeline } from "../types";
 
@@ -446,16 +446,47 @@ export class PaperSettingsTab extends PluginSettingTab {
     new Setting(containerEl).setName("File").setHeading();
 
     new Setting(containerEl)
-      .setName("Default folder")
-      .setDesc("Folder for new paper notes (empty = vault root)")
-      .addText((text) => {
-        text.setPlaceholder("e.g. Papers/");
-        text.setValue(this.settings.defaultFolder);
-        text.onChange((value: string) => {
-          this.settings.defaultFolder = value;
+      .setName("Default location for new notes")
+      .setDesc("Where new paper documents are created")
+      .addDropdown((dropdown) => {
+        dropdown.addOption("specified", "In specified folder");
+        dropdown.addOption("current", "In current folder");
+        dropdown.addOption("subfolder", "In subfolder of current folder");
+        dropdown.setValue(this.settings.newNoteLocation);
+        dropdown.onChange((value: string) => {
+          this.settings.newNoteLocation = value as NewNoteLocation;
           this.notifyChange();
+          this.display();
         });
       });
+
+    if (this.settings.newNoteLocation === "specified") {
+      new Setting(containerEl)
+        .setName("Folder path")
+        .setDesc("Folder for new paper notes (empty = vault root)")
+        .addText((text) => {
+          text.setPlaceholder("e.g. Papers/");
+          text.setValue(this.settings.defaultFolder);
+          text.onChange((value: string) => {
+            this.settings.defaultFolder = value;
+            this.notifyChange();
+          });
+        });
+    }
+
+    if (this.settings.newNoteLocation === "subfolder") {
+      new Setting(containerEl)
+        .setName("Subfolder name")
+        .setDesc("Subfolder created inside the current folder")
+        .addText((text) => {
+          text.setPlaceholder("e.g. Papers");
+          text.setValue(this.settings.newNoteSubfolder);
+          text.onChange((value: string) => {
+            this.settings.newNoteSubfolder = value;
+            this.notifyChange();
+          });
+        });
+    }
 
     new Setting(containerEl)
       .setName("File name template")

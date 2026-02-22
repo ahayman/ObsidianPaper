@@ -99,6 +99,19 @@ export default class PaperPlugin extends Plugin {
         return true;
       },
     });
+
+    this.registerEvent(
+      this.app.workspace.on("file-menu", (menu, file) => {
+        if (!(file instanceof TFolder)) return;
+        menu.addItem((item) => {
+          item.setTitle("New Paper Document")
+            .setIcon("pen-tool")
+            .onClick(() => void this.createNewPaper(file as TFolder));
+        });
+      })
+    );
+
+    this.registerNotebookNavigatorMenu();
   }
 
   onunload(): void {
@@ -159,20 +172,69 @@ export default class PaperPlugin extends Plugin {
     return view;
   }
 
-  private async createNewPaper(): Promise<void> {
-    const folderPath = this.settings.defaultFolder;
-    let folder: TFolder;
+  private registerNotebookNavigatorMenu(): void {
+    // Notebook Navigator (community plugin) exposes a Menus API that lets
+    // other plugins add items to its folder context menu. We defer until
+    // layout-ready so that Notebook Navigator has finished loading.
+    this.app.workspace.onLayoutReady(() => {
+      this.tryRegisterNotebookNavigatorMenu();
+    });
+  }
 
+  private tryRegisterNotebookNavigatorMenu(): void {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const plugins = (this.app as any).plugins?.plugins as Record<string, any> | undefined;
+    const registerFolderMenu = plugins?.["notebook-navigator"]?.api?.menus?.registerFolderMenu as
+      | ((cb: (menu: { addItem: (cb: (item: { setTitle: (t: string) => any; setIcon: (i: string) => any; onClick: (cb: () => void) => any }) => void) => void }, folder: TFolder) => void) => void)
+      | undefined;
+    if (!registerFolderMenu) return;
+
+    registerFolderMenu((menu, folder) => {
+      menu.addItem((item) => {
+        item.setTitle("New Paper Document")
+          .setIcon("pen-tool")
+          .onClick(() => void this.createNewPaper(folder));
+      });
+    });
+  }
+
+  private async resolveNewNoteFolder(): Promise<TFolder> {
+    const mode = this.settings.newNoteLocation;
+
+    if (mode === "current") {
+      const parent = this.app.workspace.getActiveFile()?.parent;
+      return parent instanceof TFolder ? parent : this.app.vault.getRoot();
+    }
+
+    if (mode === "subfolder") {
+      const parent = this.app.workspace.getActiveFile()?.parent;
+      const base = parent instanceof TFolder ? parent : this.app.vault.getRoot();
+      const sub = this.settings.newNoteSubfolder;
+      if (!sub) return base;
+      const subPath = normalizePath(`${base.path}/${sub}`);
+      const existing = this.app.vault.getAbstractFileByPath(subPath);
+      if (existing instanceof TFolder) return existing;
+      try {
+        await this.app.vault.createFolder(subPath);
+        const created = this.app.vault.getAbstractFileByPath(subPath);
+        if (created instanceof TFolder) return created;
+      } catch {
+        // Folder may already exist or creation failed — fall back to parent
+      }
+      return base;
+    }
+
+    // "specified" (default)
+    const folderPath = this.settings.defaultFolder;
     if (folderPath) {
       const existing = this.app.vault.getAbstractFileByPath(folderPath);
-      if (existing instanceof TFolder) {
-        folder = existing;
-      } else {
-        folder = this.app.vault.getRoot();
-      }
-    } else {
-      folder = this.app.vault.getRoot();
+      if (existing instanceof TFolder) return existing;
     }
+    return this.app.vault.getRoot();
+  }
+
+  private async createNewPaper(folderOverride?: TFolder): Promise<void> {
+    const folder = folderOverride ?? await this.resolveNewNoteFolder();
 
     const baseName = this.generateFileName(folder);
     const path = normalizePath(`${folder.path}/${baseName}.${PAPER_EXTENSION}`);

@@ -47,4 +47,22 @@ describe("PaperSettingsTab", () => {
     // Should not throw
     expect(() => tab.display()).not.toThrow();
   });
+
+  it("should render without error when newNoteLocation is 'specified'", () => {
+    settings.newNoteLocation = "specified";
+    tab.updateSettings(settings);
+    expect(() => tab.display()).not.toThrow();
+  });
+
+  it("should render without error when newNoteLocation is 'current'", () => {
+    settings.newNoteLocation = "current";
+    tab.updateSettings(settings);
+    expect(() => tab.display()).not.toThrow();
+  });
+
+  it("should render without error when newNoteLocation is 'subfolder'", () => {
+    settings.newNoteLocation = "subfolder";
+    tab.updateSettings(settings);
+    expect(() => tab.display()).not.toThrow();
+  });
 });

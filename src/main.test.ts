@@ -1,11 +1,12 @@
-import { App, PluginManifest } from "obsidian";
+import { App, PluginManifest, TFolder, TFile } from "obsidian";
 import PaperPlugin from "./main";
 
 describe("PaperPlugin", () => {
+  let app: App;
   let plugin: PaperPlugin;
 
   beforeEach(() => {
-    const app = new App();
+    app = new App();
     const manifest: PluginManifest = {
       id: "obsidian-paper",
       name: "Paper",
@@ -48,6 +49,16 @@ describe("PaperPlugin", () => {
         id: "create-paper",
         name: "Create new handwriting note",
       })
+    );
+  });
+
+  it("should register file-menu event for folder context menu", async () => {
+    await plugin.onload();
+    expect(plugin.registerEvent).toHaveBeenCalled();
+    // The workspace.on should have been called with "file-menu"
+    expect(app.workspace.on).toHaveBeenCalledWith(
+      "file-menu",
+      expect.any(Function)
     );
   });
 });

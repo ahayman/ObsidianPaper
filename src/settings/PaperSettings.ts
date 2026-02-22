@@ -14,6 +14,7 @@ import { PAGE_SIZE_PRESETS, PPI, CM_PER_INCH } from "../types";
 import type { PenPreset, ToolbarPosition } from "../view/toolbar/ToolbarTypes";
 
 export type PaperFormat = "paper" | "paper.md";
+export type NewNoteLocation = "specified" | "current" | "subfolder";
 
 export interface PaperSettings {
   // Pen defaults
@@ -66,7 +67,9 @@ export interface PaperSettings {
   defaultRenderPipeline: RenderPipeline;
 
   // File
+  newNoteLocation: NewNoteLocation;
   defaultFolder: string;
+  newNoteSubfolder: string;
   fileNameTemplate: string;
   defaultFormat: PaperFormat;
 
@@ -163,7 +166,9 @@ export const DEFAULT_SETTINGS: PaperSettings = {
 
   defaultRenderPipeline: "textures",
 
+  newNoteLocation: "specified",
   defaultFolder: "",
+  newNoteSubfolder: "",
   fileNameTemplate: "Untitled Paper",
   defaultFormat: "paper",
 

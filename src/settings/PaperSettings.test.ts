@@ -34,7 +34,9 @@ describe("PaperSettings", () => {
     });
 
     it("should have valid file defaults", () => {
+      expect(DEFAULT_SETTINGS.newNoteLocation).toBe("specified");
       expect(DEFAULT_SETTINGS.defaultFolder).toBe("");
+      expect(DEFAULT_SETTINGS.newNoteSubfolder).toBe("");
       expect(DEFAULT_SETTINGS.fileNameTemplate).toBe("Untitled Paper");
     });
   });
@@ -92,7 +94,9 @@ describe("PaperSettings", () => {
         defaultNibThickness: 0.3,
         defaultNibPressure: 0.6,
         useBarrelRotation: false,
+        newNoteLocation: "current",
         defaultFolder: "Papers/",
+        newNoteSubfolder: "handwriting",
         fileNameTemplate: "Note",
         defaultFormat: "paper.md",
         penPresets: [],
@@ -109,6 +113,15 @@ describe("PaperSettings", () => {
     it("should handle grain strength fields", () => {
       const result = mergeSettings({ pencilGrainStrength: 0.8 });
       expect(result.pencilGrainStrength).toBe(0.8);
+    });
+
+    it("should default newNoteLocation to 'specified' for old settings without it", () => {
+      // Simulates loading settings saved before newNoteLocation existed
+      const oldSettings = { defaultFolder: "Papers/" } as Partial<PaperSettings>;
+      const result = mergeSettings(oldSettings);
+      expect(result.newNoteLocation).toBe("specified");
+      expect(result.defaultFolder).toBe("Papers/");
+      expect(result.newNoteSubfolder).toBe("");
     });
 
     it("should not mutate the input", () => {
