@@ -18,15 +18,15 @@ import type { InkPresetConfig } from "./InkPresets";
 import type { InkStampConfig } from "../stroke/PenConfigs";
 import { hashFloat, interpolatePoint } from "./StampRenderer";
 
-// Erasure tuning. With stamp spacing 0.04 and size fraction 1.1, ~25 stamps
-// overlap at the centerline and ~5 at edges. The differential creates edge darkening.
+// Erasure tuning. With stamp spacing 0.15 and size fraction 2.0, ~7 stamps
+// overlap at the centerline and ~2 at edges. The differential creates edge darkening.
 //
 // BASE_MIN: always-present erasure for texture/edge-darkening even at slow speed.
-//   25 stamps @ 0.02 → center erases ~40%, edges ~10% → 30% differential
+//   7 stamps @ 0.08 → center erases ~44%, edges(2) ~15% → 29% differential
 // SPEED_RANGE: additional erasure at max velocity for shading.
-//   25 stamps @ 0.06 → center erases ~78%, edges ~26% → dramatic lightening
-const BASE_MIN_ERASURE = 0.03;
-const SPEED_ERASURE = 0.09;
+//   7 stamps @ 0.30 → center erases ~92%, edges(2) ~51% → dramatic lightening
+const BASE_MIN_ERASURE = 0.08;
+const SPEED_ERASURE = 0.30;
 
 /**
  * Parameters for a single ink shading stamp.
