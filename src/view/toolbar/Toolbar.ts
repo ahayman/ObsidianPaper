@@ -10,6 +10,7 @@ import { ToolbarButton } from "./ToolbarButton";
 import { PresetStrip } from "./PresetStrip";
 import { PresetManager } from "./PresetManager";
 import { CustomizePopover } from "./CustomizePopover";
+import { CurrentPenButton } from "./CurrentPenButton";
 import { AutoMinimizer } from "./AutoMinimizer";
 import { DEFAULT_GRAIN_VALUE } from "../../stamp/GrainMapping";
 
@@ -35,7 +36,7 @@ export class Toolbar {
   private eraserBtn: ToolbarButton | null = null;
   private addPageBtn: ToolbarButton | null = null;
   private docSettingsBtn: ToolbarButton | null = null;
-  private moreBtn: ToolbarButton | null = null;
+  private currentPenBtn: CurrentPenButton | null = null;
 
   constructor(
     container: HTMLElement,
@@ -66,6 +67,17 @@ export class Toolbar {
   }
 
   private build(): void {
+    // Current pen button
+    this.currentPenBtn = new CurrentPenButton(
+      this.el,
+      this.state.colorId,
+      this.state.penType,
+      () => this.togglePopover()
+    );
+
+    // Separator
+    this.el.createEl("div", { cls: "paper-toolbar__separator" });
+
     // Undo
     this.undoBtn = new ToolbarButton(this.el, "Undo", "paper-toolbar__btn--undo", () => {
       this.callbacks.onUndo();
@@ -119,11 +131,6 @@ export class Toolbar {
       this.callbacks.onOpenDocumentSettings();
     });
 
-    // More / Customize
-    this.moreBtn = new ToolbarButton(this.el, "More", "paper-toolbar__btn--more", () => {
-      this.togglePopover();
-    });
-
     // Minimized handle (hidden when not minimized)
     const handle = this.el.createEl("button", {
       cls: "paper-toolbar__handle",
@@ -152,6 +159,7 @@ export class Toolbar {
     this.applyPreset(preset);
     this.state.activePresetId = presetId;
     this.presetStrip?.setActivePreset(presetId);
+    this.currentPenBtn?.update(this.state.colorId, this.state.penType);
     this.callbacks.onPenSettingsChange({ ...this.state });
   }
 
@@ -163,6 +171,7 @@ export class Toolbar {
     this.applyPreset(preset);
     this.state.activePresetId = presetId;
     this.presetStrip?.setActivePreset(presetId);
+    this.currentPenBtn?.update(this.state.colorId, this.state.penType);
     this.callbacks.onPenSettingsChange({ ...this.state });
 
     // Open popover anchored to that preset
@@ -207,7 +216,7 @@ export class Toolbar {
       this.position,
       this.isDark,
       this.state.activePresetId ? this.presetManager.getPreset(this.state.activePresetId) ?? null : null,
-      this.el,
+      this.currentPenBtn?.el ?? this.el,
       {
         onStateChange: (partial) => {
           Object.assign(this.state, partial);
@@ -217,6 +226,7 @@ export class Toolbar {
             this.state.activePresetId = match;
             this.presetStrip?.setActivePreset(match);
           }
+          this.currentPenBtn?.update(this.state.colorId, this.state.penType);
           this.callbacks.onPenSettingsChange({ ...this.state });
         },
         onSaveAsNew: () => {
@@ -281,6 +291,10 @@ export class Toolbar {
         this.presetStrip?.setActivePreset(match);
       }
     }
+
+    if (partial.colorId !== undefined || partial.penType !== undefined) {
+      this.currentPenBtn?.update(this.state.colorId, this.state.penType);
+    }
   }
 
   setDarkMode(isDark: boolean): void {
@@ -328,7 +342,7 @@ export class Toolbar {
     this.eraserBtn?.destroy();
     this.addPageBtn?.destroy();
     this.docSettingsBtn?.destroy();
-    this.moreBtn?.destroy();
+    this.currentPenBtn?.destroy();
     this.el.remove();
   }
 }

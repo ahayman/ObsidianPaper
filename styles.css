@@ -295,6 +295,32 @@
   box-shadow: 0 0 0 2px var(--interactive-accent);
 }
 
+/* Current Pen Button */
+.paper-toolbar__current-pen {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  border: 2px solid var(--background-modifier-border);
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.15s, transform 0.1s;
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+}
+
+.paper-toolbar__current-pen:hover {
+  transform: scale(1.12);
+}
+
+.paper-toolbar__current-pen.is-highlighter .paper-toolbar__preset-color {
+  opacity: 0.5;
+}
+
 /* ─── Customize Popover ────────────────────────────────────── */
 
 .paper-popover__backdrop {
