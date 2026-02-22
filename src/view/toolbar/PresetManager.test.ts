@@ -26,6 +26,7 @@ function makeState(overrides: Partial<ToolbarState> = {}): ToolbarState {
     nibThickness: 0.25,
     nibPressure: 0.5,
     grain: DEFAULT_GRAIN_VALUE,
+    inkPreset: "standard",
     ...overrides,
   };
 }

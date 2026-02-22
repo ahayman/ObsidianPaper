@@ -15,6 +15,15 @@ export interface PenStampConfig {
   rotationJitter: number;
 }
 
+export interface InkStampConfig {
+  /** Ink stamp texture size in pixels (default 64) */
+  textureSize: number;
+  /** Spacing between stamps as fraction of stamp diameter (default 0.15) */
+  spacing: number;
+  /** Stamp size as fraction of nib-projected width (default 0.6) */
+  stampSizeFraction: number;
+}
+
 /**
  * Full configuration for a pen type.
  * All pen types are handled by the same engine with different parameters.
@@ -54,6 +63,8 @@ export interface PenConfig {
   grain: PenGrainConfig | null;
   /** Stamp-based rendering configuration, null = not supported */
   stamp: PenStampConfig | null;
+  /** Ink stamp configuration for fountain pen, null = not supported */
+  inkStamp: InkStampConfig | null;
 }
 
 export const PEN_CONFIGS: Record<PenType, PenConfig> = {
@@ -76,6 +87,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     useBarrelRotation: false,
     grain: null,
     stamp: null,
+    inkStamp: null,
   },
 
   "felt-tip": {
@@ -97,6 +109,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     useBarrelRotation: false,
     grain: null,
     stamp: null,
+    inkStamp: null,
   },
 
   pencil: {
@@ -118,6 +131,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     useBarrelRotation: false,
     grain: { enabled: true, strength: 0.5 },
     stamp: { textureSize: 48, spacing: 0.5, rotationJitter: Math.PI / 12 },
+    inkStamp: null,
   },
 
   fountain: {
@@ -139,6 +153,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     useBarrelRotation: true,
     grain: null,
     stamp: null,
+    inkStamp: { textureSize: 64, spacing: 0.04, stampSizeFraction: 1.1 },
   },
 
   highlighter: {
@@ -160,6 +175,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     useBarrelRotation: false,
     grain: null,
     stamp: null,
+    inkStamp: null,
   },
 };
 

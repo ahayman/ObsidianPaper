@@ -53,6 +53,12 @@ export interface WorkerStampInitMessage {
   enabled: boolean;
 }
 
+export interface WorkerInkStampInitMessage {
+  type: "ink-stamp-init";
+  /** Signal to enable ink stamp-based rendering. Workers generate textures locally. */
+  enabled: boolean;
+}
+
 export interface WorkerDestroyMessage {
   type: "destroy";
 }
@@ -64,6 +70,7 @@ export type MainToWorkerMessage =
   | WorkerRenderTileMessage
   | WorkerCancelMessage
   | WorkerStampInitMessage
+  | WorkerInkStampInitMessage
   | WorkerDestroyMessage;
 
 // ─── Worker → Main Messages ──────────────────────────────────

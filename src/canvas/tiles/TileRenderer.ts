@@ -13,6 +13,7 @@ import { resolvePageBackground } from "../../color/ColorUtils";
 import { renderStrokeToContext } from "../StrokeRenderCore";
 import type { GrainRenderContext, StampRenderContext } from "../StrokeRenderCore";
 import type { StampTextureManager } from "../../stamp/StampTextureManager";
+import { InkStampTextureManager } from "../../stamp/InkStampTextureManager";
 import { renderDeskFill, renderPageBackground } from "../BackgroundRenderer";
 
 function bboxOverlaps(
@@ -36,6 +37,7 @@ export class TileRenderer {
   private grainOffscreen: OffscreenCanvas | null = null;
   private grainOffscreenCtx: OffscreenCanvasRenderingContext2D | null = null;
   private stampManager: StampTextureManager | null = null;
+  private inkStampManager: InkStampTextureManager | null = null;
 
   constructor(grid: TileGrid, config: TileGridConfig, pathCache: StrokePathCache) {
     this.grid = grid;
@@ -62,6 +64,10 @@ export class TileRenderer {
 
   setStampManager(manager: StampTextureManager | null): void {
     this.stampManager = manager;
+  }
+
+  setInkStampManager(manager: InkStampTextureManager | null): void {
+    this.inkStampManager = manager;
   }
 
   /**
@@ -121,7 +127,15 @@ export class TileRenderer {
     const strokeIdSet = new Set(strokeIds);
     const grainCtx = this.getGrainRenderContext(tilePhysical, tilePhysical);
     const stampCtx: StampRenderContext | null = this.stampManager
-      ? { getCache: (gv) => this.stampManager!.getCache(gv) }
+      ? {
+          getCache: (gv) => this.stampManager!.getCache(gv),
+          getInkCache: (presetId) => {
+            if (!this.inkStampManager) {
+              this.inkStampManager = new InkStampTextureManager();
+            }
+            return this.inkStampManager.getCache(presetId);
+          },
+        }
       : null;
 
     for (const pageRect of pageLayout) {

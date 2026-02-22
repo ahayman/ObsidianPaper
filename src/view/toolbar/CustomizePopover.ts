@@ -3,6 +3,8 @@ import type { PenPreset, ToolbarPosition, ToolbarState } from "./ToolbarTypes";
 import { getPenConfig } from "../../stroke/PenConfigs";
 import { ColorPickerPanel } from "./ColorPickerPanel";
 import { DEFAULT_GRAIN_VALUE } from "../../stamp/GrainMapping";
+import { getInkPresetIds, getInkPreset } from "../../stamp/InkPresets";
+import type { InkPresetId } from "../../stamp/InkPresets";
 
 const PEN_TYPES: { type: PenType; label: string }[] = [
   { type: "ballpoint", label: "Ballpoint" },
@@ -41,6 +43,8 @@ export class CustomizePopover {
   private callbacks: CustomizePopoverCallbacks;
 
   // Element refs for updates
+  private inkPresetSection: HTMLElement | null = null;
+  private inkPresetBtns: Map<string, HTMLElement> = new Map();
   private grainSection: HTMLElement | null = null;
   private grainSlider: HTMLInputElement | null = null;
   private grainValue: HTMLElement | null = null;
@@ -145,6 +149,30 @@ export class CustomizePopover {
 
     this.updateGrainVisibility();
 
+    // 5b. Ink Type (fountain only)
+    this.inkPresetSection = content.createEl("div", { cls: "paper-popover__section paper-popover__ink-preset" });
+    this.inkPresetSection.createEl("div", { cls: "paper-popover__section-title", text: "Ink type" });
+    const inkRow = this.inkPresetSection.createEl("div", { cls: "paper-popover__pen-types" });
+
+    for (const id of getInkPresetIds()) {
+      const preset = getInkPreset(id);
+      const btn = inkRow.createEl("button", {
+        cls: "paper-popover__pen-type-btn",
+        text: preset.label,
+      });
+      if (id === this.state.inkPreset) btn.addClass("is-active");
+      this.inkPresetBtns.set(id, btn);
+
+      btn.addEventListener("click", () => {
+        for (const [, b] of this.inkPresetBtns) b.removeClass("is-active");
+        btn.addClass("is-active");
+        this.state.inkPreset = id;
+        this.callbacks.onStateChange({ inkPreset: id });
+      });
+    }
+
+    this.updateInkPresetVisibility();
+
     // 6. Nib Settings (fountain only)
     this.nibSection = content.createEl("div", { cls: "paper-popover__section paper-popover__nib" });
     this.nibSection.createEl("div", { cls: "paper-popover__section-title", text: "Nib settings" });
@@ -204,6 +232,7 @@ export class CustomizePopover {
         btn.addClass("is-active");
         this.state.penType = pt.type;
         this.updateGrainVisibility();
+        this.updateInkPresetVisibility();
         this.updateNibVisibility();
         this.callbacks.onStateChange({ penType: pt.type });
       });
@@ -286,6 +315,15 @@ export class CustomizePopover {
     const penConfig = getPenConfig(this.state.penType);
     const hasStamp = penConfig.stamp !== null;
     this.grainSection.toggleClass("is-hidden", !hasStamp);
+  }
+
+  // ─── Ink Preset Visibility ─────────────────────────────────
+
+  private updateInkPresetVisibility(): void {
+    if (!this.inkPresetSection) return;
+    const penConfig = getPenConfig(this.state.penType);
+    const hasInkStamp = penConfig.inkStamp !== null;
+    this.inkPresetSection.toggleClass("is-hidden", !hasInkStamp);
   }
 
   // ─── Nib Visibility ────────────────────────────────────────

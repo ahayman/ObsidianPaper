@@ -22,11 +22,13 @@ import {
 } from "./StrokeRenderCore";
 import type { GrainRenderContext, StampRenderContext } from "./StrokeRenderCore";
 import { StampTextureManager } from "../stamp/StampTextureManager";
+import { InkStampTextureManager } from "../stamp/InkStampTextureManager";
 import { DEFAULT_GRAIN_VALUE, grainToTextureStrength } from "../stamp/GrainMapping";
 import {
   computeAllStamps,
   drawStamps,
 } from "../stamp/StampRenderer";
+import { getInkPreset } from "../stamp/InkPresets";
 import { quantizePoints } from "../document/PointEncoder";
 import { TileGrid } from "./tiles/TileGrid";
 import { TileCache } from "./tiles/TileCache";
@@ -88,8 +90,11 @@ export class Renderer {
 
   // Stamp-based rendering
   private stampManager: StampTextureManager | null = null;
+  private inkStampManager: InkStampTextureManager | null = null;
   /** Number of stamps already drawn on the active canvas (for incremental draw) */
   private activeStampCount: number = 0;
+  /** Current ink preset for fountain pen (tracked for active stroke rendering) */
+  private currentInkPreset: string = "standard";
 
   // Tile-based rendering (when enabled, replaces overscan static canvas)
   private tiledLayer: TiledStaticLayer | null = null;
@@ -806,6 +811,26 @@ export class Renderer {
   }
 
   /**
+   * Initialize the ink stamp texture manager for fountain pen stamp rendering.
+   */
+  initInkStamps(): void {
+    this.inkStampManager = new InkStampTextureManager();
+    // Pre-generate the standard preset cache
+    this.inkStampManager.getCache("standard");
+    if (this.tiledLayer) {
+      this.tiledLayer.tileRenderer.setInkStampManager(this.inkStampManager);
+      this.tiledLayer.initWorkerInkStamps();
+    }
+  }
+
+  /**
+   * Set the current ink preset (called from PaperView on pen settings change).
+   */
+  setCurrentInkPreset(presetId: string): void {
+    this.currentInkPreset = presetId;
+  }
+
+  /**
    * Set a per-pen-type grain strength override from user settings.
    */
   setGrainStrength(penType: PenType, strength: number): void {
@@ -833,6 +858,8 @@ export class Renderer {
     this.grainOffscreenCtx = null;
     this.stampManager?.clear();
     this.stampManager = null;
+    this.inkStampManager?.clear();
+    this.inkStampManager = null;
     this.activeStampCount = 0;
     this.backgroundCanvas.remove();
     this.staticCanvas.remove();
@@ -936,6 +963,10 @@ export class Renderer {
       this.tiledLayer.tileRenderer.setStampManager(this.stampManager);
       this.tiledLayer.initWorkerStamps();
     }
+    if (this.inkStampManager) {
+      this.tiledLayer.tileRenderer.setInkStampManager(this.inkStampManager);
+      this.tiledLayer.initWorkerInkStamps();
+    }
   }
 
   disableTiling(): void {
@@ -964,7 +995,15 @@ export class Renderer {
 
   private getStampRenderContext(): StampRenderContext | null {
     if (!this.stampManager) return null;
-    return { getCache: (gv) => this.stampManager!.getCache(gv) };
+    return {
+      getCache: (gv) => this.stampManager!.getCache(gv),
+      getInkCache: (presetId) => {
+        if (!this.inkStampManager) {
+          this.initInkStamps();
+        }
+        return this.inkStampManager!.getCache(presetId);
+      },
+    };
   }
 
   private renderStrokeToContext(
@@ -1172,6 +1211,12 @@ class TiledStaticLayer {
   initWorkerStamps(): void {
     if (this.useMainThreadFallback) return;
     this.workerScheduler.initStamps();
+  }
+
+  /** Signal workers to enable ink stamp rendering. */
+  initWorkerInkStamps(): void {
+    if (this.useMainThreadFallback) return;
+    this.workerScheduler.initInkStamps();
   }
 
   /** Update the rendering pipeline for the tile renderer and workers. */

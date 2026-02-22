@@ -12,6 +12,10 @@ import type { LodLevel } from "../stroke/StrokeSimplifier";
 import { detectInkPools, renderInkPools } from "../stroke/InkPooling";
 import type { StampCache } from "../stamp/StampCache";
 import { computeAllStamps, drawStamps } from "../stamp/StampRenderer";
+import { computeAllInkStamps, drawInkShadingStamps } from "../stamp/InkStampRenderer";
+import { getInkPreset } from "../stamp/InkPresets";
+import type { InkPresetConfig } from "../stamp/InkPresets";
+import type { PenConfig } from "../stroke/PenConfigs";
 import { DEFAULT_GRAIN_VALUE, grainToTextureStrength } from "../stamp/GrainMapping";
 
 /**
@@ -42,6 +46,7 @@ export interface GrainRenderContext {
  */
 export interface StampRenderContext {
   getCache(grainValue: number): StampCache;
+  getInkCache(presetId?: string): StampCache;
 }
 
 type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -87,6 +92,42 @@ export function renderStrokeToContext(
 ): void {
   const style = resolveStyle(stroke, styles);
   const penConfig = getPenConfig(style.pen);
+
+  // Ink-shaded fountain pen rendering at LOD 0:
+  // Render the solid italic outline fill, then apply velocity-based shading
+  // via destination-out stamp compositing on an offscreen canvas.
+  if (stampCtx && grainCtx.pipeline === "stamps" && penConfig.inkStamp && lod === 0) {
+    // Generate outline path (same as basic rendering)
+    const cacheKey = lodCacheKey(stroke.id, lod);
+    let path = pathCache.get(cacheKey);
+    let decodedPts: StrokePoint[] | undefined;
+    if (!path) {
+      decodedPts = decodePoints(stroke.pts);
+      path = generateStrokePath(decodedPts, style) ?? undefined;
+      if (path) pathCache.set(cacheKey, path);
+    }
+    if (!path) return;
+
+    const color = resolveColor(style.color, useDarkColors);
+    const presetConfig = getInkPreset(style.inkPreset);
+
+    // If no shading, just fill directly
+    if (presetConfig.shading <= 0) {
+      ctx.fillStyle = color;
+      ctx.globalAlpha = style.opacity;
+      ctx.fill(path);
+      ctx.globalAlpha = 1;
+      return;
+    }
+
+    const points = decodedPts ?? decodePoints(stroke.pts);
+
+    renderInkShadedStroke(
+      ctx, path, color, style, penConfig, points, presetConfig,
+      stampCtx, grainCtx, stroke.bbox,
+    );
+    return;
+  }
 
   // Stamp-based rendering for pencil at LOD 0
   if (stampCtx && grainCtx.pipeline === "stamps" && penConfig.stamp && lod === 0) {
@@ -263,6 +304,77 @@ export function computeScreenBBox(
   if (sw <= 0 || sh <= 0) return null;
 
   return { sx, sy, sw, sh };
+}
+
+/**
+ * Render an ink-shaded fountain pen stroke:
+ * 1. Fill the italic outline path on an offscreen canvas (solid base)
+ * 2. Apply velocity-based shading via destination-out stamp compositing
+ *    (fast areas get lightened, slow areas stay dark)
+ * 3. Composite result back to the main canvas
+ *
+ * The stroke SHAPE comes from the italic outline generator (proven, smooth).
+ * The stamps only MODULATE the fill — they don't define the shape.
+ */
+function renderInkShadedStroke(
+  targetCtx: Ctx2D,
+  path: Path2D,
+  color: string,
+  style: PenStyle,
+  penConfig: PenConfig,
+  points: readonly StrokePoint[],
+  presetConfig: InkPresetConfig,
+  stampCtx: StampRenderContext,
+  grainCtx: GrainRenderContext,
+  bbox: [number, number, number, number],
+): void {
+  const m = targetCtx.getTransform();
+  const region = computeScreenBBox(bbox, m, grainCtx.canvasWidth, grainCtx.canvasHeight);
+  if (!region) return;
+
+  const offscreen = grainCtx.getOffscreen(region.sw, region.sh);
+  if (!offscreen) {
+    // Fallback: just fill without shading
+    targetCtx.fillStyle = color;
+    targetCtx.globalAlpha = style.opacity;
+    targetCtx.fill(path);
+    targetCtx.globalAlpha = 1;
+    return;
+  }
+
+  const offCtx = offscreen.ctx;
+  offCtx.setTransform(1, 0, 0, 1, 0, 0);
+  offCtx.clearRect(0, 0, region.sw, region.sh);
+  offCtx.setTransform(m.a, m.b, m.c, m.d, m.e - region.sx, m.f - region.sy);
+
+  // 1. Solid fill on offscreen (the italic outline path defines the shape)
+  offCtx.fillStyle = color;
+  offCtx.globalAlpha = style.opacity;
+  offCtx.fill(path);
+  offCtx.globalAlpha = 1;
+
+  // 2. Apply velocity-based shading via destination-out stamps.
+  //    Stamps erase ink in proportion to velocity: fast = more erasure = lighter.
+  //    The filled path acts as a mask — erasure only affects filled pixels.
+  //    Natural edge darkening emerges because fewer stamps overlap at stroke edges.
+  offCtx.globalCompositeOperation = "destination-out";
+
+  const stamps = computeAllInkStamps(points, style, penConfig, penConfig.inkStamp!, presetConfig);
+  const inkCache = stampCtx.getInkCache(style.inkPreset);
+  const stampTexture = inkCache.getColored(color); // color irrelevant for dest-out
+  drawInkShadingStamps(offCtx, stamps, stampTexture, offCtx.getTransform());
+
+  offCtx.globalCompositeOperation = "source-over";
+
+  // 3. Composite the shaded stroke back to the main canvas
+  targetCtx.save();
+  targetCtx.setTransform(1, 0, 0, 1, 0, 0);
+  targetCtx.drawImage(
+    offscreen.canvas,
+    0, 0, region.sw, region.sh,
+    region.sx, region.sy, region.sw, region.sh,
+  );
+  targetCtx.restore();
 }
 
 /**

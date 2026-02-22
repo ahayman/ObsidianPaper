@@ -22,6 +22,7 @@ import type {
   WorkerInitMessage,
   WorkerRenderTileMessage,
   WorkerStampInitMessage,
+  WorkerInkStampInitMessage,
 } from "./worker/TileWorkerProtocol";
 
 // Virtual module injected by esbuild plugin at build time
@@ -157,6 +158,22 @@ export class WorkerTileScheduler {
 
     const msg: WorkerStampInitMessage = {
       type: "stamp-init",
+      enabled: true,
+    };
+
+    for (const slot of this.pool) {
+      slot.worker.postMessage(msg);
+    }
+  }
+
+  /**
+   * Signal workers to enable ink stamp-based rendering.
+   */
+  initInkStamps(): void {
+    if (this.fallbackToMainThread) return;
+
+    const msg: WorkerInkStampInitMessage = {
+      type: "ink-stamp-init",
       enabled: true,
     };
 

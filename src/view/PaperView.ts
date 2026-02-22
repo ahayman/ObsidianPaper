@@ -74,6 +74,7 @@ export class PaperView extends TextFileView {
   private currentNibThickness = 0.25;
   private currentNibPressure = 0.5;
   private currentGrain = DEFAULT_GRAIN_VALUE;
+  private currentInkPreset = "standard";
   private useBarrelRotation = true;
 
   /**
@@ -119,6 +120,7 @@ export class PaperView extends TextFileView {
     this.renderer.isDarkMode = this.themeDetector.isDarkMode;
     this.renderer.initGrain();
     this.renderer.initStamps();
+    this.renderer.initInkStamps();
     this.renderer.setGrainStrength("pencil", this.settings.pencilGrainStrength);
 
     // Enable tile-based rendering for better zoom/pan performance
@@ -151,6 +153,7 @@ export class PaperView extends TextFileView {
         nibThickness: this.currentNibThickness,
         nibPressure: this.currentNibPressure,
         grain: this.currentGrain,
+        inkPreset: this.currentInkPreset,
       },
       this.settings.penPresets,
       this.settings.toolbarPosition,
@@ -271,6 +274,7 @@ export class PaperView extends TextFileView {
         this.currentWidth = preset.width;
         this.currentSmoothing = preset.smoothing;
         this.currentGrain = preset.grain ?? DEFAULT_GRAIN_VALUE;
+        this.currentInkPreset = preset.inkPreset ?? "standard";
         if (preset.nibAngle !== undefined) this.currentNibAngle = preset.nibAngle;
         if (preset.nibThickness !== undefined) this.currentNibThickness = preset.nibThickness;
         if (preset.nibPressure !== undefined) this.currentNibPressure = preset.nibPressure;
@@ -294,6 +298,7 @@ export class PaperView extends TextFileView {
       nibThickness: this.currentNibThickness,
       nibPressure: this.currentNibPressure,
       grain: this.currentGrain,
+      inkPreset: this.currentInkPreset,
       activePresetId: settings.activePresetId,
     });
     this.toolbar?.updatePresets(settings.penPresets, settings.activePresetId);
@@ -987,6 +992,10 @@ export class PaperView extends TextFileView {
     if (penConfig.stamp) {
       style.grain = this.currentGrain;
     }
+    // Store ink preset for fountain pen
+    if (penConfig.inkStamp) {
+      style.inkPreset = this.currentInkPreset;
+    }
     return style;
   }
 
@@ -1010,6 +1019,8 @@ export class PaperView extends TextFileView {
         this.currentNibThickness = state.nibThickness;
         this.currentNibPressure = state.nibPressure;
         this.currentGrain = state.grain;
+        this.currentInkPreset = state.inkPreset;
+        this.renderer?.setCurrentInkPreset(state.inkPreset);
       },
       onUndo: () => {
         this.undo();
@@ -1331,6 +1342,7 @@ function computeStyleOverrides(
   if (current.nibThickness !== base.nibThickness) { overrides.nibThickness = current.nibThickness; has = true; }
   if (current.nibPressure !== base.nibPressure) { overrides.nibPressure = current.nibPressure; has = true; }
   if (current.grain !== base.grain) { overrides.grain = current.grain; has = true; }
+  if (current.inkPreset !== base.inkPreset) { overrides.inkPreset = current.inkPreset; has = true; }
 
   return has ? overrides : undefined;
 }

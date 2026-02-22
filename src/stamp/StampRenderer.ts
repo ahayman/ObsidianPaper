@@ -200,14 +200,14 @@ export function drawStamps(
  * High-quality integer hash (murmurhash3 finalizer).
  * Produces well-distributed values with no visible patterns.
  */
-function hash32(v: number): number {
+export function hash32(v: number): number {
   v = Math.imul(v ^ (v >>> 16), 0x85ebca6b) >>> 0;
   v = Math.imul(v ^ (v >>> 13), 0xc2b2ae35) >>> 0;
   return (v ^ (v >>> 16)) >>> 0;
 }
 
 /** Hash to float in [0, 1). Uses two different seeds for independent channels. */
-function hashFloat(index: number, seed: number): number {
+export function hashFloat(index: number, seed: number): number {
   return hash32(index ^ seed) / 4294967296;
 }
 
@@ -283,7 +283,7 @@ function emitScatter(
 /**
  * Fast deterministic 2D hash for grain modulation.
  */
-function spatialHash2D(x: number, y: number): number {
+export function spatialHash2D(x: number, y: number): number {
   let ix = Math.floor(x) | 0;
   let iy = Math.floor(y) | 0;
   ix = Math.imul(ix, 0x85ebca6b) >>> 0;
@@ -295,7 +295,7 @@ function spatialHash2D(x: number, y: number): number {
 /**
  * Smooth 2D value noise using bilinear interpolation of hashed grid values.
  */
-function smoothNoise2D(x: number, y: number, scale: number): number {
+export function smoothNoise2D(x: number, y: number, scale: number): number {
   const sx = x / scale;
   const sy = y / scale;
   const ix = Math.floor(sx);
@@ -350,7 +350,7 @@ function computeDiameter(
   return style.width * widthMul;
 }
 
-function interpolatePoint(
+export function interpolatePoint(
   p0: StrokePoint,
   p1: StrokePoint,
   t: number,

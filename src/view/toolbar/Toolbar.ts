@@ -175,6 +175,7 @@ export class Toolbar {
     this.state.width = preset.width;
     this.state.smoothing = preset.smoothing;
     this.state.grain = preset.grain ?? DEFAULT_GRAIN_VALUE;
+    this.state.inkPreset = preset.inkPreset ?? "standard";
     if (preset.nibAngle !== undefined) this.state.nibAngle = preset.nibAngle;
     if (preset.nibThickness !== undefined) this.state.nibThickness = preset.nibThickness;
     if (preset.nibPressure !== undefined) this.state.nibPressure = preset.nibPressure;

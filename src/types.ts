@@ -24,6 +24,7 @@ export interface PenStyle {
   nibThickness?: number; // Minor/major axis ratio (0-1, e.g. 0.25 = 4:1 aspect)
   nibPressure?: number; // Pressure sensitivity 0-1 (0 = none, 1 = max)
   grain?: number; // Grain slider value 0-1 (pencil only). Controls stamp texture character.
+  inkPreset?: string; // Ink preset ID (fountain pen only). Controls ink shading/texture.
 }
 
 // --- Stroke Data ---
@@ -208,6 +209,7 @@ export interface SerializedPenStyle {
   nibThickness?: number;
   nibPressure?: number;
   grain?: number;
+  inkPreset?: string;
 }
 
 export interface SerializedStroke {

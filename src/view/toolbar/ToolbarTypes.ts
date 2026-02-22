@@ -11,6 +11,7 @@ export interface PenPreset {
   nibThickness?: number;   // 0-1, fountain only
   nibPressure?: number;    // 0-1, fountain only
   grain?: number;          // 0-1, pencil only (grain slider value)
+  inkPreset?: string;      // Ink preset ID, fountain only
 }
 
 export type ToolbarPosition = "top" | "bottom" | "left" | "right";
@@ -27,6 +28,7 @@ export interface ToolbarState {
   nibThickness: number;
   nibPressure: number;
   grain: number;
+  inkPreset: string;
 }
 
 export interface ToolbarCallbacks {

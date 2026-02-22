@@ -103,6 +103,10 @@ export class PresetManager {
     if (penConfig.stamp) {
       preset.grain = state.grain;
     }
+    // Include ink preset for fountain pen
+    if (penConfig.inkStamp) {
+      preset.inkPreset = state.inkPreset;
+    }
     if (state.nibAngle !== undefined) preset.nibAngle = state.nibAngle;
     if (state.nibThickness !== undefined) preset.nibThickness = state.nibThickness;
     if (state.nibPressure !== undefined) preset.nibPressure = state.nibPressure;
@@ -123,7 +127,8 @@ export class PresetManager {
         (p.nibAngle ?? state.nibAngle) === state.nibAngle &&
         (p.nibThickness ?? state.nibThickness) === state.nibThickness &&
         (p.nibPressure ?? state.nibPressure) === state.nibPressure &&
-        (p.grain ?? DEFAULT_GRAIN_VALUE) === state.grain
+        (p.grain ?? DEFAULT_GRAIN_VALUE) === state.grain &&
+        (p.inkPreset ?? "standard") === state.inkPreset
       ) {
         return p.id;
       }

@@ -31,11 +31,16 @@ import {
 import { selectLodLevel, simplifyPoints, lodCacheKey } from "../../../stroke/StrokeSimplifier";
 import { resolveColor } from "../../../color/ColorPalette";
 import { getPenConfig } from "../../../stroke/PenConfigs";
+import type { PenConfig } from "../../../stroke/PenConfigs";
+import type { InkPresetConfig } from "../../../stamp/InkPresets";
 import { resolvePageBackground } from "../../../color/ColorUtils";
 import { detectInkPools } from "../../../stroke/InkPooling";
 import { zoomBandBaseZoom } from "../TileTypes";
 import { generateStampTexture } from "../../../stamp/StampTexture";
 import { computeAllStamps, drawStamps } from "../../../stamp/StampRenderer";
+import { computeAllInkStamps, drawInkShadingStamps } from "../../../stamp/InkStampRenderer";
+import { getInkPreset } from "../../../stamp/InkPresets";
+import { generateInkStampTexture } from "../../../stamp/InkStampTexture";
 import { grainSliderToConfig, grainConfigKey, DEFAULT_GRAIN_VALUE, grainToTextureStrength } from "../../../stamp/GrainMapping";
 
 // ─── Worker State ────────────────────────────────────────────
@@ -61,6 +66,11 @@ let grainOffscreenCtx: OffscreenCanvasRenderingContext2D | null = null;
 let stampEnabled = false;
 let stampTextureCache = new Map<string, OffscreenCanvas>(); // configKey → alpha template
 let stampColorCaches = new Map<string, Map<string, OffscreenCanvas>>(); // configKey → (color → colored)
+
+// Ink stamp texture state (keyed by preset ID)
+let inkStampEnabled = false;
+let inkStampTextureCache = new Map<string, OffscreenCanvas>(); // presetId → alpha template
+let inkStampColorCaches = new Map<string, Map<string, OffscreenCanvas>>(); // presetId → (color → colored)
 
 // ─── Grain Helpers ───────────────────────────────────────────
 
@@ -157,6 +167,48 @@ function getColoredStampForGrain(grainValue: number, color: string): OffscreenCa
 
   // Generate alpha template and color it
   const alpha = getStampAlpha(configKey, grainValue);
+  const size = alpha.width;
+  const canvas = new OffscreenCanvas(size, size);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+
+  ctx.drawImage(alpha, 0, 0);
+  ctx.globalCompositeOperation = "source-in";
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, size, size);
+
+  colorCache.set(color, canvas);
+  return canvas;
+}
+
+// ─── Ink Stamp Helpers ─────────────────────────────────────────
+
+function getInkStampAlpha(presetId: string): OffscreenCanvas {
+  const cached = inkStampTextureCache.get(presetId);
+  if (cached) return cached;
+
+  const preset = getInkPreset(presetId);
+  const canvas = generateInkStampTexture({
+    edgeDarkening: preset.edgeDarkening,
+    grainInfluence: preset.grainInfluence,
+  });
+  inkStampTextureCache.set(presetId, canvas);
+  return canvas;
+}
+
+function getColoredInkStamp(presetId: string, color: string): OffscreenCanvas | null {
+  if (!inkStampEnabled) return null;
+
+  let colorCache = inkStampColorCaches.get(presetId);
+  if (!colorCache) {
+    colorCache = new Map();
+    inkStampColorCaches.set(presetId, colorCache);
+  }
+
+  const cached = colorCache.get(color);
+  if (cached) return cached;
+
+  const alpha = getInkStampAlpha(presetId);
   const size = alpha.width;
   const canvas = new OffscreenCanvas(size, size);
   const ctx = canvas.getContext("2d");
@@ -463,6 +515,71 @@ function renderStrokeWithGrain(
   targetCtx.restore();
 }
 
+/**
+ * Render an ink-shaded fountain pen stroke in the worker:
+ * 1. Fill the italic outline path on an offscreen canvas (solid base)
+ * 2. Apply velocity-based shading via destination-out stamp compositing
+ * 3. Composite result back to the main canvas
+ */
+function renderInkShadedStrokeWorker(
+  targetCtx: OffscreenCanvasRenderingContext2D,
+  path: Path2D,
+  color: string,
+  style: PenStyle,
+  penConfig: PenConfig,
+  points: readonly StrokePoint[],
+  presetConfig: InkPresetConfig,
+  bbox: [number, number, number, number],
+  canvasWidth: number,
+  canvasHeight: number,
+): void {
+  const m = targetCtx.getTransform();
+  const region = computeScreenBBox(bbox, m, canvasWidth, canvasHeight);
+  if (!region) return;
+
+  const offCtx = ensureGrainOffscreen(region.sw, region.sh);
+  if (!offCtx || !grainOffscreen) {
+    // Fallback: just fill without shading
+    targetCtx.fillStyle = color;
+    targetCtx.globalAlpha = style.opacity;
+    targetCtx.fill(path);
+    targetCtx.globalAlpha = 1;
+    return;
+  }
+
+  offCtx.setTransform(1, 0, 0, 1, 0, 0);
+  offCtx.clearRect(0, 0, region.sw, region.sh);
+  offCtx.setTransform(m.a, m.b, m.c, m.d, m.e - region.sx, m.f - region.sy);
+
+  // 1. Solid fill on offscreen (the italic outline path defines the shape)
+  offCtx.fillStyle = color;
+  offCtx.globalAlpha = style.opacity;
+  offCtx.fill(path);
+  offCtx.globalAlpha = 1;
+
+  // 2. Apply velocity-based shading via destination-out stamps
+  offCtx.globalCompositeOperation = "destination-out";
+
+  const stamps = computeAllInkStamps(points, style, penConfig, penConfig.inkStamp!, presetConfig);
+  const presetId = style.inkPreset ?? "standard";
+  const stampTexture = getColoredInkStamp(presetId, color); // color irrelevant for dest-out
+  if (stampTexture) {
+    drawInkShadingStamps(offCtx, stamps, stampTexture, offCtx.getTransform());
+  }
+
+  offCtx.globalCompositeOperation = "source-over";
+
+  // 3. Composite the shaded stroke back to the main canvas
+  targetCtx.save();
+  targetCtx.setTransform(1, 0, 0, 1, 0, 0);
+  targetCtx.drawImage(
+    grainOffscreen,
+    0, 0, region.sw, region.sh,
+    region.sx, region.sy, region.sw, region.sh,
+  );
+  targetCtx.restore();
+}
+
 function renderStroke(
   ctx: OffscreenCanvasRenderingContext2D,
   stroke: Stroke,
@@ -473,6 +590,42 @@ function renderStroke(
 ): void {
   const style = resolveStyle(stroke, styles);
   const penConfig = getPenConfig(style.pen);
+
+  // Ink-shaded fountain pen rendering at LOD 0:
+  // Fill the italic outline path, then apply velocity-based shading
+  // via destination-out stamp compositing on an offscreen canvas.
+  if (inkStampEnabled && renderPipeline === "stamps" && penConfig.inkStamp && lod === 0) {
+    // Generate outline path (same as basic rendering)
+    const cacheKey = lodCacheKey(stroke.id, lod);
+    let path = pathCache.get(cacheKey);
+    let decodedPts: StrokePoint[] | undefined;
+    if (!path) {
+      decodedPts = decodePoints(stroke.pts);
+      path = generateStrokePath(decodedPts, style) ?? undefined;
+      if (path) pathCache.set(cacheKey, path);
+    }
+    if (!path) return;
+
+    const color = resolveColor(style.color, useDarkColors);
+    const presetConfig = getInkPreset(style.inkPreset);
+
+    // If no shading, just fill directly
+    if (presetConfig.shading <= 0) {
+      ctx.fillStyle = color;
+      ctx.globalAlpha = style.opacity;
+      ctx.fill(path);
+      ctx.globalAlpha = 1;
+      return;
+    }
+
+    const points = decodedPts ?? decodePoints(stroke.pts);
+
+    renderInkShadedStrokeWorker(
+      ctx, path, color, style, penConfig, points, presetConfig,
+      stroke.bbox, canvasWidth, canvasHeight,
+    );
+    return;
+  }
 
   // Stamp-based rendering for pencil at LOD 0
   if (stampEnabled && renderPipeline === "stamps" && penConfig.stamp && lod === 0) {
@@ -700,6 +853,14 @@ workerSelf.onmessage = (event: MessageEvent<MainToWorkerMessage>) => {
       }
       break;
 
+    case "ink-stamp-init":
+      inkStampEnabled = msg.enabled;
+      if (!inkStampEnabled) {
+        inkStampTextureCache.clear();
+        inkStampColorCaches.clear();
+      }
+      break;
+
     case "cancel":
       // Currently tiles render synchronously in the worker,
       // so cancel is a no-op. Could be extended for async rendering.
@@ -714,6 +875,9 @@ workerSelf.onmessage = (event: MessageEvent<MainToWorkerMessage>) => {
       stampEnabled = false;
       stampTextureCache.clear();
       stampColorCaches.clear();
+      inkStampEnabled = false;
+      inkStampTextureCache.clear();
+      inkStampColorCaches.clear();
       workerSelf.close();
       break;
   }
