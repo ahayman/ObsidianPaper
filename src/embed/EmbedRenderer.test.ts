@@ -9,6 +9,7 @@ if (typeof globalThis.Path2D === "undefined") {
   (globalThis as any).Path2D = class Path2D {
     moveTo() {}
     lineTo() {}
+    quadraticCurveTo() {}
     closePath() {}
   };
 }

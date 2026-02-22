@@ -612,7 +612,7 @@ export class Renderer {
     const penConfig = getPenConfig(style.pen);
 
     // Ink-shaded active stroke for fountain pen: full redraw each frame
-    // with destination-out modulation on an offscreen canvas.
+    // with clip + source-over deposit on an offscreen canvas.
     if (this.pipeline === "stamps" && penConfig.inkStamp && points.length > 1) {
       this.pendingActiveRender = () => {
         if (!penConfig.inkStamp) return;
@@ -630,7 +630,7 @@ export class Renderer {
           this.activeCtx.clip();
         }
 
-        const path = generateStrokePath(points, style);
+        const path = generateStrokePath(points, style, false);
         if (path) {
           const dark = useDarkColors ?? this.isDarkMode;
           const color = resolveColor(style.color, dark);
@@ -654,24 +654,23 @@ export class Renderer {
           if (region && presetConfig.shading > 0) {
             const offCtx = this.ensureGrainOffscreen(region.sw, region.sh);
             if (offCtx && this.grainOffscreen) {
-              // 1. Solid fill on offscreen
               offCtx.setTransform(1, 0, 0, 1, 0, 0);
               offCtx.clearRect(0, 0, region.sw, region.sh);
               offCtx.setTransform(
                 transform.a, transform.b, transform.c, transform.d,
                 transform.e - region.sx, transform.f - region.sy,
               );
-              offCtx.fillStyle = color;
-              offCtx.globalAlpha = style.opacity;
-              offCtx.fill(path);
-              offCtx.globalAlpha = 1;
 
-              // 2. Destination-out stamps for velocity shading
-              offCtx.globalCompositeOperation = "destination-out";
+              // 1. Deposit colored stamps via source-over on offscreen
               const stamps = computeAllInkStamps(qPoints, style, penConfig, penConfig.inkStamp, presetConfig);
               const inkCache = this.inkStampManager!.getCache(style.inkPreset ?? this.currentInkPreset);
               const stampTexture = inkCache.getColored(color);
-              drawInkShadingStamps(offCtx, stamps, stampTexture, offCtx.getTransform());
+              drawInkShadingStamps(offCtx, stamps, stampTexture, offCtx.getTransform(), style.opacity);
+
+              // 2. Mask to the stroke outline path
+              offCtx.globalCompositeOperation = "destination-in";
+              offCtx.globalAlpha = 1;
+              offCtx.fill(path);
               offCtx.globalCompositeOperation = "source-over";
 
               // 3. Composite back
@@ -772,7 +771,7 @@ export class Renderer {
         this.activeCtx.clip();
       }
 
-      const path = generateStrokePath(points, style);
+      const path = generateStrokePath(points, style, false);
       if (path) {
         const dark = useDarkColors ?? this.isDarkMode;
         const color = resolveColor(style.color, dark);
@@ -845,7 +844,7 @@ export class Renderer {
       this.predictionCtx.clip();
     }
 
-    const path = generateStrokePath(combined, style);
+    const path = generateStrokePath(combined, style, false);
     if (path) {
       const dark = useDarkColors ?? this.isDarkMode;
       const color = resolveColor(style.color, dark);

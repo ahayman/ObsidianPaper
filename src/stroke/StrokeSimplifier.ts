@@ -66,7 +66,7 @@ export function simplifyPoints(
  * Ramer-Douglas-Peucker polyline simplification.
  * Iterative implementation to avoid stack overflow on large stroke arrays.
  */
-function rdpSimplify(
+export function rdpSimplify(
   points: readonly StrokePoint[],
   epsilon: number
 ): StrokePoint[] {

@@ -48,9 +48,10 @@ export function generateInkStampImageData(
 
   const center = size / 2;
   const radius = size / 2;
-  // Anti-alias band: ~2 pixels at the edge transition from solid to transparent
-  const aaWidth = 2.0;
-  const solidRadius = radius - aaWidth;
+  // Gaussian sigma as fraction of radius — controls how soft the stamp edges are.
+  // 0.45 gives: center=1.0, mid(r=0.5)≈0.72, edge(r=0.8)≈0.30, boundary(r=1.0)≈0.08
+  const SIGMA = 0.45;
+  const twoSigmaSq = 2 * SIGMA * SIGMA;
   const TWO_PI = Math.PI * 2;
 
   for (let y = 0; y < size; y++) {
@@ -68,13 +69,10 @@ export function generateInkStampImageData(
         continue;
       }
 
-      // Solid circle with thin AA edge — no donut, no edge darkening
-      let alpha: number;
-      if (dist <= solidRadius) {
-        alpha = 1.0;
-      } else {
-        alpha = 1.0 - smoothstep(solidRadius, radius, dist);
-      }
+      // Gaussian falloff: smooth fade from center (1.0) to edge (~0.08).
+      // Overlapping stamps merge gradually instead of stacking hard edges.
+      const r = dist / radius;
+      let alpha = Math.exp(-r * r / twoSigmaSq);
 
       // Grain modulation via 4D simplex noise (torus-mapped for seamless tiling)
       if (grainInfluence > 0) {

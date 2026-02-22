@@ -1,15 +1,16 @@
 /**
  * Ink stamp computation for fountain pen velocity-based shading.
  *
- * Stamps are used as a MODULATION LAYER on top of the solid italic outline fill,
- * not as the primary stroke renderer. The solid fill (from ItalicOutlineGenerator)
- * defines the stroke shape. Stamps are applied with destination-out compositing to
- * selectively lighten the fill based on velocity:
- *   - Slow strokes → low stamp opacity → minimal erasure → dark ink
- *   - Fast strokes → higher stamp opacity → more erasure → lighter ink
+ * Stamps DEPOSIT color within a clip mask defined by the italic outline path.
+ * Each stamp's opacity controls how much ink is deposited at that position:
+ *   - Slow strokes → high deposit → dark ink (stamps at near-full baseOpacity)
+ *   - Fast strokes → low deposit → lighter ink (speedFactor reduces opacity)
  *
- * Natural edge darkening emerges because fewer stamps overlap at stroke edges
- * than at the centerline.
+ * With ~7 stamps overlapping at the centerline and ~2 at edges, the center
+ * accumulates more ink (darker) while edges stay lighter — physically accurate
+ * for a broad nib pen where ink pools at the center of nib contact.
+ *
+ * Self-overlapping strokes correctly build up saturation instead of cancelling.
  */
 
 import type { StrokePoint, PenStyle } from "../types";
@@ -18,15 +19,18 @@ import type { InkPresetConfig } from "./InkPresets";
 import type { InkStampConfig } from "../stroke/PenConfigs";
 import { hashFloat, interpolatePoint } from "./StampRenderer";
 
-// Erasure tuning. With stamp spacing 0.15 and size fraction 2.0, ~7 stamps
-// overlap at the centerline and ~2 at edges. The differential creates edge darkening.
+// Deposit tuning. With stamp spacing 0.15 and size fraction 2.0, ~7 stamps
+// overlap at the centerline and ~2 at edges.
 //
-// BASE_MIN: always-present erasure for texture/edge-darkening even at slow speed.
-//   7 stamps @ 0.08 → center erases ~44%, edges(2) ~15% → 29% differential
-// SPEED_RANGE: additional erasure at max velocity for shading.
-//   7 stamps @ 0.30 → center erases ~92%, edges(2) ~51% → dramatic lightening
-const BASE_MIN_ERASURE = 0.08;
-const SPEED_ERASURE = 0.30;
+// Each stamp deposits color at: baseOpacity - speedFactor * SPEED_REDUCTION * shading.
+// `shading` scales only the speed reduction (velocity sensitivity), not overall darkness.
+// At slow speed (speedFactor≈0), deposit ≈ baseOpacity (regardless of shading).
+// At max speed (speedFactor=1), deposit ≈ baseOpacity - SPEED_REDUCTION * shading.
+//
+// Standard   (0.22, shading 0.6):  slow → 7×0.22 ≈ 80%, fast → 7×0.12 ≈ 57%
+// Shading    (0.18, shading 1.0):  slow → 7×0.18 ≈ 74%, fast → 7×0.01 ≈  7%
+// Flat Black (0.35, shading 0.2):  slow → 7×0.35 ≈ 95%, fast → 7×0.32 ≈ 90%
+const SPEED_REDUCTION = 0.17;
 
 /**
  * Parameters for a single ink shading stamp.
@@ -36,7 +40,7 @@ export interface InkStampParams {
   y: number;
   /** Stamp diameter in world units */
   size: number;
-  /** Erasure amount 0-1 (used as globalAlpha with destination-out) */
+  /** Deposit amount 0-1 (used as globalAlpha with source-over inside clip) */
   opacity: number;
   /** Unused (stamps are circular) */
   rotation: number;
@@ -89,6 +93,15 @@ export function computeInkStamps(
     return { stamps, newRemainder: 0, newStampCount: stampCount };
   }
 
+  // Minimum stamp size: half the nominal stamp diameter.
+  // At slow speed, per-segment projWidth fluctuates rapidly (hand tremor causes
+  // direction changes → nib projection alternates between wide and thin).
+  // Without a floor, stamps cluster at thin segments (small step fits in short segment)
+  // and skip wide segments (large step exceeds short segment). The destination-in mask
+  // then reveals these gaps as thin/jagged strokes. Clamping the minimum ensures
+  // stamps always cover the stroke width and spacing stays stable.
+  const minStampSize = style.width * inkStampConfig.stampSizeFraction * 0.5;
+
   const clampedFrom = Math.max(0, fromIndex);
   const clampedTo = Math.min(points.length - 1, toIndex);
 
@@ -113,14 +126,16 @@ export function computeInkStamps(
     const projWidth = computeProjectedWidth(
       p0, nibAngle, nibThickness, nibPressure, style, minW, maxW, pCurve, sx, sy,
     );
-    const stampSize = projWidth * inkStampConfig.stampSizeFraction;
+    const stampSize = Math.max(minStampSize, projWidth * inkStampConfig.stampSizeFraction);
 
     // Spacing for modulation stamps (fraction of stamp diameter)
     const effectiveSpacing = inkStampConfig.spacing * stampSize;
     const step = Math.max(stampSize * 0.05, effectiveSpacing);
 
-    // Erasure amount: base level for texture + velocity-dependent for shading
-    const erasure = (BASE_MIN_ERASURE + speedFactor * SPEED_ERASURE) * presetConfig.shading;
+    // Deposit amount: baseOpacity at slow speed, reduced by velocity.
+    // shading scales only the speed reduction — it controls velocity sensitivity,
+    // not overall darkness. Flat Black (low shading) stays dark; Shading (high) varies widely.
+    const deposit = Math.max(0.01, presetConfig.baseOpacity - speedFactor * SPEED_REDUCTION * presetConfig.shading);
 
     let walked = -remainder;
 
@@ -137,11 +152,15 @@ export function computeInkStamps(
         jy += (hashFloat(stampCount, 0x517CC1B7) - 0.5) * 2 * presetConfig.feathering * stampSize;
       }
 
+      // Alpha dithering: ±10% random variation to break up uniform accumulation banding
+      const dither = 1.0 + (hashFloat(stampCount, 0x6A09E667) - 0.5) * 0.2;
+      const jitteredDeposit = Math.max(0.01, deposit * dither);
+
       stamps.push({
         x: jx,
         y: jy,
         size: stampSize,
-        opacity: erasure,
+        opacity: jitteredDeposit,
         rotation: 0,
         scaleX: 1.0,
         scaleY: 1.0,
@@ -173,14 +192,16 @@ export function computeAllInkStamps(
 }
 
 /**
- * Draw ink shading stamps with per-stamp alpha (for destination-out compositing).
- * Each stamp's opacity controls how much ink is erased at that position.
+ * Draw ink shading stamps with per-stamp alpha (source-over inside a clip mask).
+ * Each stamp's opacity controls how much ink is deposited at that position.
+ * @param strokeOpacity  Overall stroke opacity (style.opacity), multiplied into each stamp.
  */
 export function drawInkShadingStamps(
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
   stamps: readonly InkStampParams[],
   stampTexture: OffscreenCanvas,
   baseTransform: DOMMatrix,
+  strokeOpacity: number = 1.0,
 ): void {
   if (stamps.length === 0) return;
 
@@ -196,8 +217,8 @@ export function drawInkShadingStamps(
     const screenX = baseTransform.a * s.x + baseTransform.c * s.y + baseTransform.e;
     const screenY = baseTransform.b * s.x + baseTransform.d * s.y + baseTransform.f;
 
-    // Per-stamp alpha for velocity-dependent erasure
-    ctx.globalAlpha = s.opacity;
+    // Per-stamp alpha for velocity-dependent deposit
+    ctx.globalAlpha = s.opacity * strokeOpacity;
 
     ctx.setTransform(
       pixelR, 0,

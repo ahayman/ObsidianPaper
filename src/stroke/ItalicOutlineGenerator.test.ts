@@ -162,27 +162,31 @@ describe("ItalicOutlineGenerator", () => {
   describe("taper", () => {
     it("should taper width at start of stroke", () => {
       const config = makeConfig({ taperStart: 50, taperEnd: 0, widthSmoothing: 1.0 });
+      // Slight curve so RDP de-jitter preserves interior points
       const points = Array.from({ length: 10 }, (_, i) =>
-        makePoint(100 + i * 10, 100, 0.5)
+        makePoint(100 + i * 10, 100 + Math.sin(i * 0.3) * 5, 0.5)
       );
       const outline = generateItalicOutline(points, config);
+      const n = outline.length / 2;
 
       // The outline at the start should be narrower than the middle
-      const startWidth = getWidthAtIndex(outline, 0, points.length);
-      const midWidth = getWidthAtIndex(outline, Math.floor(points.length / 2), points.length);
+      const startWidth = getWidthAtIndex(outline, 0, n);
+      const midWidth = getWidthAtIndex(outline, Math.floor(n / 2), n);
 
       expect(startWidth).toBeLessThan(midWidth);
     });
 
     it("should taper width at end of stroke", () => {
       const config = makeConfig({ taperStart: 0, taperEnd: 50, widthSmoothing: 1.0 });
+      // Slight curve so RDP de-jitter preserves interior points
       const points = Array.from({ length: 10 }, (_, i) =>
-        makePoint(100 + i * 10, 100, 0.5)
+        makePoint(100 + i * 10, 100 + Math.sin(i * 0.3) * 5, 0.5)
       );
       const outline = generateItalicOutline(points, config);
+      const n = outline.length / 2;
 
-      const endWidth = getWidthAtIndex(outline, points.length - 1, points.length);
-      const midWidth = getWidthAtIndex(outline, Math.floor(points.length / 2), points.length);
+      const endWidth = getWidthAtIndex(outline, n - 1, n);
+      const midWidth = getWidthAtIndex(outline, Math.floor(n / 2), n);
 
       expect(endWidth).toBeLessThan(midWidth);
     });

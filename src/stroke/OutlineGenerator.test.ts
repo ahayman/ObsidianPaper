@@ -8,6 +8,9 @@ if (typeof globalThis.Path2D === "undefined") {
     lineTo(x: number, y: number): void {
       this.commands.push(`L${x},${y}`);
     }
+    quadraticCurveTo(cpx: number, cpy: number, x: number, y: number): void {
+      this.commands.push(`Q${cpx},${cpy},${x},${y}`);
+    }
     closePath(): void {
       this.commands.push("Z");
     }

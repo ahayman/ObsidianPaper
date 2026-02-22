@@ -517,8 +517,8 @@ function renderStrokeWithGrain(
 
 /**
  * Render an ink-shaded fountain pen stroke in the worker:
- * 1. Fill the italic outline path on an offscreen canvas (solid base)
- * 2. Apply velocity-based shading via destination-out stamp compositing
+ * 1. Draw colored stamps via source-over on an offscreen canvas
+ * 2. Mask to the italic outline path via destination-in compositing
  * 3. Composite result back to the main canvas
  */
 function renderInkShadedStrokeWorker(
@@ -556,22 +556,18 @@ function renderInkShadedStrokeWorker(
   offCtx.clearRect(0, 0, region.sw, region.sh);
   offCtx.setTransform(m.a, m.b, m.c, m.d, m.e - region.sx, m.f - region.sy);
 
-  // 1. Solid fill on offscreen (the italic outline path defines the shape)
-  offCtx.fillStyle = color;
-  offCtx.globalAlpha = style.opacity;
-  offCtx.fill(path);
-  offCtx.globalAlpha = 1;
-
-  // 2. Apply velocity-based shading via destination-out stamps
-  offCtx.globalCompositeOperation = "destination-out";
-
+  // 1. Deposit colored stamps via source-over (default compositing)
   const stamps = computeAllInkStamps(points, style, penConfig, penConfig.inkStamp!, presetConfig);
   const presetId = style.inkPreset ?? "standard";
-  const stampTexture = getColoredInkStamp(presetId, color); // color irrelevant for dest-out
+  const stampTexture = getColoredInkStamp(presetId, color);
   if (stampTexture) {
-    drawInkShadingStamps(offCtx, stamps, stampTexture, offCtx.getTransform());
+    drawInkShadingStamps(offCtx, stamps, stampTexture, offCtx.getTransform(), style.opacity);
   }
 
+  // 2. Mask to the stroke outline path: keep deposited stamp pixels only within the path.
+  offCtx.globalCompositeOperation = "destination-in";
+  offCtx.globalAlpha = 1;
+  offCtx.fill(path);
   offCtx.globalCompositeOperation = "source-over";
 
   // 3. Composite the shaded stroke back to the main canvas
@@ -597,8 +593,8 @@ function renderStroke(
   const penConfig = getPenConfig(style.pen);
 
   // Ink-shaded fountain pen rendering at LOD 0:
-  // Fill the italic outline path, then apply velocity-based shading
-  // via destination-out stamp compositing on an offscreen canvas.
+  // Clip to the italic outline path and deposit colored stamps via source-over
+  // on an offscreen canvas, then composite back.
   if (inkStampEnabled && renderPipeline === "stamps" && penConfig.inkStamp && lod === 0) {
     // Generate outline path (same as basic rendering)
     const cacheKey = lodCacheKey(stroke.id, lod);

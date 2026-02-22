@@ -1,4 +1,5 @@
 import type { StrokePoint } from "../types";
+import { rdpSimplify } from "./StrokeSimplifier";
 
 export interface ItalicNibConfig {
   nibWidth: number;        // Major axis (base stroke width)
@@ -19,7 +20,8 @@ export interface ItalicNibConfig {
  */
 export function generateItalicOutline(
   points: readonly StrokePoint[],
-  config: ItalicNibConfig
+  config: ItalicNibConfig,
+  dejitter: boolean = true,
 ): number[][] {
   if (points.length === 0) return [];
 
@@ -28,12 +30,21 @@ export function generateItalicOutline(
     return generateDot(points[0], config);
   }
 
+  // De-jitter: RDP simplification removes points that deviate less than
+  // epsilon from the line between their neighbors, eliminating hand tremor
+  // micro-jitter while preserving intentional direction changes.
+  // Only applied to baked strokes — during active drawing, RDP decisions
+  // shift as new points arrive, causing the outline to wiggle.
+  const dejittered = (dejitter && points.length > 2)
+    ? rdpSimplify(points, 0.075)
+    : points;
+
   // Precompute nib unit vector (static angle case)
   const staticNx = Math.cos(config.nibAngle);
   const staticNy = Math.sin(config.nibAngle);
 
   // Compute cumulative arc length for taper
-  const arcLengths = computeArcLengths(points);
+  const arcLengths = computeArcLengths(dejittered);
   const totalLength = arcLengths[arcLengths.length - 1];
 
   const leftSide: number[][] = [];
@@ -42,17 +53,17 @@ export function generateItalicOutline(
   let prevWidth = 0;
   const [minW, maxW] = config.pressureWidthRange;
 
-  for (let i = 0; i < points.length; i++) {
-    const p = points[i];
+  for (let i = 0; i < dejittered.length; i++) {
+    const p = dejittered[i];
 
     // Stroke direction vector
     let dx: number, dy: number;
     if (i === 0) {
-      dx = points[1].x - p.x;
-      dy = points[1].y - p.y;
+      dx = dejittered[1].x - p.x;
+      dy = dejittered[1].y - p.y;
     } else {
-      dx = p.x - points[i - 1].x;
-      dy = p.y - points[i - 1].y;
+      dx = p.x - dejittered[i - 1].x;
+      dy = p.y - dejittered[i - 1].y;
     }
 
     const len = Math.hypot(dx, dy);

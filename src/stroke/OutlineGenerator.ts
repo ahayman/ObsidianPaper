@@ -81,7 +81,8 @@ export function pointsToFreehandInput(
  */
 export function generateOutline(
   points: readonly StrokePoint[],
-  style: PenStyle
+  style: PenStyle,
+  dejitter: boolean = true,
 ): number[][] {
   if (points.length === 0) return [];
 
@@ -107,7 +108,7 @@ export function generateOutline(
       taperStart: penConfig.taperStart,
       taperEnd: penConfig.taperEnd,
     };
-    return generateItalicOutline(points, italicConfig);
+    return generateItalicOutline(points, italicConfig, dejitter);
   }
 
   // All other pen types: perfect-freehand
@@ -127,18 +128,39 @@ export function generateOutline(
 
 /**
  * Build a Path2D from an outline polygon (array of [x, y] points).
+ * Uses midpoint quadratic Bézier curves for smooth edges — each outline
+ * point becomes a control point with midpoints as curve endpoints,
+ * producing a C1-continuous closed curve.
  */
 export function outlineToPath2D(outline: number[][]): Path2D | null {
   if (outline.length < 2) return null;
 
   const path = new Path2D();
-  const first = outline[0];
-  path.moveTo(first[0], first[1]);
+  const n = outline.length;
 
-  for (let i = 1; i < outline.length; i++) {
-    path.lineTo(outline[i][0], outline[i][1]);
+  if (n < 3) {
+    path.moveTo(outline[0][0], outline[0][1]);
+    for (let i = 1; i < n; i++) {
+      path.lineTo(outline[i][0], outline[i][1]);
+    }
+    path.closePath();
+    return path;
   }
 
+  // Start at midpoint between first and second point
+  const mx0 = (outline[0][0] + outline[1][0]) * 0.5;
+  const my0 = (outline[0][1] + outline[1][1]) * 0.5;
+  path.moveTo(mx0, my0);
+
+  for (let i = 1; i < n; i++) {
+    const next = (i + 1) % n;
+    const mx = (outline[i][0] + outline[next][0]) * 0.5;
+    const my = (outline[i][1] + outline[next][1]) * 0.5;
+    path.quadraticCurveTo(outline[i][0], outline[i][1], mx, my);
+  }
+
+  // Final curve through P0 back to start
+  path.quadraticCurveTo(outline[0][0], outline[0][1], mx0, my0);
   path.closePath();
   return path;
 }
@@ -148,9 +170,10 @@ export function outlineToPath2D(outline: number[][]): Path2D | null {
  */
 export function generateStrokePath(
   points: readonly StrokePoint[],
-  style: PenStyle
+  style: PenStyle,
+  dejitter: boolean = true,
 ): Path2D | null {
-  const outline = generateOutline(points, style);
+  const outline = generateOutline(points, style, dejitter);
   return outlineToPath2D(outline);
 }
 
