@@ -36,7 +36,7 @@ export function generateItalicOutline(
   // Only applied to baked strokes — during active drawing, RDP decisions
   // shift as new points arrive, causing the outline to wiggle.
   const dejittered = (dejitter && points.length > 2)
-    ? rdpSimplify(points, 0.075)
+    ? rdpSimplify(points, 0.0375)
     : points;
 
   // Precompute nib unit vector (static angle case)
