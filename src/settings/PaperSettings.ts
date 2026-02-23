@@ -9,6 +9,7 @@ import type {
   SpacingUnit,
   PageMargins,
   RenderPipeline,
+  RenderEngineType,
 } from "../types";
 import { PAGE_SIZE_PRESETS, PPI, CM_PER_INCH } from "../types";
 import type { PenPreset, ToolbarPosition } from "../view/toolbar/ToolbarTypes";
@@ -65,6 +66,7 @@ export interface PaperSettings {
 
   // Rendering pipeline
   defaultRenderPipeline: RenderPipeline;
+  defaultRenderEngine: RenderEngineType;
 
   // File
   newNoteLocation: NewNoteLocation;
@@ -165,6 +167,7 @@ export const DEFAULT_SETTINGS: PaperSettings = {
   useBarrelRotation: true,
 
   defaultRenderPipeline: "textures",
+  defaultRenderEngine: "canvas2d",
 
   newNoteLocation: "specified",
   defaultFolder: "",

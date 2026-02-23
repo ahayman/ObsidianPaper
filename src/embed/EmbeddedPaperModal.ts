@@ -114,7 +114,7 @@ export class EmbeddedPaperModal extends Modal {
     this.themeDetector.start();
 
     // Create multi-layer renderer
-    this.renderer = new Renderer(container, this.camera, Platform.isMobile);
+    this.renderer = new Renderer(container, this.camera, Platform.isMobile, this.settings.defaultRenderEngine);
     this.renderer.isDarkMode = this.themeDetector.isDarkMode;
     this.renderer.initGrain();
     this.renderer.initStamps();

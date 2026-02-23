@@ -103,6 +103,7 @@ describe("PaperSettings", () => {
         activePresetId: null,
         toolbarPosition: "bottom",
         defaultRenderPipeline: "textures",
+        defaultRenderEngine: "canvas2d",
         embedMaxWidth: 800,
         embedMaxHeight: 300,
       };

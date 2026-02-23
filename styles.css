@@ -35,6 +35,24 @@
   pointer-events: none;
 }
 
+/* Engine indicator overlay */
+.paper-engine-overlay {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 10;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-family: var(--font-monospace);
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  opacity: 0.7;
+  pointer-events: none;
+  user-select: none;
+}
+
 /* Hover Cursor */
 .paper-hover-cursor {
   position: absolute;

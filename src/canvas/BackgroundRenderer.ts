@@ -2,6 +2,7 @@ import type { Page } from "../types";
 import type { Camera } from "./Camera";
 import type { PageRect } from "../document/PageLayout";
 import { resolvePageBackground } from "../color/ColorUtils";
+import type { RenderEngine } from "./engine/RenderEngine";
 
 export interface BackgroundConfig {
   isDarkMode: boolean;
@@ -173,6 +174,169 @@ function renderDotGrid(
       ctx.fill();
     }
   }
+}
+
+// ─── RenderEngine-aware standalone helpers ──────────────────────────
+
+/**
+ * Fill a region with the desk color via RenderEngine.
+ */
+export function renderDeskFillEngine(
+  engine: RenderEngine,
+  worldBounds: [number, number, number, number],
+  isDarkMode: boolean,
+): void {
+  engine.setFillColor(isDarkMode ? DESK_COLORS.dark : DESK_COLORS.light);
+  engine.fillRect(
+    worldBounds[0], worldBounds[1],
+    worldBounds[2] - worldBounds[0], worldBounds[3] - worldBounds[1],
+  );
+}
+
+/**
+ * Render a page's shadow, fill, and pattern via RenderEngine.
+ */
+export function renderPageBackgroundEngine(
+  engine: RenderEngine,
+  page: Page,
+  pageRect: PageRect,
+  isDarkMode: boolean,
+  lineScale: number,
+): void {
+  const { paperColor, patternTheme } = resolvePageBackground(
+    page.backgroundColor,
+    page.backgroundColorTheme,
+    isDarkMode,
+  );
+
+  // Shadow
+  engine.save();
+  engine.setShadow(SHADOW_COLOR, SHADOW_BLUR * lineScale, SHADOW_OFFSET_X * lineScale, SHADOW_OFFSET_Y * lineScale);
+  engine.setFillColor(paperColor);
+  engine.fillRect(pageRect.x, pageRect.y, pageRect.width, pageRect.height);
+  engine.clearShadow();
+  engine.restore();
+
+  // Clean fill (no shadow)
+  engine.setFillColor(paperColor);
+  engine.fillRect(pageRect.x, pageRect.y, pageRect.width, pageRect.height);
+
+  // Patterns
+  if (page.paperType !== "blank") {
+    engine.save();
+    engine.clipRect(pageRect.x, pageRect.y, pageRect.width, pageRect.height);
+
+    const margins = page.margins;
+    const minX = pageRect.x + margins.left;
+    const minY = pageRect.y + margins.top;
+    const maxX = pageRect.x + pageRect.width - margins.right;
+    const maxY = pageRect.y + pageRect.height - margins.bottom;
+
+    if (minX < maxX && minY < maxY) {
+      switch (page.paperType) {
+        case "lined":
+          renderLinesEngine(engine, patternTheme, page.lineSpacing, lineScale, minX, minY, maxX, maxY);
+          break;
+        case "grid":
+          renderGridEngine(engine, patternTheme, page.gridSize, lineScale, minX, minY, maxX, maxY);
+          break;
+        case "dot-grid":
+          renderDotGridEngine(engine, patternTheme, page.gridSize, lineScale, minX, minY, maxX, maxY);
+          break;
+      }
+    }
+
+    engine.restore();
+  }
+}
+
+/**
+ * Pack horizontal lines into Float32Array and draw via engine.drawLines().
+ */
+function renderLinesEngine(
+  engine: RenderEngine,
+  patternTheme: "light" | "dark",
+  lineSpacing: number,
+  lineScale: number,
+  minX: number, minY: number, maxX: number, maxY: number,
+): void {
+  const startY = Math.ceil(minY / lineSpacing) * lineSpacing;
+  const lineCount = Math.floor((maxY - startY) / lineSpacing) + 1;
+  if (lineCount <= 0) return;
+
+  const data = new Float32Array(lineCount * 4);
+  let idx = 0;
+  for (let y = startY; y <= maxY; y += lineSpacing) {
+    data[idx++] = minX;
+    data[idx++] = y;
+    data[idx++] = maxX;
+    data[idx++] = y;
+  }
+  engine.drawLines(data.subarray(0, idx), LINE_COLORS[patternTheme], lineScale);
+}
+
+/**
+ * Pack grid lines into Float32Array and draw via engine.drawLines().
+ */
+function renderGridEngine(
+  engine: RenderEngine,
+  patternTheme: "light" | "dark",
+  gridSize: number,
+  lineScale: number,
+  minX: number, minY: number, maxX: number, maxY: number,
+): void {
+  const startX = Math.ceil(minX / gridSize) * gridSize;
+  const startY = Math.ceil(minY / gridSize) * gridSize;
+  const vertCount = Math.floor((maxX - startX) / gridSize) + 1;
+  const horizCount = Math.floor((maxY - startY) / gridSize) + 1;
+  const totalCount = Math.max(0, vertCount) + Math.max(0, horizCount);
+  if (totalCount <= 0) return;
+
+  const data = new Float32Array(totalCount * 4);
+  let idx = 0;
+  for (let x = startX; x <= maxX; x += gridSize) {
+    data[idx++] = x;
+    data[idx++] = minY;
+    data[idx++] = x;
+    data[idx++] = maxY;
+  }
+  for (let y = startY; y <= maxY; y += gridSize) {
+    data[idx++] = minX;
+    data[idx++] = y;
+    data[idx++] = maxX;
+    data[idx++] = y;
+  }
+  engine.drawLines(data.subarray(0, idx), LINE_COLORS[patternTheme], lineScale);
+}
+
+/**
+ * Pack dot positions into Float32Array and draw via engine.drawCircles().
+ */
+function renderDotGridEngine(
+  engine: RenderEngine,
+  patternTheme: "light" | "dark",
+  gridSize: number,
+  lineScale: number,
+  minX: number, minY: number, maxX: number, maxY: number,
+): void {
+  const dotRadius = 1.5 * lineScale;
+  const startX = Math.ceil(minX / gridSize) * gridSize;
+  const startY = Math.ceil(minY / gridSize) * gridSize;
+  const colCount = Math.max(0, Math.floor((maxX - startX) / gridSize) + 1);
+  const rowCount = Math.max(0, Math.floor((maxY - startY) / gridSize) + 1);
+  const totalDots = colCount * rowCount;
+  if (totalDots <= 0) return;
+
+  const data = new Float32Array(totalDots * 3);
+  let idx = 0;
+  for (let x = startX; x <= maxX; x += gridSize) {
+    for (let y = startY; y <= maxY; y += gridSize) {
+      data[idx++] = x;
+      data[idx++] = y;
+      data[idx++] = dotRadius;
+    }
+  }
+  engine.drawCircles(data.subarray(0, idx), DOT_COLORS[patternTheme]);
 }
 
 /**

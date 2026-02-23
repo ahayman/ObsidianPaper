@@ -56,10 +56,10 @@ export function tileSizePhysicalForBand(config: TileGridConfig, zoomBand: number
 }
 
 export const DEFAULT_TILE_CONFIG: TileGridConfig = {
-  tileWorldSize: 256,
+  tileWorldSize: 128,
   dpr: 2,
   maxMemoryBytes: 200 * 1024 * 1024,
   overscanTiles: 1,
   maxTilePhysical: 2048,
-  minTilePhysical: 256,
+  minTilePhysical: 128,
 };

@@ -1,11 +1,14 @@
 import type { Stroke, PenStyle, StrokePoint, PenType, RenderPipeline } from "../types";
 import { decodePoints } from "../document/PointEncoder";
 import {
+  generateOutline,
   generateStrokePath,
   StrokePathCache,
 } from "../stroke/OutlineGenerator";
 import { resolveColor } from "../color/ColorPalette";
 import { getPenConfig } from "../stroke/PenConfigs";
+import type { RenderEngine, TextureHandle } from "./engine/RenderEngine";
+import { packStampsToFloat32, packInkStampsToFloat32 } from "../stamp/StampPacking";
 import type { GrainTextureGenerator } from "./GrainTextureGenerator";
 import { lodCacheKey, simplifyPoints } from "../stroke/StrokeSimplifier";
 import type { LodLevel } from "../stroke/StrokeSimplifier";
@@ -440,4 +443,251 @@ function renderStrokeWithGrain(
     region.sx, region.sy, region.sw, region.sh,
   );
   targetCtx.restore();
+}
+
+// ══════════════════════════════════════════════════════════════
+// RenderEngine-based stroke rendering
+// ══════════════════════════════════════════════════════════════
+
+/**
+ * Grain rendering context for RenderEngine path.
+ * Similar to GrainRenderContext but uses TextureHandle instead of pattern.
+ */
+export interface EngineGrainContext {
+  grainTexture: TextureHandle | null;
+  strengthOverrides: Map<PenType, number>;
+  pipeline: RenderPipeline;
+  canvasWidth: number;
+  canvasHeight: number;
+}
+
+/**
+ * Stamp rendering context for RenderEngine path.
+ */
+export interface EngineStampContext {
+  getStampTexture(grainValue: number, color: string): TextureHandle;
+  getInkStampTexture(presetId: string | undefined, color: string): TextureHandle;
+}
+
+/**
+ * Render a single stroke using the RenderEngine abstraction.
+ * Parallel function to renderStrokeToContext() — same logic but uses
+ * engine.fillPath(vertices), engine.drawStamps(), etc.
+ *
+ * The old renderStrokeToContext() remains for workers (raw Canvas 2D).
+ */
+export function renderStrokeToEngine(
+  engine: RenderEngine,
+  stroke: Stroke,
+  styles: Record<string, PenStyle>,
+  lod: LodLevel,
+  useDarkColors: boolean,
+  pathCache: StrokePathCache,
+  grainCtx: EngineGrainContext,
+  stampCtx?: EngineStampContext | null,
+): void {
+  const style = resolveStyle(stroke, styles);
+  const penConfig = getPenConfig(style.pen);
+
+  // Ink-shaded fountain pen rendering at LOD 0
+  if (stampCtx && grainCtx.pipeline === "stamps" && penConfig.inkStamp && lod === 0) {
+    const cacheKey = lodCacheKey(stroke.id, lod);
+    let vertices = pathCache.getVertices(cacheKey);
+    let decodedPts: StrokePoint[] | undefined;
+    if (!vertices) {
+      decodedPts = decodePoints(stroke.pts);
+      const outline = generateOutline(decodedPts, style);
+      if (outline.length >= 2) {
+        pathCache.setOutline(cacheKey, outline);
+        vertices = pathCache.getVertices(cacheKey);
+      }
+    }
+    if (!vertices) return;
+
+    const color = resolveColor(style.color, useDarkColors);
+    const presetConfig = getInkPreset(style.inkPreset);
+
+    if (presetConfig.shading <= 0) {
+      engine.setFillColor(color);
+      engine.setAlpha(style.opacity);
+      engine.fillPath(vertices);
+      engine.setAlpha(1);
+      return;
+    }
+
+    const points = decodedPts ?? decodePoints(stroke.pts);
+    renderInkShadedStrokeEngine(
+      engine, vertices, color, style, penConfig, points, presetConfig,
+      stampCtx, grainCtx, stroke.bbox,
+    );
+    return;
+  }
+
+  // Stamp-based rendering for pencil at LOD 0
+  if (stampCtx && grainCtx.pipeline === "stamps" && penConfig.stamp && lod === 0) {
+    const color = resolveColor(style.color, useDarkColors);
+    const points = decodePoints(stroke.pts);
+    const stamps = computeAllStamps(points, style, penConfig, penConfig.stamp);
+    const texture = stampCtx.getStampTexture(style.grain ?? DEFAULT_GRAIN_VALUE, color);
+    engine.drawStamps(texture, packStampsToFloat32(stamps));
+    return;
+  }
+
+  // Get or generate vertices (LOD-aware cache key)
+  const cacheKey = lodCacheKey(stroke.id, lod);
+  let vertices = pathCache.getVertices(cacheKey);
+  let decodedPoints: StrokePoint[] | undefined;
+  if (!vertices) {
+    decodedPoints = decodePoints(stroke.pts);
+    let points = decodedPoints;
+    if (lod > 0) {
+      points = simplifyPoints(points, lod);
+    }
+    const outline = generateOutline(points, style);
+    if (outline.length >= 2) {
+      pathCache.setOutline(cacheKey, outline);
+      vertices = pathCache.getVertices(cacheKey);
+    }
+  }
+
+  if (!vertices) return;
+
+  const color = resolveColor(style.color, useDarkColors);
+
+  // Grain-enabled strokes rendered in isolation on offscreen target
+  if (grainCtx.pipeline !== "basic" && lod === 0 && penConfig.grain?.enabled) {
+    const baseStrength = grainCtx.strengthOverrides.get(style.pen) ?? penConfig.grain.strength;
+    const grainValue = style.grain ?? DEFAULT_GRAIN_VALUE;
+    const strength = grainToTextureStrength(baseStrength, grainValue);
+    if (strength > 0 && grainCtx.grainTexture) {
+      const anchorX = stroke.grainAnchor?.[0] ?? stroke.bbox[0];
+      const anchorY = stroke.grainAnchor?.[1] ?? stroke.bbox[1];
+      renderStrokeWithGrainEngine(
+        engine, vertices, color, style.opacity, strength,
+        anchorX, anchorY, stroke.bbox,
+        grainCtx,
+      );
+      return;
+    }
+  }
+
+  if (penConfig.highlighterMode) {
+    engine.save();
+    engine.setAlpha(penConfig.baseOpacity);
+    engine.setBlendMode("multiply");
+    engine.setFillColor(color);
+    engine.fillPath(vertices);
+    engine.restore();
+  } else {
+    engine.setFillColor(color);
+    engine.setAlpha(style.opacity);
+    engine.fillPath(vertices);
+    engine.setAlpha(1);
+  }
+
+  // Fountain pen ink pooling (skip at high LOD, italic nib strokes, and basic pipeline)
+  if (grainCtx.pipeline !== "basic" && style.pen === "fountain" && lod === 0 && style.nibAngle == null) {
+    const points = decodedPoints ?? decodePoints(stroke.pts);
+    const pools = detectInkPools(points, style.width);
+    if (pools.length > 0) {
+      // Ink pooling uses raw Canvas 2D — skip in engine path for now.
+      // TODO: Implement engine-based ink pooling if needed.
+    }
+  }
+}
+
+/**
+ * Render an ink-shaded fountain pen stroke using RenderEngine offscreen targets.
+ */
+function renderInkShadedStrokeEngine(
+  engine: RenderEngine,
+  vertices: Float32Array,
+  color: string,
+  style: PenStyle,
+  penConfig: PenConfig,
+  points: readonly StrokePoint[],
+  presetConfig: InkPresetConfig,
+  stampCtx: EngineStampContext,
+  grainCtx: EngineGrainContext,
+  bbox: [number, number, number, number],
+): void {
+  const wm = style.width * 1.5;
+  const expandedBbox: [number, number, number, number] = [
+    bbox[0] - wm, bbox[1] - wm, bbox[2] + wm, bbox[3] + wm,
+  ];
+  const m = engine.getTransform();
+  const region = computeScreenBBox(expandedBbox, m, grainCtx.canvasWidth, grainCtx.canvasHeight);
+  if (!region) return;
+
+  const offscreen = engine.getOffscreen("inkShading", region.sw, region.sh);
+  engine.beginOffscreen(offscreen);
+  engine.clear();
+  engine.setTransform(m.a, m.b, m.c, m.d, m.e - region.sx, m.f - region.sy);
+
+  // 1. Deposit colored stamps via source-over
+  const stamps = computeAllInkStamps(points, style, penConfig, penConfig.inkStamp!, presetConfig);
+  const texture = stampCtx.getInkStampTexture(style.inkPreset, color);
+  engine.setAlpha(style.opacity);
+  engine.drawStamps(texture, packInkStampsToFloat32(stamps));
+
+  // 2. Mask to outline via destination-in
+  engine.setBlendMode("destination-in");
+  engine.setAlpha(1);
+  engine.setFillColor("#ffffff");
+  engine.fillPath(vertices);
+  engine.setBlendMode("source-over");
+
+  engine.endOffscreen();
+
+  // 3. Composite back
+  engine.save();
+  engine.setTransform(1, 0, 0, 1, 0, 0);
+  engine.drawOffscreen(offscreen, region.sx, region.sy, region.sw, region.sh);
+  engine.restore();
+}
+
+/**
+ * Render a stroke with grain in isolation on an offscreen target via RenderEngine.
+ */
+function renderStrokeWithGrainEngine(
+  engine: RenderEngine,
+  vertices: Float32Array,
+  color: string,
+  opacity: number,
+  grainStrength: number,
+  anchorX: number,
+  anchorY: number,
+  bbox: [number, number, number, number],
+  grainCtx: EngineGrainContext,
+): void {
+  const m = engine.getTransform();
+  const region = computeScreenBBox(bbox, m, grainCtx.canvasWidth, grainCtx.canvasHeight);
+  if (!region) return;
+
+  const offscreen = engine.getOffscreen("grainIsolation", region.sw, region.sh);
+  engine.beginOffscreen(offscreen);
+  engine.clear();
+  engine.setTransform(m.a, m.b, m.c, m.d, m.e - region.sx, m.f - region.sy);
+
+  // Draw stroke fill
+  engine.setFillColor(color);
+  engine.setAlpha(opacity);
+  engine.fillPath(vertices);
+  engine.setAlpha(1);
+
+  // Apply grain — destination-out eraser
+  if (grainCtx.grainTexture) {
+    engine.save();
+    engine.clipPath(vertices);
+    engine.applyGrain(grainCtx.grainTexture, anchorX, anchorY, grainStrength);
+    engine.restore();
+  }
+
+  engine.endOffscreen();
+
+  // Composite back
+  engine.save();
+  engine.setTransform(1, 0, 0, 1, 0, 0);
+  engine.drawOffscreen(offscreen, region.sx, region.sy, region.sw, region.sh);
+  engine.restore();
 }

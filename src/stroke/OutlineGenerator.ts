@@ -166,6 +166,31 @@ export function outlineToPath2D(outline: number[][]): Path2D | null {
 }
 
 /**
+ * Convert an outline polygon to a Float32Array of vertex pairs [x0, y0, x1, y1, ...].
+ * Used by the RenderEngine path for GPU-ready vertex data.
+ */
+export function outlineToFloat32Array(outline: number[][]): Float32Array | null {
+  if (outline.length < 2) return null;
+  const arr = new Float32Array(outline.length * 2);
+  for (let i = 0; i < outline.length; i++) {
+    arr[i * 2] = outline[i][0];
+    arr[i * 2 + 1] = outline[i][1];
+  }
+  return arr;
+}
+
+/**
+ * Generate a stroke outline and convert it to a Float32Array in one step.
+ */
+export function generateStrokeVertices(
+  points: readonly StrokePoint[],
+  style: PenStyle,
+  dejitter: boolean = true,
+): Float32Array | null {
+  return outlineToFloat32Array(generateOutline(points, style, dejitter));
+}
+
+/**
  * Generate a stroke outline and convert it to a Path2D in one step.
  */
 export function generateStrokePath(
@@ -178,33 +203,80 @@ export function generateStrokePath(
 }
 
 /**
- * Cache for completed stroke Path2D objects.
- * Keyed by stroke ID.
+ * Dual cache for completed stroke data.
+ * Stores raw outline data and lazily produces Path2D or Float32Array.
+ * Keyed by stroke ID (or LOD-qualified key).
  */
 export class StrokePathCache {
-  private cache = new Map<string, Path2D>();
+  private pathCache = new Map<string, Path2D>();
+  private vertexCache = new Map<string, Float32Array>();
+  private outlineCache = new Map<string, number[][]>();
 
+  /** Get a cached Path2D (legacy callers, workers). */
   get(strokeId: string): Path2D | undefined {
-    return this.cache.get(strokeId);
+    return this.pathCache.get(strokeId);
   }
 
+  /** Cache a Path2D directly (legacy callers, workers). */
   set(strokeId: string, path: Path2D): void {
-    this.cache.set(strokeId, path);
+    this.pathCache.set(strokeId, path);
   }
 
   has(strokeId: string): boolean {
-    return this.cache.has(strokeId);
+    return this.pathCache.has(strokeId) || this.outlineCache.has(strokeId);
+  }
+
+  /** Store raw outline data. Path2D and Float32Array are produced lazily. */
+  setOutline(strokeId: string, outline: number[][]): void {
+    this.outlineCache.set(strokeId, outline);
+    // Invalidate derived caches — they will be rebuilt lazily
+    this.pathCache.delete(strokeId);
+    this.vertexCache.delete(strokeId);
+  }
+
+  /** Get or lazily build Path2D from cached outline. */
+  getPath(strokeId: string): Path2D | undefined {
+    const cached = this.pathCache.get(strokeId);
+    if (cached) return cached;
+    const outline = this.outlineCache.get(strokeId);
+    if (!outline) return undefined;
+    const path = outlineToPath2D(outline);
+    if (path) {
+      this.pathCache.set(strokeId, path);
+    }
+    return path ?? undefined;
+  }
+
+  /** Get or lazily build Float32Array from cached outline. */
+  getVertices(strokeId: string): Float32Array | undefined {
+    const cached = this.vertexCache.get(strokeId);
+    if (cached) return cached;
+    const outline = this.outlineCache.get(strokeId);
+    if (!outline) return undefined;
+    const verts = outlineToFloat32Array(outline);
+    if (verts) {
+      this.vertexCache.set(strokeId, verts);
+    }
+    return verts ?? undefined;
   }
 
   delete(strokeId: string): void {
-    this.cache.delete(strokeId);
+    this.pathCache.delete(strokeId);
+    this.vertexCache.delete(strokeId);
+    this.outlineCache.delete(strokeId);
   }
 
   clear(): void {
-    this.cache.clear();
+    this.pathCache.clear();
+    this.vertexCache.clear();
+    this.outlineCache.clear();
   }
 
   get size(): number {
-    return this.cache.size;
+    // Count unique keys across all caches
+    const keys = new Set<string>();
+    for (const k of this.pathCache.keys()) keys.add(k);
+    for (const k of this.outlineCache.keys()) keys.add(k);
+    return keys.size;
   }
 }

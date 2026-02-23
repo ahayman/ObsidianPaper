@@ -1,10 +1,11 @@
-import type { Stroke, PenStyle, StrokePoint, PaperDocument, RenderPipeline } from "../types";
+import type { Stroke, PenStyle, StrokePoint, PaperDocument, RenderPipeline, RenderEngineType } from "../types";
 import type { SpatialIndex } from "../spatial/SpatialIndex";
 import type { PageRect } from "../document/PageLayout";
 import { Camera } from "./Camera";
 import { setupHighDPICanvas, resizeHighDPICanvas, getEffectiveDPR } from "./HighDPI";
 import {
   generateStrokePath,
+  generateStrokeVertices,
   StrokePathCache,
 } from "../stroke/OutlineGenerator";
 import { resolveColor } from "../color/ColorPalette";
@@ -42,6 +43,8 @@ import {
   DEFAULT_TILE_CONFIG,
 } from "./tiles/TileTypes";
 import type { TileGridConfig, TileKey } from "./tiles/TileTypes";
+import type { RenderEngine } from "./engine/RenderEngine";
+import { createRenderEngine } from "./engine/EngineFactory";
 
 /**
  * Multi-layer canvas renderer managing:
@@ -68,6 +71,11 @@ export class Renderer {
   private cssWidth = 0;
   private cssHeight = 0;
   isDarkMode = false;
+
+  // Engine-based rendering (Phase 8)
+  private engineType: RenderEngineType;
+  private activeEngine: RenderEngine | null = null;
+  private engineOverlay: HTMLElement | null = null;
 
   // Overscan: background + static canvases are rendered larger than viewport.
   // Sized dynamically to cover the current page(s) so CSS zoom-out reveals
@@ -97,6 +105,12 @@ export class Renderer {
   /** Current ink preset for fountain pen (tracked for active stroke rendering) */
   private currentInkPreset: string = "standard";
 
+  // Active stroke vertex caching (Phase 9)
+  /** Cached Float32Array vertices for the active stroke. Regenerated when point count changes. */
+  private activeVertices: Float32Array | null = null;
+  /** Number of points when activeVertices was last generated. */
+  private activeVerticesPointCount = 0;
+
   // Tile-based rendering (when enabled, replaces overscan static canvas)
   private tiledLayer: TiledStaticLayer | null = null;
 
@@ -106,10 +120,11 @@ export class Renderer {
   private pendingBakes: { stroke: Stroke; styles: Record<string, PenStyle>; pageRect?: PageRect; useDarkColors?: boolean }[] = [];
   private pendingFinalizations: (() => void)[] = [];
 
-  constructor(container: HTMLElement, camera: Camera, isMobile: boolean) {
+  constructor(container: HTMLElement, camera: Camera, isMobile: boolean, engineType: RenderEngineType = "canvas2d") {
     this.container = container;
     this.camera = camera;
     this.isMobile = isMobile;
+    this.engineType = engineType;
 
     // Create four stacked canvases (background, static, active, prediction)
     this.backgroundCanvas = this.createCanvasLayer("paper-background-canvas");
@@ -121,6 +136,21 @@ export class Renderer {
     this.staticCtx = this.getContext(this.staticCanvas);
     this.activeCtx = this.getContext(this.activeCanvas);
     this.predictionCtx = this.getContext(this.predictionCanvas);
+
+    // Create engine for active canvas (used for engine-based rendering path)
+    if (engineType === "webgl") {
+      try {
+        this.activeEngine = createRenderEngine(engineType, this.activeCanvas);
+      } catch {
+        // Fall back silently — Canvas 2D path will be used
+        this.activeEngine = null;
+      }
+    }
+
+    // Engine indicator overlay
+    this.engineOverlay = container.createEl("div", { cls: "paper-engine-overlay" });
+    const actualEngine = this.activeEngine ? "WebGL 2" : "Canvas 2D";
+    this.engineOverlay.setText(actualEngine);
   }
 
   private createCanvasLayer(className: string): HTMLCanvasElement {
@@ -869,6 +899,26 @@ export class Renderer {
     this.clearCanvas(this.predictionCtx);
     this.pendingActiveRender = null;
     this.activeStampCount = 0;
+    this.activeVertices = null;
+    this.activeVerticesPointCount = 0;
+  }
+
+  /**
+   * Get cached or generate Float32Array vertices for the active stroke.
+   * Only regenerates when point count changes (vertices grow monotonically
+   * as points are added during a stroke).
+   */
+  private getActiveVertices(
+    points: readonly StrokePoint[],
+    style: PenStyle,
+  ): Float32Array | null {
+    if (points.length === this.activeVerticesPointCount && this.activeVertices) {
+      return this.activeVertices;
+    }
+    const vertices = generateStrokeVertices(points, style, false);
+    this.activeVertices = vertices;
+    this.activeVerticesPointCount = points.length;
+    return vertices;
   }
 
   /**
@@ -960,6 +1010,10 @@ export class Renderer {
     this.inkStampManager?.clear();
     this.inkStampManager = null;
     this.activeStampCount = 0;
+    this.activeEngine?.destroy();
+    this.activeEngine = null;
+    this.engineOverlay?.remove();
+    this.engineOverlay = null;
     this.backgroundCanvas.remove();
     this.staticCanvas.remove();
     this.activeCanvas.remove();
@@ -1043,6 +1097,7 @@ export class Renderer {
       this.camera,
       tileConfig,
       this.pathCache,
+      this.engineType !== "canvas2d",
     );
 
     // Share grain resources with main-thread tile renderer
@@ -1264,12 +1319,12 @@ class TiledStaticLayer {
   /** Optional callback to draw overlays (e.g. page icons) after compositing. */
   private overlayCallback: ((ctx: CanvasRenderingContext2D, visibleRect: [number, number, number, number]) => void) | null = null;
 
-  constructor(camera: Camera, config: TileGridConfig, pathCache: StrokePathCache) {
+  constructor(camera: Camera, config: TileGridConfig, pathCache: StrokePathCache, useEngine = false) {
     this.camera = camera;
     this.config = config;
     this.grid = new TileGrid(config);
     this.cache = new TileCache(config);
-    this.tileRenderer = new TileRenderer(this.grid, config, pathCache);
+    this.tileRenderer = new TileRenderer(this.grid, config, pathCache, useEngine);
     this.compositor = new TileCompositor(this.grid, config);
 
     // Main-thread fallback scheduler (used if workers fail)

@@ -59,6 +59,7 @@ export type PageSizePreset = "us-letter" | "us-legal" | "a4" | "a5" | "a3" | "cu
 export type PageOrientation = "portrait" | "landscape";
 export type LayoutDirection = "vertical" | "horizontal";
 export type RenderPipeline = "basic" | "textures" | "stamps";
+export type RenderEngineType = "canvas2d" | "webgl";
 export type PageUnit = "in" | "cm";
 export type SpacingUnit = "in" | "cm" | "wu";
 

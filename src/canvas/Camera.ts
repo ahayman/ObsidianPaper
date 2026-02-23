@@ -1,4 +1,5 @@
 import type { CameraState } from "../types";
+import type { RenderEngine } from "./engine/RenderEngine";
 
 export const MIN_ZOOM = 0.1;
 export const MAX_ZOOM = 5.0;
@@ -130,6 +131,16 @@ export class Camera {
    */
   resetContext(ctx: CanvasRenderingContext2D): void {
     ctx.restore();
+  }
+
+  /**
+   * Apply camera transform to a RenderEngine.
+   * Uses save() + transform() to compose with existing transforms.
+   * Call engine.restore() when done.
+   */
+  applyToEngine(engine: RenderEngine): void {
+    engine.save();
+    engine.transform(this.zoom, 0, 0, this.zoom, -this.x * this.zoom, -this.y * this.zoom);
   }
 
   /**

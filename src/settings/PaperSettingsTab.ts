@@ -2,7 +2,8 @@ import { PluginSettingTab, App, Setting } from "obsidian";
 import type { Plugin } from "obsidian";
 import type { PaperSettings, PaperFormat, NewNoteLocation } from "./PaperSettings";
 import { formatSpacingDisplay, displayToWorldUnits } from "./PaperSettings";
-import type { PenType, PaperType, PageSizePreset, PageOrientation, LayoutDirection, PageUnit, SpacingUnit, RenderPipeline } from "../types";
+import type { PenType, PaperType, PageSizePreset, PageOrientation, LayoutDirection, PageUnit, SpacingUnit, RenderPipeline, RenderEngineType } from "../types";
+import { isWebGL2Available } from "../canvas/engine/EngineFactory";
 
 const PEN_TYPE_OPTIONS: Record<PenType, string> = {
   ballpoint: "Ballpoint",
@@ -438,6 +439,21 @@ export class PaperSettingsTab extends PluginSettingTab {
         dropdown.setValue(this.settings.defaultRenderPipeline);
         dropdown.onChange((value: string) => {
           this.settings.defaultRenderPipeline = value as RenderPipeline;
+          this.notifyChange();
+        });
+      });
+
+    const webglAvailable = isWebGL2Available();
+
+    new Setting(containerEl)
+      .setName("Rendering engine")
+      .setDesc("Canvas 2D works everywhere. WebGL uses the GPU for better performance. Requires reopening the note.")
+      .addDropdown((dropdown) => {
+        dropdown.addOption("canvas2d", "Canvas 2D");
+        dropdown.addOption("webgl", webglAvailable ? "WebGL (GPU)" : "WebGL (GPU) (not supported)");
+        dropdown.setValue(this.settings.defaultRenderEngine);
+        dropdown.onChange((value: string) => {
+          this.settings.defaultRenderEngine = value as RenderEngineType;
           this.notifyChange();
         });
       });

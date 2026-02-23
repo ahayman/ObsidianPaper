@@ -24,6 +24,8 @@ import {
   penStyleToOutlineOptions,
   generateOutline,
   outlineToPath2D,
+  outlineToFloat32Array,
+  generateStrokeVertices,
   generateStrokePath,
   StrokePathCache,
 } from "./OutlineGenerator";
@@ -152,6 +154,61 @@ describe("OutlineGenerator", () => {
     });
   });
 
+  describe("outlineToFloat32Array", () => {
+    it("should return null for fewer than 2 points", () => {
+      expect(outlineToFloat32Array([])).toBeNull();
+      expect(outlineToFloat32Array([[0, 0]])).toBeNull();
+    });
+
+    it("should convert outline to Float32Array of vertex pairs", () => {
+      const outline = [[10, 20], [30, 40], [50, 60]];
+      const result = outlineToFloat32Array(outline);
+      expect(result).toBeInstanceOf(Float32Array);
+      expect(result!.length).toBe(6);
+      expect(result![0]).toBe(10);
+      expect(result![1]).toBe(20);
+      expect(result![2]).toBe(30);
+      expect(result![3]).toBe(40);
+      expect(result![4]).toBe(50);
+      expect(result![5]).toBe(60);
+    });
+
+    it("should preserve floating point precision", () => {
+      const outline = [[1.234, 5.678], [9.012, 3.456]];
+      const result = outlineToFloat32Array(outline);
+      expect(result).not.toBeNull();
+      expect(result![0]).toBeCloseTo(1.234, 2);
+      expect(result![1]).toBeCloseTo(5.678, 2);
+    });
+  });
+
+  describe("generateStrokeVertices", () => {
+    it("should return null for empty points", () => {
+      const result = generateStrokeVertices([], makeStyle());
+      expect(result).toBeNull();
+    });
+
+    it("should generate Float32Array from stroke points", () => {
+      const points = makePoints(10);
+      const result = generateStrokeVertices(points, makeStyle());
+      expect(result).toBeInstanceOf(Float32Array);
+      expect(result!.length).toBeGreaterThan(0);
+      // All values should be finite
+      for (let i = 0; i < result!.length; i++) {
+        expect(isFinite(result![i])).toBe(true);
+      }
+    });
+
+    it("should produce same vertex data as outline → float32 pipeline", () => {
+      const points = makePoints(10);
+      const style = makeStyle();
+      const outline = generateOutline(points, style);
+      const fromOutline = outlineToFloat32Array(outline);
+      const direct = generateStrokeVertices(points, style);
+      expect(direct).toEqual(fromOutline);
+    });
+  });
+
   describe("StrokePathCache", () => {
     it("should store and retrieve paths", () => {
       const cache = new StrokePathCache();
@@ -184,6 +241,84 @@ describe("OutlineGenerator", () => {
       expect(cache.size).toBe(1);
       cache.set("s2", new Path2D());
       expect(cache.size).toBe(2);
+    });
+
+    describe("dual cache (outline → Path2D / Float32Array)", () => {
+      it("setOutline stores outline and allows getPath/getVertices", () => {
+        const cache = new StrokePathCache();
+        const outline = [[0, 0], [10, 0], [10, 10], [0, 10]];
+        cache.setOutline("s1", outline);
+        expect(cache.has("s1")).toBe(true);
+
+        const path = cache.getPath("s1");
+        expect(path).toBeInstanceOf(Path2D);
+
+        const verts = cache.getVertices("s1");
+        expect(verts).toBeInstanceOf(Float32Array);
+        expect(verts!.length).toBe(8);
+      });
+
+      it("getPath returns undefined for unknown key", () => {
+        const cache = new StrokePathCache();
+        expect(cache.getPath("nope")).toBeUndefined();
+      });
+
+      it("getVertices returns undefined for unknown key", () => {
+        const cache = new StrokePathCache();
+        expect(cache.getVertices("nope")).toBeUndefined();
+      });
+
+      it("setOutline invalidates previously cached path and vertices", () => {
+        const cache = new StrokePathCache();
+        const outline1 = [[0, 0], [10, 0], [10, 10]];
+        cache.setOutline("s1", outline1);
+        const v1 = cache.getVertices("s1");
+
+        // Replace outline
+        const outline2 = [[0, 0], [20, 0], [20, 20], [0, 20]];
+        cache.setOutline("s1", outline2);
+        const v2 = cache.getVertices("s1");
+        expect(v2!.length).toBe(8); // 4 points * 2
+        expect(v1!.length).toBe(6); // Old was 3 points * 2
+      });
+
+      it("delete removes outline, path, and vertices", () => {
+        const cache = new StrokePathCache();
+        cache.setOutline("s1", [[0, 0], [10, 0], [10, 10]]);
+        cache.getPath("s1");
+        cache.getVertices("s1");
+        cache.delete("s1");
+        expect(cache.has("s1")).toBe(false);
+        expect(cache.getPath("s1")).toBeUndefined();
+        expect(cache.getVertices("s1")).toBeUndefined();
+      });
+
+      it("clear removes everything", () => {
+        const cache = new StrokePathCache();
+        cache.setOutline("s1", [[0, 0], [10, 0], [10, 10]]);
+        cache.set("s2", new Path2D());
+        cache.clear();
+        expect(cache.size).toBe(0);
+      });
+
+      it("size counts unique keys across all caches", () => {
+        const cache = new StrokePathCache();
+        cache.set("s1", new Path2D());
+        cache.setOutline("s2", [[0, 0], [10, 0], [10, 10]]);
+        expect(cache.size).toBe(2);
+        // Setting outline for s1 should not change count
+        cache.setOutline("s1", [[0, 0], [10, 0], [10, 10]]);
+        expect(cache.size).toBe(2);
+      });
+
+      it("get() still works for paths set via set()", () => {
+        const cache = new StrokePathCache();
+        const path = new Path2D();
+        cache.set("s1", path);
+        expect(cache.get("s1")).toBe(path);
+        // getPath should also work for directly-set paths
+        expect(cache.getPath("s1")).toBe(path);
+      });
     });
   });
 });
