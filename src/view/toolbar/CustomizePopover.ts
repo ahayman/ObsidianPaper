@@ -24,7 +24,6 @@ const POSITIONS: { value: ToolbarPosition; label: string }[] = [
 export interface CustomizePopoverCallbacks {
   onStateChange: (partial: Partial<ToolbarState>) => void;
   onSaveAsNew: () => void;
-  onUpdatePreset: () => void;
   onDeletePreset: () => void;
   onPositionChange: (position: ToolbarPosition) => void;
   onDismiss: () => void;
@@ -342,13 +341,6 @@ export class CustomizePopover {
     this.presetActionsSection.empty();
 
     if (this.activePreset) {
-      // Update existing preset
-      const updateBtn = this.presetActionsSection.createEl("button", {
-        cls: "paper-popover__action-btn",
-        text: "Update preset",
-      });
-      updateBtn.addEventListener("click", () => this.callbacks.onUpdatePreset());
-
       // Save as copy
       const copyBtn = this.presetActionsSection.createEl("button", {
         cls: "paper-popover__action-btn",

@@ -10,6 +10,7 @@ export class PresetStrip {
   private isDark: boolean;
   private onClick: (presetId: string) => void;
   private onLongPress: (presetId: string) => void;
+  private onContextMenu: (presetId: string) => void;
 
   constructor(
     parent: HTMLElement,
@@ -17,11 +18,13 @@ export class PresetStrip {
     activeId: string | null,
     isDarkMode: boolean,
     onClick: (presetId: string) => void,
-    onLongPress: (presetId: string) => void
+    onLongPress: (presetId: string) => void,
+    onContextMenu: (presetId: string) => void
   ) {
     this.isDark = isDarkMode;
     this.onClick = onClick;
     this.onLongPress = onLongPress;
+    this.onContextMenu = onContextMenu;
 
     this.el = parent.createEl("div", { cls: "paper-toolbar__presets" });
     this.buildButtons(presets, activeId);
@@ -37,7 +40,8 @@ export class PresetStrip {
         preset,
         this.isDark,
         this.onClick,
-        this.onLongPress
+        this.onLongPress,
+        this.onContextMenu
       );
       if (preset.id === activeId) btn.setActive(true);
       this.buttons.set(preset.id, btn);
@@ -54,6 +58,15 @@ export class PresetStrip {
     // Rebuild all buttons
     this.el.empty();
     this.buildButtons(presets, activeId);
+  }
+
+  updateSinglePreset(preset: PenPreset): void {
+    const btn = this.buttons.get(preset.id);
+    if (btn) btn.update(preset);
+  }
+
+  getButtonElement(presetId: string): HTMLElement | null {
+    return this.buttons.get(presetId)?.el ?? null;
   }
 
   setDarkMode(isDark: boolean): void {

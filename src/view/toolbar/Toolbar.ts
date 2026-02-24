@@ -30,6 +30,10 @@ export class Toolbar {
   private popover: CustomizePopover | null = null;
   private autoMinimizer: AutoMinimizer;
 
+  // When non-null, the popover is editing this preset without changing the active pen
+  private editingPresetId: string | null = null;
+  private editingState: ToolbarState | null = null;
+
   // Buttons
   private undoBtn: ToolbarButton | null = null;
   private redoBtn: ToolbarButton | null = null;
@@ -100,7 +104,8 @@ export class Toolbar {
       this.state.activePresetId,
       this.isDark,
       (presetId) => this.handlePresetClick(presetId),
-      (presetId) => this.handlePresetLongPress(presetId)
+      (presetId) => this.handlePresetLongPress(presetId),
+      (presetId) => this.handlePresetContextMenu(presetId)
     );
 
     // Separator
@@ -152,7 +157,8 @@ export class Toolbar {
 
     // If tapping the already-active preset, open its settings panel
     if (this.state.activePresetId === presetId && this.state.activeTool === "pen") {
-      this.openPopover();
+      const anchor = this.presetStrip?.getButtonElement(presetId);
+      this.openPopover(anchor ?? undefined);
       return;
     }
 
@@ -164,18 +170,32 @@ export class Toolbar {
   }
 
   private handlePresetLongPress(presetId: string): void {
+    // Same as right-click: open settings without selecting the preset
+    this.handlePresetContextMenu(presetId);
+  }
+
+  private handlePresetContextMenu(presetId: string): void {
     const preset = this.presetManager.getPreset(presetId);
     if (!preset) return;
 
-    // Apply the preset first
-    this.applyPreset(preset);
-    this.state.activePresetId = presetId;
-    this.presetStrip?.setActivePreset(presetId);
-    this.currentPenBtn?.update(this.state.colorId, this.state.penType);
-    this.callbacks.onPenSettingsChange({ ...this.state });
+    // Build an editing state from the preset without touching the active pen
+    this.editingPresetId = presetId;
+    this.editingState = {
+      activeTool: "pen",
+      activePresetId: presetId,
+      penType: preset.penType,
+      colorId: preset.colorId,
+      width: preset.width,
+      smoothing: preset.smoothing,
+      grain: preset.grain ?? DEFAULT_GRAIN_VALUE,
+      inkPreset: preset.inkPreset ?? "standard",
+      nibAngle: preset.nibAngle ?? this.state.nibAngle,
+      nibThickness: preset.nibThickness ?? this.state.nibThickness,
+      nibPressure: preset.nibPressure ?? this.state.nibPressure,
+    };
 
-    // Open popover anchored to that preset
-    this.openPopover();
+    const anchor = this.presetStrip?.getButtonElement(presetId);
+    this.openPopover(anchor ?? undefined);
   }
 
   private applyPreset(preset: PenPreset): void {
@@ -207,30 +227,60 @@ export class Toolbar {
     }
   }
 
-  private openPopover(): void {
+  private openPopover(anchor?: HTMLElement): void {
     if (this.popover) return;
+
+    const isEditing = this.editingPresetId !== null;
+    const popoverState = this.editingState ?? this.state;
+    const popoverPresetId = this.editingPresetId ?? this.state.activePresetId;
 
     this.autoMinimizer.suspend();
     this.popover = new CustomizePopover(
-      this.state,
+      popoverState,
       this.position,
       this.isDark,
-      this.state.activePresetId ? this.presetManager.getPreset(this.state.activePresetId) ?? null : null,
-      this.currentPenBtn?.el ?? this.el,
+      popoverPresetId ? this.presetManager.getPreset(popoverPresetId) ?? null : null,
+      anchor ?? this.currentPenBtn?.el ?? this.el,
       {
         onStateChange: (partial) => {
-          Object.assign(this.state, partial);
-          // Check if current state still matches active preset
-          const match = this.presetManager.findMatchingPreset(this.state);
-          if (match !== this.state.activePresetId) {
-            this.state.activePresetId = match;
-            this.presetStrip?.setActivePreset(match);
+          if (isEditing && this.editingState && this.editingPresetId) {
+            // Editing a preset without changing the active pen
+            Object.assign(this.editingState, partial);
+            const data = this.presetManager.createFromState(this.editingState);
+            this.presetManager.updatePreset(this.editingPresetId, data);
+            const updated = this.presetManager.getPreset(this.editingPresetId);
+            if (updated) this.presetStrip?.updateSinglePreset(updated);
+            this.callbacks.onPresetSave(this.presetManager.toArray(), this.state.activePresetId);
+            // If the edited preset is also the active pen, sync changes
+            if (this.editingPresetId === this.state.activePresetId) {
+              Object.assign(this.state, partial);
+              this.currentPenBtn?.update(this.state.colorId, this.state.penType);
+              this.callbacks.onPenSettingsChange({ ...this.state });
+            }
+          } else {
+            Object.assign(this.state, partial);
+            if (this.state.activePresetId) {
+              // Auto-save changes back to the active preset
+              const data = this.presetManager.createFromState(this.state);
+              this.presetManager.updatePreset(this.state.activePresetId, data);
+              const updated = this.presetManager.getPreset(this.state.activePresetId);
+              if (updated) this.presetStrip?.updateSinglePreset(updated);
+              this.callbacks.onPresetSave(this.presetManager.toArray(), this.state.activePresetId);
+            } else {
+              // No active preset — check if state now matches one
+              const match = this.presetManager.findMatchingPreset(this.state);
+              if (match !== this.state.activePresetId) {
+                this.state.activePresetId = match;
+                this.presetStrip?.setActivePreset(match);
+              }
+            }
+            this.currentPenBtn?.update(this.state.colorId, this.state.penType);
+            this.callbacks.onPenSettingsChange({ ...this.state });
           }
-          this.currentPenBtn?.update(this.state.colorId, this.state.penType);
-          this.callbacks.onPenSettingsChange({ ...this.state });
         },
         onSaveAsNew: () => {
-          const data = this.presetManager.createFromState(this.state);
+          const sourceState = this.editingState ?? this.state;
+          const data = this.presetManager.createFromState(sourceState);
           const added = this.presetManager.addPreset(data);
           if (added) {
             this.state.activePresetId = added.id;
@@ -239,19 +289,15 @@ export class Toolbar {
             this.popover?.setActivePreset(added);
           }
         },
-        onUpdatePreset: () => {
-          if (!this.state.activePresetId) return;
-          const data = this.presetManager.createFromState(this.state);
-          this.presetManager.updatePreset(this.state.activePresetId, data);
+        onDeletePreset: () => {
+          const targetId = this.editingPresetId ?? this.state.activePresetId;
+          if (!targetId) return;
+          this.presetManager.deletePreset(targetId);
+          if (targetId === this.state.activePresetId) {
+            this.state.activePresetId = null;
+          }
           this.presetStrip?.updatePresets(this.presetManager.getPresets(), this.state.activePresetId);
           this.callbacks.onPresetSave(this.presetManager.toArray(), this.state.activePresetId);
-        },
-        onDeletePreset: () => {
-          if (!this.state.activePresetId) return;
-          this.presetManager.deletePreset(this.state.activePresetId);
-          this.state.activePresetId = null;
-          this.presetStrip?.updatePresets(this.presetManager.getPresets(), null);
-          this.callbacks.onPresetSave(this.presetManager.toArray(), null);
           this.popover?.setActivePreset(null);
         },
         onPositionChange: (pos) => {
@@ -269,6 +315,8 @@ export class Toolbar {
     if (!this.popover) return;
     this.popover.destroy();
     this.popover = null;
+    this.editingPresetId = null;
+    this.editingState = null;
     this.autoMinimizer.resume();
   }
 

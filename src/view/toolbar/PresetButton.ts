@@ -20,7 +20,8 @@ export class PresetButton {
     preset: PenPreset,
     isDarkMode: boolean,
     onClick: (presetId: string) => void,
-    onLongPress: (presetId: string) => void
+    onLongPress: (presetId: string) => void,
+    onContextMenu: (presetId: string) => void
   ) {
     this.preset = preset;
     this.isDark = isDarkMode;
@@ -64,6 +65,13 @@ export class PresetButton {
     this.el.addEventListener("pointerup", endLongPress);
     this.el.addEventListener("pointercancel", cancelLongPress);
     this.el.addEventListener("pointerleave", cancelLongPress);
+
+    // Right-click opens settings without selecting the preset
+    this.el.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      cancelLongPress();
+      onContextMenu(preset.id);
+    });
   }
 
   private renderSwatch(): void {
