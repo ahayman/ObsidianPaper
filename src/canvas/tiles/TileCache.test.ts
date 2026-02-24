@@ -34,6 +34,7 @@ function makeConfig(overrides?: Partial<TileGridConfig>): TileGridConfig {
     overscanTiles: 1,
     maxTilePhysical: 2048,
     minTilePhysical: 256,
+    resolutionScale: 1,
     ...overrides,
   };
 }

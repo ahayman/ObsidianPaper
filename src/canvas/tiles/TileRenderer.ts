@@ -53,11 +53,6 @@ export class TileRenderer {
     this.config = config;
     this.pathCache = pathCache;
     this.useEngine = useEngine;
-    if (useEngine) {
-      // Create a Canvas2DEngine — tiles use OffscreenCanvas which requires Canvas2D.
-      // The engine is reused across tiles via setCanvas().
-      // We defer creation until the first renderTile() call since we need a canvas.
-    }
   }
 
   initGrain(): void {

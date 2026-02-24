@@ -241,6 +241,17 @@ export class Canvas2DEngine implements RenderEngine {
     this.activeCtx.drawImage(t.canvas as CanvasImageSource, dx, dy, dw, dh);
   }
 
+  maskToPath(vertices: Float32Array): void {
+    const path = verticesToPath2D(vertices);
+    if (!path) return;
+    const ctx = this.activeCtx;
+    ctx.save();
+    ctx.globalCompositeOperation = "destination-in";
+    ctx.globalAlpha = 1;
+    ctx.fill(path);
+    ctx.restore();
+  }
+
   // --- Stamp rendering ---
 
   drawStamps(texture: TextureHandle, data: Float32Array): void {

@@ -45,6 +45,9 @@ import {
 import type { TileGridConfig, TileKey } from "./tiles/TileTypes";
 import type { RenderEngine } from "./engine/RenderEngine";
 import { createRenderEngine } from "./engine/EngineFactory";
+import { WebGLTileEngine } from "./tiles/WebGLTileEngine";
+import { WebGLTileCache } from "./tiles/WebGLTileCache";
+import { WebGLTileCompositor } from "./tiles/WebGLTileCompositor";
 
 /**
  * Multi-layer canvas renderer managing:
@@ -76,6 +79,12 @@ export class Renderer {
   private engineType: RenderEngineType;
   private activeEngine: RenderEngine | null = null;
   private engineOverlay: HTMLElement | null = null;
+
+  // WebGL tile compositing canvases (when engineType === "webgl")
+  private webglStaticCanvas: HTMLCanvasElement | null = null;
+  private webglGL: WebGL2RenderingContext | null = null;
+  private overlayCanvas: HTMLCanvasElement | null = null;
+  private overlayCtx: CanvasRenderingContext2D | null = null;
 
   // Overscan: background + static canvases are rendered larger than viewport.
   // Sized dynamically to cover the current page(s) so CSS zoom-out reveals
@@ -188,6 +197,22 @@ export class Renderer {
     this.activeCanvas.style.top = "0px";
     resizeHighDPICanvas(this.activeCanvas, this.activeCtx, width, height, this.isMobile);
     resizeHighDPICanvas(this.predictionCanvas, this.predictionCtx, width, height, this.isMobile);
+
+    // Resize WebGL canvases if present
+    if (this.webglStaticCanvas) {
+      const dpr = getEffectiveDPR(this.isMobile);
+      this.webglStaticCanvas.width = Math.round(width * dpr);
+      this.webglStaticCanvas.height = Math.round(height * dpr);
+      this.webglStaticCanvas.style.width = `${width}px`;
+      this.webglStaticCanvas.style.height = `${height}px`;
+    }
+    if (this.overlayCanvas && this.overlayCtx) {
+      const dpr = getEffectiveDPR(this.isMobile);
+      this.overlayCanvas.width = Math.round(width * dpr);
+      this.overlayCanvas.height = Math.round(height * dpr);
+      this.overlayCanvas.style.width = `${width}px`;
+      this.overlayCanvas.style.height = `${height}px`;
+    }
   }
 
   /**
@@ -347,26 +372,41 @@ export class Renderer {
       // Background is rendered into tiles — hide the background canvas
       this.backgroundCanvas.style.display = "none";
 
-      // Static canvas: composited from tiles (viewport-sized, no overscan offset)
-      this.staticCanvas.style.left = "0px";
-      this.staticCanvas.style.top = "0px";
-      const dpr = getEffectiveDPR(this.isMobile);
-      if (this.staticCanvas.width !== Math.round(this.cssWidth * dpr) ||
-          this.staticCanvas.height !== Math.round(this.cssHeight * dpr)) {
-        this.dpr = setupHighDPICanvas(
-          this.staticCanvas, this.staticCtx,
-          this.cssWidth, this.cssHeight, this.isMobile,
+      if (this.tiledLayer.useWebGLTiles && this.webglStaticCanvas) {
+        // WebGL path: compositor draws directly to webglStaticCanvas.
+        // CSS layer promotion (will-change: contents, translateZ(0)) ensures
+        // Chromium gives the canvas its own compositor layer and re-reads
+        // the drawing buffer after each draw.
+        this.staticCanvas.style.display = "none";
+        this.tiledLayer.setOverlay(afterBackground ?? null);
+        this.tiledLayer.renderVisible(
+          this.staticCtx, this.staticCanvas,
+          this.cssWidth, this.cssHeight,
+          doc, pageLayout, spatialIndex, this.isDarkMode,
+        );
+        // Flush GL commands to ensure the GPU finishes before the
+        // compositor reads the drawing buffer for presentation.
+        this.webglGL?.flush();
+      } else {
+        // Canvas2D path: compositing goes to staticCanvas
+        this.staticCanvas.style.display = "";
+        this.staticCanvas.style.left = "0px";
+        this.staticCanvas.style.top = "0px";
+        const dpr = getEffectiveDPR(this.isMobile);
+        if (this.staticCanvas.width !== Math.round(this.cssWidth * dpr) ||
+            this.staticCanvas.height !== Math.round(this.cssHeight * dpr)) {
+          this.dpr = setupHighDPICanvas(
+            this.staticCanvas, this.staticCtx,
+            this.cssWidth, this.cssHeight, this.isMobile,
+          );
+        }
+        this.tiledLayer.setOverlay(afterBackground ?? null);
+        this.tiledLayer.renderVisible(
+          this.staticCtx, this.staticCanvas,
+          this.cssWidth, this.cssHeight,
+          doc, pageLayout, spatialIndex, this.isDarkMode,
         );
       }
-
-      // Store overlay callback so it persists across composites (scheduler, gesture)
-      this.tiledLayer.setOverlay(afterBackground ?? null);
-
-      this.tiledLayer.renderVisible(
-        this.staticCtx, this.staticCanvas,
-        this.cssWidth, this.cssHeight,
-        doc, pageLayout, spatialIndex, this.isDarkMode,
-      );
       return;
     }
 
@@ -472,6 +512,9 @@ export class Renderer {
         this.cssWidth, this.cssHeight,
         doc, pageLayout, spatialIndex, this.isDarkMode,
       );
+      if (this.tiledLayer.useWebGLTiles) {
+        this.webglGL?.flush();
+      }
       return;
     }
 
@@ -942,6 +985,7 @@ export class Renderer {
     this.grainGenerator.initialize();
     if (this.tiledLayer) {
       this.tiledLayer.tileRenderer.setGrainGenerator(this.grainGenerator);
+      this.tiledLayer.setWebGLGrainGenerator(this.grainGenerator);
       this.tiledLayer.initWorkerGrain(this.grainGenerator);
     }
   }
@@ -955,6 +999,7 @@ export class Renderer {
     this.stampManager.getCache(DEFAULT_GRAIN_VALUE);
     if (this.tiledLayer) {
       this.tiledLayer.tileRenderer.setStampManager(this.stampManager);
+      this.tiledLayer.setWebGLStampManager(this.stampManager);
       this.tiledLayer.initWorkerStamps();
     }
   }
@@ -968,6 +1013,7 @@ export class Renderer {
     this.inkStampManager.getCache("standard");
     if (this.tiledLayer) {
       this.tiledLayer.tileRenderer.setInkStampManager(this.inkStampManager);
+      this.tiledLayer.setWebGLInkStampManager(this.inkStampManager);
       this.tiledLayer.initWorkerInkStamps();
     }
   }
@@ -985,6 +1031,7 @@ export class Renderer {
   setGrainStrength(penType: PenType, strength: number): void {
     this.grainStrengthOverrides.set(penType, strength);
     this.tiledLayer?.tileRenderer.setGrainStrength(penType, strength);
+    this.tiledLayer?.setWebGLGrainStrength(penType, strength);
     this.tiledLayer?.updateWorkerGrain(this.grainGenerator, this.grainStrengthOverrides);
   }
 
@@ -1018,6 +1065,12 @@ export class Renderer {
     this.staticCanvas.remove();
     this.activeCanvas.remove();
     this.predictionCanvas.remove();
+    this.webglStaticCanvas?.remove();
+    this.webglStaticCanvas = null;
+    this.webglGL = null;
+    this.overlayCanvas?.remove();
+    this.overlayCanvas = null;
+    this.overlayCtx = null;
   }
 
   getStaticCanvas(): HTMLCanvasElement {
@@ -1047,6 +1100,9 @@ export class Renderer {
         this.staticCtx, this.staticCanvas,
         this.cssWidth, this.cssHeight,
       );
+      if (this.tiledLayer.useWebGLTiles) {
+        this.webglGL?.flush();
+      }
     } else {
       // Legacy: CSS-transform the overscan background + static canvases
       const oxAdj = tx + this.overscanOffsetX * (scale - 1);
@@ -1060,6 +1116,10 @@ export class Renderer {
     const viewportValue = `translate(${tx}px, ${ty}px) scale(${scale})`;
     this.activeCanvas.style.transform = viewportValue;
     this.predictionCanvas.style.transform = viewportValue;
+    // In WebGL tiled mode, the overlay is re-drawn at the current camera position
+    // by gestureUpdate() → drawOverlay(), so no CSS transform needed.
+    // In non-WebGL mode there's no overlay canvas.
+    // (Applying CSS transform here would cause double-movement.)
   }
 
   /**
@@ -1075,6 +1135,8 @@ export class Renderer {
     }
     this.activeCanvas.style.transform = "";
     this.predictionCanvas.style.transform = "";
+    // Overlay canvas: no CSS gesture transform is applied in WebGL tiled mode
+    // (drawOverlay handles positioning), so nothing to clear.
   }
 
   // ─── Tile-Based Rendering ──────────────────────────────────────
@@ -1087,26 +1149,61 @@ export class Renderer {
     if (this.tiledLayer) return;
 
     const dpr = getEffectiveDPR(this.isMobile);
+    const useWebGL = this.engineType !== "canvas2d";
     const tileConfig: TileGridConfig = {
       ...DEFAULT_TILE_CONFIG,
       dpr,
       ...config,
     };
 
+    // Create WebGL static canvas + overlay canvas when in WebGL mode
+    let webglCanvas: HTMLCanvasElement | undefined;
+    if (useWebGL) {
+      this.webglStaticCanvas = this.createCanvasLayer("paper-webgl-static-canvas");
+      // Size to viewport
+      this.webglStaticCanvas.width = Math.round(this.cssWidth * dpr);
+      this.webglStaticCanvas.height = Math.round(this.cssHeight * dpr);
+      this.webglStaticCanvas.style.width = `${this.cssWidth}px`;
+      this.webglStaticCanvas.style.height = `${this.cssHeight}px`;
+
+      this.overlayCanvas = this.createCanvasLayer("paper-overlay-canvas");
+      this.overlayCanvas.width = Math.round(this.cssWidth * dpr);
+      this.overlayCanvas.height = Math.round(this.cssHeight * dpr);
+      this.overlayCanvas.style.width = `${this.cssWidth}px`;
+      this.overlayCanvas.style.height = `${this.cssHeight}px`;
+      this.overlayCtx = this.overlayCanvas.getContext("2d");
+
+      webglCanvas = this.webglStaticCanvas;
+    }
+
     this.tiledLayer = new TiledStaticLayer(
       this.camera,
       tileConfig,
       this.pathCache,
-      this.engineType !== "canvas2d",
+      useWebGL,
+      webglCanvas,
     );
 
-    // Share grain resources with main-thread tile renderer
+    // Share overlay canvas with tiled layer for WebGL mode
+    if (useWebGL && this.overlayCanvas && this.overlayCtx) {
+      this.tiledLayer.setOverlayCanvas(this.overlayCanvas, this.overlayCtx);
+    }
+
+    // Cache GL context and wire up post-composite flush for async tile arrivals
+    if (useWebGL && this.webglStaticCanvas) {
+      this.webglGL = this.webglStaticCanvas.getContext("webgl2");
+      this.tiledLayer.setAfterCompositeCallback(() => this.webglGL?.flush());
+    }
+
+    // Share grain resources with tile renderers
     if (this.grainGenerator) {
       this.tiledLayer.tileRenderer.setGrainGenerator(this.grainGenerator);
+      this.tiledLayer.setWebGLGrainGenerator(this.grainGenerator);
       this.tiledLayer.initWorkerGrain(this.grainGenerator);
     }
     for (const [penType, strength] of this.grainStrengthOverrides) {
       this.tiledLayer.tileRenderer.setGrainStrength(penType, strength);
+      this.tiledLayer.setWebGLGrainStrength(penType, strength);
     }
     if (this.grainStrengthOverrides.size > 0) {
       this.tiledLayer.updateWorkerGrain(this.grainGenerator, this.grainStrengthOverrides);
@@ -1115,18 +1212,29 @@ export class Renderer {
     // Share stamp resources
     if (this.stampManager) {
       this.tiledLayer.tileRenderer.setStampManager(this.stampManager);
+      this.tiledLayer.setWebGLStampManager(this.stampManager);
       this.tiledLayer.initWorkerStamps();
     }
     if (this.inkStampManager) {
       this.tiledLayer.tileRenderer.setInkStampManager(this.inkStampManager);
+      this.tiledLayer.setWebGLInkStampManager(this.inkStampManager);
       this.tiledLayer.initWorkerInkStamps();
     }
+
+    // Share pipeline
+    this.tiledLayer.setPipeline(this.pipeline);
   }
 
   disableTiling(): void {
     this.tiledLayer?.destroy();
     this.tiledLayer = null;
     this.backgroundCanvas.style.display = "";
+    this.staticCanvas.style.display = "";
+    this.webglStaticCanvas?.remove();
+    this.webglStaticCanvas = null;
+    this.overlayCanvas?.remove();
+    this.overlayCanvas = null;
+    this.overlayCtx = null;
   }
 
   /**
@@ -1307,6 +1415,21 @@ class TiledStaticLayer {
   /** Current rendering pipeline. */
   private pipeline: RenderPipeline = "textures";
 
+  // WebGL tile rendering components (null when Canvas2D mode)
+  private webglTileEngine: WebGLTileEngine | null = null;
+  private glCache: WebGLTileCache | null = null;
+  private glCompositor: WebGLTileCompositor | null = null;
+  /** True when WebGL tile path is active. Switches to false on context loss. */
+  useWebGLTiles = false;
+  private webglOverlayCtx: CanvasRenderingContext2D | null = null;
+  private webglOverlayCanvas: HTMLCanvasElement | null = null;
+  /** Reference to the webgl canvas for context loss event handling. */
+  private webglCanvas: HTMLCanvasElement | null = null;
+  /** Tracked config state for context restore re-initialization. */
+  private currentGrainGenerator: GrainTextureGenerator | null = null;
+  private currentStampManager: StampTextureManager | null = null;
+  private currentInkStampManager: InkStampTextureManager | null = null;
+
   // Cached state for scheduler callbacks
   private currentDoc: PaperDocument | null = null;
   private currentPageLayout: PageRect[] = [];
@@ -1318,8 +1441,10 @@ class TiledStaticLayer {
   private currentScreenHeight = 0;
   /** Optional callback to draw overlays (e.g. page icons) after compositing. */
   private overlayCallback: ((ctx: CanvasRenderingContext2D, visibleRect: [number, number, number, number]) => void) | null = null;
+  /** Callback invoked after WebGL compositing (e.g. to flush GL or blit). */
+  private afterCompositeCallback: (() => void) | null = null;
 
-  constructor(camera: Camera, config: TileGridConfig, pathCache: StrokePathCache, useEngine = false) {
+  constructor(camera: Camera, config: TileGridConfig, pathCache: StrokePathCache, useEngine = false, webglCanvas?: HTMLCanvasElement) {
     this.camera = camera;
     this.config = config;
     this.grid = new TileGrid(config);
@@ -1327,21 +1452,154 @@ class TiledStaticLayer {
     this.tileRenderer = new TileRenderer(this.grid, config, pathCache, useEngine);
     this.compositor = new TileCompositor(this.grid, config);
 
+    // Try to initialize WebGL tile path
+    if (webglCanvas) {
+      try {
+        const webglEngine = new WebGLTileEngine(webglCanvas, config, pathCache);
+        const gl = webglEngine.getGL();
+        this.webglTileEngine = webglEngine;
+        this.glCache = new WebGLTileCache(gl, config);
+        this.glCompositor = new WebGLTileCompositor(gl, this.grid, config);
+        this.useWebGLTiles = true;
+      } catch (e) {
+        console.warn("[TiledStaticLayer] WebGL tile init failed, falling back to Canvas2D:", e);
+        this.useWebGLTiles = false;
+      }
+    }
+
     // Main-thread fallback scheduler (used if workers fail)
     this.mainThreadScheduler = new TileRenderScheduler(
       (key) => this.renderOneTile(key),
       () => this.onSchedulerBatchComplete(),
     );
 
-    // Worker-based scheduler
+    // Worker-based scheduler (with optional WebGL tile result callback)
+    const onTileResult = this.useWebGLTiles
+      ? (tileKey: string, bitmap: ImageBitmap, strokeIds: string[], dispatchBand: number | undefined) => {
+          this.handleWebGLTileResult(tileKey, bitmap, strokeIds, dispatchBand);
+        }
+      : undefined;
+
     this.workerScheduler = new WorkerTileScheduler(
       config,
       this.cache,
       this.grid,
       () => this.onSchedulerBatchComplete(),
+      onTileResult,
     );
 
     this.useMainThreadFallback = this.workerScheduler.fallbackToMainThread;
+
+    // Context loss handling for WebGL tile path
+    if (webglCanvas && this.useWebGLTiles) {
+      this.webglCanvas = webglCanvas;
+      webglCanvas.addEventListener("webglcontextlost", (e) => {
+        e.preventDefault();
+        console.warn("[TiledStaticLayer] WebGL context lost, falling back to Canvas2D");
+        this.useWebGLTiles = false;
+        // GPU resources are auto-destroyed on context loss — just clear refs
+        this.glCache?.clear();
+      });
+
+      webglCanvas.addEventListener("webglcontextrestored", () => {
+        console.info("[TiledStaticLayer] WebGL context restored, rebuilding resources");
+        try {
+          // Re-create the tile engine, cache, and compositor on the restored context
+          const newEngine = new WebGLTileEngine(webglCanvas, config, pathCache);
+          const gl = newEngine.getGL();
+          this.webglTileEngine?.destroy();
+          this.webglTileEngine = newEngine;
+          this.glCache = new WebGLTileCache(gl, config);
+          this.glCompositor?.destroy();
+          this.glCompositor = new WebGLTileCompositor(gl, this.grid, config);
+
+          // Re-apply config state
+          if (this.currentGrainGenerator) {
+            this.webglTileEngine.setGrainGenerator(this.currentGrainGenerator);
+          }
+          if (this.currentStampManager) {
+            this.webglTileEngine.setStampManager(this.currentStampManager);
+          }
+          if (this.currentInkStampManager) {
+            this.webglTileEngine.setInkStampManager(this.currentInkStampManager);
+          }
+          this.webglTileEngine.setPipeline(this.pipeline);
+
+          this.useWebGLTiles = true;
+          this.glCache.invalidateAll();
+        } catch (err) {
+          console.warn("[TiledStaticLayer] WebGL context restore failed:", err);
+          this.useWebGLTiles = false;
+        }
+      });
+    }
+  }
+
+  /** Set a callback invoked after async WebGL compositing to blit to Canvas2D. */
+  setAfterCompositeCallback(cb: (() => void) | null): void {
+    this.afterCompositeCallback = cb;
+  }
+
+  /** Set the overlay canvas for WebGL mode (page icons drawn here). */
+  setOverlayCanvas(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void {
+    this.webglOverlayCanvas = canvas;
+    this.webglOverlayCtx = ctx;
+  }
+
+  /** Handle worker tile results in WebGL mode: upload bitmap as GPU texture. */
+  private handleWebGLTileResult(
+    tileKey: string,
+    bitmap: ImageBitmap,
+    strokeIds: string[],
+    dispatchBand: number | undefined,
+  ): void {
+    if (!this.glCache) {
+      bitmap.close();
+      return;
+    }
+
+    // Discard results from cancelled jobs (cancel() clears inFlight → dispatchBand undefined)
+    if (dispatchBand === undefined) {
+      bitmap.close();
+      return;
+    }
+
+    // Parse "col,row" back to TileKey
+    const parts = tileKey.split(",");
+    if (parts.length !== 2) { bitmap.close(); return; }
+    const col = parseInt(parts[0], 10);
+    const row = parseInt(parts[1], 10);
+    if (isNaN(col) || isNaN(row)) { bitmap.close(); return; }
+
+    const key = { col, row };
+    const existing = this.glCache.getStale(key);
+
+    // Never overwrite an FBO tile with a worker bitmap. FBO tiles can be
+    // re-rendered synchronously by WebGLTileEngine.renderTile() at any time,
+    // while uploadFromBitmap() would destroy the FBO — making the tile
+    // permanently unable to be FBO-rendered (renderTile bails on fbo===null).
+    // If the tile is dirty, renderVisible() will FBO-render it on the next frame.
+    if (existing?.fbo) {
+      bitmap.close();
+      return;
+    }
+
+    const worldBounds = this.grid.tileBounds(col, row);
+
+    this.glCache.uploadFromBitmap(key, bitmap, worldBounds, dispatchBand, new Set(strokeIds));
+    bitmap.close();
+
+    // Schedule a batched composite
+    this.scheduleWebGLComposite();
+  }
+
+  private webglCompositeRafId: number | null = null;
+  private scheduleWebGLComposite(): void {
+    if (this.webglCompositeRafId !== null) return;
+    this.webglCompositeRafId = requestAnimationFrame(() => {
+      this.webglCompositeRafId = null;
+      this.onSchedulerBatchComplete();
+    });
   }
 
   // ─── Worker Grain / Document Sync ────────────────────────────
@@ -1377,8 +1635,30 @@ class TiledStaticLayer {
   setPipeline(pipeline: RenderPipeline): void {
     this.pipeline = pipeline;
     this.tileRenderer.setPipeline(pipeline);
+    this.webglTileEngine?.setPipeline(pipeline);
     // Force doc resync so workers pick up the new pipeline
     this.bumpDocVersion();
+  }
+
+  // ─── WebGL Tile Engine Config Forwarding ───────────────────
+
+  setWebGLGrainGenerator(generator: GrainTextureGenerator | null): void {
+    this.currentGrainGenerator = generator;
+    this.webglTileEngine?.setGrainGenerator(generator);
+  }
+
+  setWebGLGrainStrength(penType: PenType, strength: number): void {
+    this.webglTileEngine?.setGrainStrength(penType, strength);
+  }
+
+  setWebGLStampManager(manager: StampTextureManager | null): void {
+    this.currentStampManager = manager;
+    this.webglTileEngine?.setStampManager(manager);
+  }
+
+  setWebGLInkStampManager(manager: InkStampTextureManager | null): void {
+    this.currentInkStampManager = manager;
+    this.webglTileEngine?.setInkStampManager(manager);
   }
 
   /** Send document state to workers only if it changed since last sync. */
@@ -1458,13 +1738,56 @@ class TiledStaticLayer {
     const visibleTiles = this.grid.getVisibleTiles(this.camera, screenWidth, screenHeight);
     const visibleKeySet = new Set(visibleTiles.map(tileKeyString));
 
-    // Protect visible tiles from eviction during sync render and async scheduling.
-    // Protection persists until next renderVisible/gestureUpdate/endGesture.
+    if (this.useWebGLTiles && this.glCache && this.glCompositor && this.webglTileEngine) {
+      // ─── WebGL path ───────────────────────────────────────
+      this.glCache.protect(visibleKeySet);
+      this.glCompositor.setDarkMode(isDarkMode);
+
+      // Sync-render visible tiles via WebGLTileEngine into FBO textures.
+      // Renders both blank tiles (not in cache) and dirty/wrong-band tiles.
+      // This is the key advantage of the WebGL path: FBO rendering is fast enough
+      // to do synchronously for all visible tiles on every renderVisible() call.
+      let renderedCount = 0;
+      for (const key of visibleTiles) {
+        const existing = this.glCache.getStale(key);
+        if (!existing || existing.dirty || existing.renderedAtBand !== currentZoomBand) {
+          renderedCount++;
+          const worldBounds = this.grid.tileBounds(key.col, key.row);
+          const entry = this.glCache.allocate(key, worldBounds, currentZoomBand);
+          this.webglTileEngine.renderTile(entry, doc, pageLayout, spatialIndex, isDarkMode);
+          this.glCache.markClean(key);
+        }
+      }
+      // Diagnostic: log band/tile-size info on each renderVisible
+      if (visibleTiles.length > 0) {
+        const sample = this.glCache.getStale(visibleTiles[0]);
+        const tileScreenPx = this.config.tileWorldSize * this.camera.zoom * this.config.dpr;
+        console.log(`[renderVisible] band=${currentZoomBand} zoom=${this.camera.zoom.toFixed(2)} rendered=${renderedCount}/${visibleTiles.length} texSize=${sample?.textureWidth ?? "?"}px screenQuad=${tileScreenPx.toFixed(0)}px`);
+      }
+
+      // Schedule async re-renders for off-screen dirty tiles (background prefetch)
+      const toSchedule: TileKey[] = [];
+      const dirtyGLTiles = this.glCache.getDirtyTiles(visibleKeySet);
+      for (const entry of dirtyGLTiles) {
+        if (!visibleKeySet.has(tileKeyString(entry.key))) {
+          toSchedule.push(entry.key);
+        }
+      }
+      if (toSchedule.length > 0) {
+        this.scheduleAsync(toSchedule, visibleKeySet);
+      }
+
+      // Composite tile textures onto webglStaticCanvas
+      this.glCompositor.composite(this.camera, screenWidth, screenHeight, this.glCache);
+      this.webglTileEngine?.resetState();
+      this.drawOverlay();
+
+      return;
+    }
+
+    // ─── Canvas2D path (unchanged) ──────────────────────────
     this.cache.protect(visibleKeySet);
 
-    // Only sync-render tiles that have NO cached content (would be blank spots).
-    // Tiles with stale content (dirty or wrong band) keep their old pixels and
-    // are re-rendered asynchronously to avoid blocking the UI.
     for (const key of visibleTiles) {
       if (!this.cache.getStale(key)) {
         const worldBounds = this.grid.tileBounds(key.col, key.row);
@@ -1474,8 +1797,6 @@ class TiledStaticLayer {
       }
     }
 
-    // Collect tiles needing async re-render: visible tiles at wrong band or dirty,
-    // plus any dirty non-visible tiles in the cache.
     const toSchedule: TileKey[] = [];
     for (const key of visibleTiles) {
       const entry = this.cache.getStale(key);
@@ -1493,7 +1814,6 @@ class TiledStaticLayer {
       this.scheduleAsync(toSchedule, visibleKeySet);
     }
 
-    // Composite with whatever is available (stale tiles shown at old resolution)
     this.compositor.composite(ctx, canvas, this.camera, screenWidth, screenHeight, this.cache);
     this.drawOverlay();
   }
@@ -1529,28 +1849,46 @@ class TiledStaticLayer {
     const currentZoomBand = zoomToZoomBand(this.camera.zoom);
     const affectedTiles = this.grid.getTilesForWorldBBox(stroke.bbox);
 
-    // Protect visible tiles from eviction during stroke bake
+    if (this.useWebGLTiles && this.glCache && this.glCompositor && this.webglTileEngine) {
+      // ─── WebGL path ───────────────────────────────────────
+      const visibleTiles = this.grid.getVisibleTiles(this.camera, screenWidth, screenHeight);
+      this.glCache.protect(new Set(visibleTiles.map(tileKeyString)));
+      this.glCompositor.setDarkMode(isDarkMode);
+
+      for (const key of affectedTiles) {
+        const worldBounds = this.grid.tileBounds(key.col, key.row);
+        let entry = this.glCache.getStale(key);
+        if (!entry || entry.renderedAtBand !== currentZoomBand) {
+          entry = this.glCache.allocate(key, worldBounds, currentZoomBand);
+        }
+        this.webglTileEngine.renderTile(entry, doc, pageLayout, spatialIndex, isDarkMode);
+        this.glCache.markClean(key);
+      }
+
+      this.glCache.unprotect();
+      this.syncDocumentToWorkers();
+      this.glCompositor.composite(this.camera, screenWidth, screenHeight, this.glCache);
+      this.webglTileEngine?.resetState();
+      this.drawOverlay();
+      return;
+    }
+
+    // ─── Canvas2D path (unchanged) ──────────────────────────
     const visibleTiles = this.grid.getVisibleTiles(this.camera, screenWidth, screenHeight);
     this.cache.protect(new Set(visibleTiles.map(tileKeyString)));
 
-    // Sync-render affected tiles on main thread for immediate feedback
     for (const key of affectedTiles) {
       const worldBounds = this.grid.tileBounds(key.col, key.row);
       let entry = this.cache.getStale(key);
       if (!entry || entry.renderedAtBand !== currentZoomBand) {
         entry = this.cache.allocate(key, worldBounds, currentZoomBand);
       }
-      // Full re-render of the tile (needed for correct overlapping)
       this.tileRenderer.renderTile(entry, doc, pageLayout, spatialIndex, isDarkMode);
       this.cache.markClean(key);
     }
 
     this.cache.unprotect();
-
-    // Sync doc state to workers so they have the new stroke for future renders
     this.syncDocumentToWorkers();
-
-    // Re-composite
     this.compositor.composite(ctx, canvas, this.camera, screenWidth, screenHeight, this.cache);
     this.drawOverlay();
   }
@@ -1577,26 +1915,45 @@ class TiledStaticLayer {
     this.currentScreenWidth = screenWidth;
     this.currentScreenHeight = screenHeight;
 
-    // Composite whatever tiles are cached (fast — just drawImage, any resolution)
+    const visibleTiles = this.grid.getVisibleTiles(this.camera, screenWidth, screenHeight);
+    const visibleKeySet = new Set(visibleTiles.map(tileKeyString));
+
+    if (this.useWebGLTiles && this.glCache && this.glCompositor && this.webglTileEngine) {
+      // ─── WebGL path ───────────────────────────────────────
+      this.glCache.protect(visibleKeySet);
+
+      // FBO-render any newly visible tiles synchronously
+      const currentZoomBand = zoomToZoomBand(this.camera.zoom);
+      for (const key of visibleTiles) {
+        if (!this.glCache.getStale(key)) {
+          const worldBounds = this.grid.tileBounds(key.col, key.row);
+          const entry = this.glCache.allocate(key, worldBounds, currentZoomBand);
+          if (this.currentDoc && this.currentSpatialIndex) {
+            this.webglTileEngine.renderTile(entry, this.currentDoc, this.currentPageLayout, this.currentSpatialIndex, this.currentIsDarkMode);
+          }
+          this.glCache.markClean(key);
+        }
+      }
+
+      this.glCompositor.composite(this.camera, screenWidth, screenHeight, this.glCache);
+      this.webglTileEngine.resetState();
+      this.drawOverlay();
+      return;
+    }
+
+    // ─── Canvas2D path (unchanged) ──────────────────────────
     this.compositor.composite(
       ctx, canvas, this.camera, screenWidth, screenHeight, this.cache,
     );
     this.drawOverlay();
 
-    // Identify tiles not yet cached at any resolution
-    const visibleTiles = this.grid.getVisibleTiles(this.camera, screenWidth, screenHeight);
-    const visibleKeySet = new Set(visibleTiles.map(tileKeyString));
     const missing: TileKey[] = [];
     for (const key of visibleTiles) {
       if (!this.cache.getStale(key)) {
         missing.push(key);
       }
     }
-
-    // Protect visible tiles from eviction by async renders
     this.cache.protect(visibleKeySet);
-
-    // Schedule missing tiles for async rendering (via workers or fallback)
     if (missing.length > 0) {
       this.scheduleAsync(missing, visibleKeySet);
     }
@@ -1610,6 +1967,7 @@ class TiledStaticLayer {
     this.gestureActive = false;
     this.cancelAsync();
     this.cache.unprotect();
+    this.glCache?.unprotect();
   }
 
   /** Set a callback to draw overlays (page icons) after every composite. */
@@ -1619,7 +1977,28 @@ class TiledStaticLayer {
 
   /** Draw the overlay in camera space on top of the current composite. */
   private drawOverlay(): void {
-    if (!this.overlayCallback || !this.currentCtx) return;
+    if (!this.overlayCallback) return;
+
+    if (this.useWebGLTiles && this.webglOverlayCtx && this.webglOverlayCanvas) {
+      // WebGL mode: draw overlay on the dedicated overlay canvas
+      const ctx = this.webglOverlayCtx;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, this.webglOverlayCanvas.width, this.webglOverlayCanvas.height);
+      ctx.save();
+      ctx.setTransform(this.config.dpr, 0, 0, this.config.dpr, 0, 0);
+      ctx.transform(
+        this.camera.zoom, 0, 0, this.camera.zoom,
+        -this.camera.x * this.camera.zoom,
+        -this.camera.y * this.camera.zoom,
+      );
+      const visibleRect = this.camera.getVisibleRect(this.currentScreenWidth, this.currentScreenHeight);
+      this.overlayCallback(ctx, visibleRect);
+      ctx.restore();
+      return;
+    }
+
+    // Canvas2D mode: draw overlay on the static canvas context
+    if (!this.currentCtx) return;
     const ctx = this.currentCtx;
     ctx.save();
     ctx.setTransform(this.config.dpr, 0, 0, this.config.dpr, 0, 0);
@@ -1635,10 +2014,12 @@ class TiledStaticLayer {
 
   invalidateStroke(strokeId: string): void {
     this.cache.invalidateStroke(strokeId);
+    this.glCache?.invalidateStroke(strokeId);
   }
 
   invalidateAll(): void {
     this.cache.invalidateAll();
+    this.glCache?.invalidateAll();
   }
 
   /**
@@ -1675,6 +2056,18 @@ class TiledStaticLayer {
    */
   private onSchedulerBatchComplete(): void {
     if (this.gestureActive) return;
+
+    if (this.useWebGLTiles && this.glCompositor && this.glCache) {
+      this.glCompositor.composite(
+        this.camera, this.currentScreenWidth, this.currentScreenHeight,
+        this.glCache,
+      );
+      this.webglTileEngine?.resetState();
+      this.drawOverlay();
+      this.afterCompositeCallback?.();
+      return;
+    }
+
     if (!this.currentCtx || !this.currentCanvas) return;
     this.compositor.composite(
       this.currentCtx, this.currentCanvas,
@@ -1688,11 +2081,24 @@ class TiledStaticLayer {
     this.mainThreadScheduler.destroy();
     this.workerScheduler.destroy();
     this.cache.clear();
+    this.glCache?.clear();
+    this.glCompositor?.destroy();
+    this.webglTileEngine?.destroy();
+    this.glCache = null;
+    this.glCompositor = null;
+    this.webglTileEngine = null;
+    if (this.webglCompositeRafId !== null) {
+      cancelAnimationFrame(this.webglCompositeRafId);
+      this.webglCompositeRafId = null;
+    }
     this.overlayCallback = null;
+    this.afterCompositeCallback = null;
     this.currentDoc = null;
     this.currentSpatialIndex = null;
     this.currentCtx = null;
     this.currentCanvas = null;
+    this.webglOverlayCtx = null;
+    this.webglOverlayCanvas = null;
   }
 }
 

@@ -114,7 +114,7 @@ in vec2 v_texcoord;
 out vec4 fragColor;
 void main() {
   vec2 uv = (v_texcoord + u_offset) * u_scale;
-  float grain = texture(u_texture, uv).r;
+  float grain = texture(u_texture, uv).a;
   fragColor = vec4(grain * u_strength);
 }
 `;

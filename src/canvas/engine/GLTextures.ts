@@ -134,3 +134,85 @@ export function destroyOffscreenTarget(
   gl.deleteTexture(target.colorTexture);
   gl.deleteRenderbuffer(target.stencilRB);
 }
+
+// ─── MSAA offscreen targets ────────────────────────────────────
+
+/**
+ * MSAA FBO for rendering, with a resolve FBO holding the final texture.
+ * Render into msaaFBO, then blitFramebuffer → resolveFBO to produce the texture.
+ */
+export interface GLMSAAOffscreenTarget {
+  /** Resolve FBO — its color attachment is the usable texture */
+  resolveFBO: WebGLFramebuffer;
+  colorTexture: WebGLTexture;
+  /** MSAA FBO — render target with multisampled renderbuffers */
+  msaaFBO: WebGLFramebuffer;
+  msaaColorRB: WebGLRenderbuffer;
+  msaaStencilRB: WebGLRenderbuffer;
+  samples: number;
+  width: number;
+  height: number;
+}
+
+export function createMSAAOffscreenTarget(
+  gl: WebGL2RenderingContext,
+  width: number,
+  height: number,
+  requestedSamples: number,
+): GLMSAAOffscreenTarget {
+  const maxSamples = gl.getParameter(gl.MAX_SAMPLES) as number;
+  const samples = Math.min(requestedSamples, maxSamples);
+
+  // --- MSAA FBO (render target) ---
+  const msaaFBO = gl.createFramebuffer()!;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, msaaFBO);
+
+  const msaaColorRB = gl.createRenderbuffer()!;
+  gl.bindRenderbuffer(gl.RENDERBUFFER, msaaColorRB);
+  gl.renderbufferStorageMultisample(gl.RENDERBUFFER, samples, gl.RGBA8, width, height);
+  gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, msaaColorRB);
+
+  const msaaStencilRB = gl.createRenderbuffer()!;
+  gl.bindRenderbuffer(gl.RENDERBUFFER, msaaStencilRB);
+  gl.renderbufferStorageMultisample(gl.RENDERBUFFER, samples, gl.STENCIL_INDEX8, width, height);
+  gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.STENCIL_ATTACHMENT, gl.RENDERBUFFER, msaaStencilRB);
+
+  // --- Resolve FBO (texture target) ---
+  const resolveFBO = gl.createFramebuffer()!;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, resolveFBO);
+
+  const colorTexture = createColorTexture(gl, width, height);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, colorTexture, 0);
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+  return { resolveFBO, colorTexture, msaaFBO, msaaColorRB, msaaStencilRB, samples, width, height };
+}
+
+/**
+ * Blit MSAA renderbuffer → resolve texture via glBlitFramebuffer.
+ */
+export function resolveMSAA(
+  gl: WebGL2RenderingContext,
+  target: GLMSAAOffscreenTarget,
+): void {
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER, target.msaaFBO);
+  gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, target.resolveFBO);
+  gl.blitFramebuffer(
+    0, 0, target.width, target.height,
+    0, 0, target.width, target.height,
+    gl.COLOR_BUFFER_BIT,
+    gl.NEAREST,
+  );
+}
+
+export function destroyMSAAOffscreenTarget(
+  gl: WebGL2RenderingContext,
+  target: GLMSAAOffscreenTarget,
+): void {
+  gl.deleteFramebuffer(target.msaaFBO);
+  gl.deleteRenderbuffer(target.msaaColorRB);
+  gl.deleteRenderbuffer(target.msaaStencilRB);
+  gl.deleteFramebuffer(target.resolveFBO);
+  gl.deleteTexture(target.colorTexture);
+}

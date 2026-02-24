@@ -131,6 +131,15 @@ export class GrainTextureGenerator {
   }
 
   /**
+   * Get the grain texture as an HTMLCanvasElement for WebGL texture upload.
+   * Returns null if not yet initialized.
+   */
+  getCanvas(): HTMLCanvasElement | null {
+    if (!this.initialized || !this.tileCanvas) return null;
+    return this.tileCanvas;
+  }
+
+  /**
    * Whether the generator has been initialized.
    */
   isInitialized(): boolean {

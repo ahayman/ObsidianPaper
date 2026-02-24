@@ -38,6 +38,8 @@ function createMockCallbacks(): InputCallbacks {
     onPinchEnd: jest.fn(),
     onTwoFingerTap: jest.fn(),
     onThreeFingerTap: jest.fn(),
+    onWheel: jest.fn(),
+    onWheelEnd: jest.fn(),
   };
 }
 
@@ -207,6 +209,81 @@ describe("InputManager", () => {
     });
   });
 
+  describe("wheel events", () => {
+    it("should fire onWheel with correct screen coords and deltas", () => {
+      const event = new WheelEvent("wheel", {
+        clientX: 200,
+        clientY: 300,
+        deltaX: 10,
+        deltaY: 20,
+        cancelable: true,
+        bubbles: true,
+      });
+      el.dispatchEvent(event);
+
+      expect(callbacks.onWheel).toHaveBeenCalledWith(200, 300, 10, 20, false);
+    });
+
+    it("should set isPinch=true when ctrlKey is set", () => {
+      const event = new WheelEvent("wheel", {
+        clientX: 100,
+        clientY: 100,
+        deltaX: 0,
+        deltaY: -5,
+        ctrlKey: true,
+        cancelable: true,
+        bubbles: true,
+      });
+      el.dispatchEvent(event);
+
+      expect(callbacks.onWheel).toHaveBeenCalledWith(100, 100, 0, -5, true);
+    });
+
+    it("should call preventDefault on wheel events", () => {
+      const event = new WheelEvent("wheel", {
+        cancelable: true,
+        bubbles: true,
+      });
+      el.dispatchEvent(event);
+
+      expect(event.defaultPrevented).toBe(true);
+    });
+
+    it("should debounce onWheelEnd (fires once after 150ms idle)", () => {
+      jest.useFakeTimers();
+
+      // Fire several wheel events quickly
+      for (let i = 0; i < 5; i++) {
+        el.dispatchEvent(new WheelEvent("wheel", { cancelable: true, bubbles: true }));
+      }
+
+      expect(callbacks.onWheelEnd).not.toHaveBeenCalled();
+
+      // Advance past the debounce window
+      jest.advanceTimersByTime(150);
+
+      expect(callbacks.onWheelEnd).toHaveBeenCalledTimes(1);
+
+      jest.useRealTimers();
+    });
+
+    it("should normalize deltaMode LINE to pixels", () => {
+      // deltaMode=1 means DOM_DELTA_LINE, should multiply by 16
+      const event = new WheelEvent("wheel", {
+        clientX: 50,
+        clientY: 50,
+        deltaX: 2,
+        deltaY: 3,
+        deltaMode: 1,
+        cancelable: true,
+        bubbles: true,
+      });
+      el.dispatchEvent(event);
+
+      expect(callbacks.onWheel).toHaveBeenCalledWith(50, 50, 32, 48, false);
+    });
+  });
+
   describe("cleanup", () => {
     it("should remove event listeners on destroy", () => {
       manager.destroy();
@@ -214,6 +291,18 @@ describe("InputManager", () => {
       // After destroy, pen events on document should not trigger callbacks
       el.dispatchEvent(createPointerEvent("pointerdown", { pointerType: "pen" }));
       expect(callbacks.onStrokeStart).not.toHaveBeenCalled();
+    });
+
+    it("should not fire onWheelEnd after destroy", () => {
+      jest.useFakeTimers();
+
+      el.dispatchEvent(new WheelEvent("wheel", { cancelable: true, bubbles: true }));
+      manager.destroy();
+
+      jest.advanceTimersByTime(200);
+      expect(callbacks.onWheelEnd).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
     });
   });
 });

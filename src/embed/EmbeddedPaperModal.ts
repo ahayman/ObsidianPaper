@@ -1055,6 +1055,30 @@ export class EmbeddedPaperModal extends Modal {
       onHoverEnd: () => {
         this.hoverCursor?.hide();
       },
+
+      onWheel: (screenX: number, screenY: number, deltaX: number, deltaY: number, isPinch: boolean) => {
+        if (isPinch) {
+          const zoomFactor = Math.exp(-deltaY * 0.01);
+          const newZoom = this.camera.zoom * zoomFactor;
+          this.camera.zoomAt(screenX, screenY, newZoom);
+        } else {
+          const world = this.camera.screenToWorld(screenX, screenY);
+          const pageIndex = findPageAtPoint(world.x, world.y, this.pageLayout);
+          if (pageIndex !== -1) {
+            const zoomFactor = Math.exp(-deltaY * 0.005);
+            const newZoom = this.camera.zoom * zoomFactor;
+            this.camera.zoomAt(screenX, screenY, newZoom);
+          } else {
+            this.camera.pan(-deltaX, -deltaY);
+          }
+        }
+        this.camera.clampPan(this.cssWidth, this.cssHeight);
+        this.requestStaticRender();
+      },
+
+      onWheelEnd: () => {
+        this.requestSave();
+      },
     };
   }
 

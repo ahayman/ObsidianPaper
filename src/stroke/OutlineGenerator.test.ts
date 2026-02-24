@@ -160,17 +160,19 @@ describe("OutlineGenerator", () => {
       expect(outlineToFloat32Array([[0, 0]])).toBeNull();
     });
 
-    it("should convert outline to Float32Array of vertex pairs", () => {
+    it("should convert outline to Float32Array with Bézier subdivision", () => {
       const outline = [[10, 20], [30, 40], [50, 60]];
       const result = outlineToFloat32Array(outline);
       expect(result).toBeInstanceOf(Float32Array);
-      expect(result!.length).toBe(6);
-      expect(result![0]).toBe(10);
-      expect(result![1]).toBe(20);
-      expect(result![2]).toBe(30);
-      expect(result![3]).toBe(40);
-      expect(result![4]).toBe(50);
-      expect(result![5]).toBe(60);
+      // 3 points × 4 subdivisions × 2 (x,y) = 24 floats
+      expect(result!.length).toBe(24);
+      // First vertex should be midpoint(outline[0], outline[1]) = (20, 30)
+      expect(result![0]).toBeCloseTo(20, 5);
+      expect(result![1]).toBeCloseTo(30, 5);
+      // All values should be finite
+      for (let i = 0; i < result!.length; i++) {
+        expect(isFinite(result![i])).toBe(true);
+      }
     });
 
     it("should preserve floating point precision", () => {
@@ -255,7 +257,8 @@ describe("OutlineGenerator", () => {
 
         const verts = cache.getVertices("s1");
         expect(verts).toBeInstanceOf(Float32Array);
-        expect(verts!.length).toBe(8);
+        // 4 points × 4 subdivisions × 2 (x,y) = 32 floats
+        expect(verts!.length).toBe(32);
       });
 
       it("getPath returns undefined for unknown key", () => {
@@ -278,8 +281,8 @@ describe("OutlineGenerator", () => {
         const outline2 = [[0, 0], [20, 0], [20, 20], [0, 20]];
         cache.setOutline("s1", outline2);
         const v2 = cache.getVertices("s1");
-        expect(v2!.length).toBe(8); // 4 points * 2
-        expect(v1!.length).toBe(6); // Old was 3 points * 2
+        expect(v2!.length).toBe(32); // 4 points × 4 subdivisions × 2
+        expect(v1!.length).toBe(24); // 3 points × 4 subdivisions × 2
       });
 
       it("delete removes outline, path, and vertices", () => {

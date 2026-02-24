@@ -1282,6 +1282,35 @@ export class PaperView extends TextFileView {
       onHoverEnd: () => {
         this.hoverCursor?.hide();
       },
+
+      onWheel: (screenX: number, screenY: number, deltaX: number, deltaY: number, isPinch: boolean) => {
+        if (isPinch) {
+          // Trackpad pinch or Ctrl+wheel → zoom at cursor
+          const zoomFactor = Math.exp(-deltaY * 0.01);
+          const newZoom = this.camera.zoom * zoomFactor;
+          this.camera.zoomAt(screenX, screenY, newZoom);
+        } else {
+          // Regular scroll — hit-test to decide zoom vs pan
+          const world = this.camera.screenToWorld(screenX, screenY);
+          const pageIndex = findPageAtPoint(world.x, world.y, this.pageLayout);
+          if (pageIndex !== -1) {
+            // Over a page → zoom at cursor
+            const zoomFactor = Math.exp(-deltaY * 0.005);
+            const newZoom = this.camera.zoom * zoomFactor;
+            this.camera.zoomAt(screenX, screenY, newZoom);
+          } else {
+            // Off-page → pan
+            this.camera.pan(-deltaX, -deltaY);
+          }
+        }
+        const rect = this.contentEl.getBoundingClientRect();
+        this.camera.clampPan(rect.width, rect.height);
+        this.requestStaticRender();
+      },
+
+      onWheelEnd: () => {
+        this.requestSave();
+      },
     };
   }
 

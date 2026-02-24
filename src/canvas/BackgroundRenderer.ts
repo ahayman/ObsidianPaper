@@ -272,7 +272,7 @@ function renderLinesEngine(
     data[idx++] = maxX;
     data[idx++] = y;
   }
-  engine.drawLines(data.subarray(0, idx), LINE_COLORS[patternTheme], lineScale);
+  engine.drawLines(data.subarray(0, idx), LINE_COLORS[patternTheme], lineScale * 2);
 }
 
 /**
@@ -306,7 +306,7 @@ function renderGridEngine(
     data[idx++] = maxX;
     data[idx++] = y;
   }
-  engine.drawLines(data.subarray(0, idx), LINE_COLORS[patternTheme], lineScale);
+  engine.drawLines(data.subarray(0, idx), LINE_COLORS[patternTheme], lineScale * 2);
 }
 
 /**
@@ -319,7 +319,7 @@ function renderDotGridEngine(
   lineScale: number,
   minX: number, minY: number, maxX: number, maxY: number,
 ): void {
-  const dotRadius = 1.5 * lineScale;
+  const dotRadius = 2.5 * lineScale;
   const startX = Math.ceil(minX / gridSize) * gridSize;
   const startY = Math.ceil(minY / gridSize) * gridSize;
   const colCount = Math.max(0, Math.floor((maxX - startX) / gridSize) + 1);

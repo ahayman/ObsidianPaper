@@ -86,6 +86,7 @@ describe("tileSizePhysicalForBand", () => {
     overscanTiles: 1,
     maxTilePhysical: 2048,
     minTilePhysical: 256,
+    resolutionScale: 1,
   };
 
   it("returns ideal size for band 0 (zoom 1.0)", () => {
@@ -125,5 +126,6 @@ describe("DEFAULT_TILE_CONFIG", () => {
     expect(DEFAULT_TILE_CONFIG.overscanTiles).toBe(1);
     expect(DEFAULT_TILE_CONFIG.maxTilePhysical).toBe(2048);
     expect(DEFAULT_TILE_CONFIG.minTilePhysical).toBe(128);
+    expect(DEFAULT_TILE_CONFIG.resolutionScale).toBe(1);
   });
 });

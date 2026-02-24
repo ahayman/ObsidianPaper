@@ -35,6 +35,17 @@
   pointer-events: none;
 }
 
+.paper-webgl-static-canvas {
+  z-index: 0;
+  will-change: contents;
+  transform: translateZ(0);
+}
+
+.paper-overlay-canvas {
+  z-index: 4;
+  pointer-events: none;
+}
+
 /* Engine indicator overlay */
 .paper-engine-overlay {
   position: absolute;

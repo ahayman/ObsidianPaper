@@ -54,16 +54,24 @@ export class WorkerTileScheduler {
   /** In-flight render jobs: tileKey → zoom band dispatched at. */
   private inFlight = new Map<string, number>();
 
+  /**
+   * Optional callback for WebGL mode: receives tile results as ImageBitmaps
+   * for GPU texture upload instead of the default Canvas2D drawImage path.
+   */
+  private onTileResult: ((tileKey: string, bitmap: ImageBitmap, strokeIds: string[], dispatchBand: number | undefined) => void) | null = null;
+
   constructor(
     config: TileGridConfig,
     cache: TileCache,
     grid: TileGrid,
     onBatchComplete: () => void,
+    onTileResult?: (tileKey: string, bitmap: ImageBitmap, strokeIds: string[], dispatchBand: number | undefined) => void,
   ) {
     this.config = config;
     this.cache = cache;
     this.grid = grid;
     this.onBatchComplete = onBatchComplete;
+    this.onTileResult = onTileResult ?? null;
 
     this.initPool();
   }
@@ -83,6 +91,10 @@ export class WorkerTileScheduler {
         };
         worker.onerror = (e) => {
           console.error("[WorkerTileScheduler] Worker error:", e.message);
+          // Clean up in-flight tracking for the failed tile so it can be re-scheduled
+          if (slot.currentTileKey) {
+            this.inFlight.delete(slot.currentTileKey);
+          }
           slot.busy = false;
           slot.currentTileKey = null;
           // Try to dispatch the next job
@@ -240,10 +252,10 @@ export class WorkerTileScheduler {
       const tileKey = tileKeyString(tile);
       const worldBounds = this.grid.tileBounds(tile.col, tile.row);
 
-      // Only allocate entries that don't exist yet. Tiles with stale content
-      // (wrong zoom band) keep their old pixels visible until the worker
-      // result arrives — handleTileResult() re-allocates at that point.
-      if (!this.cache.getStale(tile)) {
+      // Only allocate Canvas2D cache entries when not in WebGL mode.
+      // In WebGL mode, the onTileResult callback handles GPU texture upload
+      // directly — Canvas2D OffscreenCanvas allocation would be wasted memory.
+      if (!this.onTileResult && !this.cache.getStale(tile)) {
         this.cache.allocate(tile, worldBounds, zoomBand);
       }
 
@@ -334,52 +346,46 @@ export class WorkerTileScheduler {
     const dispatchBand = this.inFlight.get(tileKey);
     this.inFlight.delete(tileKey);
 
-    // Find the matching tile entry in cache
+    // WebGL mode: delegate to callback for GPU texture upload
+    if (this.onTileResult) {
+      this.onTileResult(tileKey, bitmap, strokeIds, dispatchBand);
+      return;
+    }
+
+    // Canvas2D mode: draw bitmap onto TileEntry's OffscreenCanvas
     const entry = this.findEntryByKey(tileKey);
     if (!entry) {
-      // Tile was evicted from cache before result arrived — discard
       bitmap.close();
       return;
     }
 
-    // If the entry canvas doesn't match the bitmap size (stale zoom band
-    // from before the worker was dispatched), re-allocate now. This is
-    // deferred from schedule() to preserve old content until the new
-    // pixels are ready, avoiding a blank flash.
     if (entry.canvas.width !== bitmap.width || entry.canvas.height !== bitmap.height) {
       if (dispatchBand !== undefined) {
         this.cache.allocate(entry.key, entry.worldBounds, dispatchBand);
       } else {
-        // No band info — discard, will be re-scheduled
         bitmap.close();
         return;
       }
     }
 
-    // Re-fetch entry after potential re-allocation (allocate creates new ctx)
     const current = this.findEntryByKey(tileKey);
     if (!current || current.canvas.width !== bitmap.width) {
       bitmap.close();
       return;
     }
 
-    // Draw the ImageBitmap onto the TileEntry's OffscreenCanvas
     const ctx = current.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, current.canvas.width, current.canvas.height);
     ctx.drawImage(bitmap, 0, 0);
     bitmap.close();
 
-    // Update stroke ID tracking
     current.strokeIds.clear();
     for (const id of strokeIds) {
       current.strokeIds.add(id);
     }
 
-    // Mark tile as clean
     this.cache.markClean(current.key);
-
-    // Schedule a batched composite
     this.scheduleComposite();
   }
 

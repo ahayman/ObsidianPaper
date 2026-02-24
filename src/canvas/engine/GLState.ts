@@ -84,6 +84,16 @@ export class GLState {
     this.stencilEnabled = false;
   }
 
+  /** Invalidate texture cache — call after raw gl.bindTexture() bypasses GLState. */
+  invalidateTexture(): void {
+    this.currentTexture = null;
+  }
+
+  /** Invalidate FBO cache — call after raw gl.bindFramebuffer() bypasses GLState. */
+  invalidateFBO(): void {
+    this.currentFBO = null;
+  }
+
   /** Reset tracking (after context loss/restore). */
   reset(): void {
     this.currentProgram = null;

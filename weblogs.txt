@@ -1,0 +1,383 @@
+plugin:obsidian-paper:137 WebGL2Engine creation failed, falling back to Canvas 2D: Error: WebGL2 not available
+    at new ct (plugin:obsidian-paper:137:1044)
+    at ws (plugin:obsidian-paper:137:16137)
+    at new he (plugin:obsidian-paper:137:27149)
+    at oi.onOpen (plugin:obsidian-paper:137:170707)
+    at oi.<anonymous> (app.js:1:1045666)
+    at app.js:1:258511
+    at Object.next (app.js:1:258616)
+    at app.js:1:257532
+    at new Promise (<anonymous>)
+    at y (app.js:1:257277)
+ws @ plugin:obsidian-paper:137
+he @ plugin:obsidian-paper:137
+onOpen @ plugin:obsidian-paper:137
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+a @ app.js:1
+plugin:obsidian-paper:6 Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently
+getImageData @ plugin:obsidian-paper:6
+updateGrain @ plugin:obsidian-paper:6
+updateWorkerGrain @ plugin:obsidian-paper:137
+enableTiling @ plugin:obsidian-paper:137
+onOpen @ plugin:obsidian-paper:137
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+a @ app.js:1
+plugin:obsidian-paper:137 [renderVisible] WebGL: 80 FBO-rendered, 0 cached, 80 total, strokes=0, zoomBand=0
+plugin:obsidian-paper:137 [renderVisible] WebGL: 0 FBO-rendered, 80 cached, 80 total, strokes=0, zoomBand=0
+plugin:obsidian-paper:137 [WebGLTileEngine] tile(-2,1) spatial=30 rendered=30
+plugin:obsidian-paper:137 WebGL: INVALID_ENUM: invalidateFramebuffer: invalid attachment
+invalidateFramebuffer @ plugin:obsidian-paper:137
+renderTile @ plugin:obsidian-paper:137
+renderVisible @ plugin:obsidian-paper:137
+renderStaticLayer @ plugin:obsidian-paper:137
+renderStaticWithIcons @ plugin:obsidian-paper:137
+setViewData @ plugin:obsidian-paper:137
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+a @ app.js:1
+plugin:obsidian-paper:137 [WebGLTileEngine] tile(-2,0) spatial=74 rendered=74
+plugin:obsidian-paper:137 [renderVisible] WebGL: 23 FBO-rendered, 12 cached, 35 total, strokes=615, zoomBand=2
+plugin:obsidian-paper:137 [renderVisible] WebGL: 0 FBO-rendered, 30 cached, 30 total, strokes=615, zoomBand=2
+plugin:fold-properties-by-default:6 folding properties
+foldProperties @ plugin:fold-properties-by-default:6
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+c @ app.js:1
+u @ app.js:1
+setTimeout
+h @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+(anonymous) @ app.js:1
+y @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+(anonymous) @ app.js:1
+a @ app.js:1
+Promise.then
+l @ app.js:1
+a @ app.js:1
+plugin:obsidian-paper:137 [renderVisible] WebGL: 0 FBO-rendered, 35 cached, 35 total, strokes=615, zoomBand=2
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=-1,2 band=2 strokes=1 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] DISCARD cancelled tile=-1,2
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=0,1 band=2 strokes=88 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=-1,1 band=2 strokes=86 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] DISCARD cancelled tile=-1,2
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=-1,3 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=0,3 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=-1,4 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=3,4 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=2,4 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=3,3 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=4,4 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=3,5 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=2,3 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=1,4 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=2,5 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=3,2 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=4,3 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=5,4 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=4,5 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=3,6 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=2,2 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=-1,0 band=2 strokes=177 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=1,3 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=1,5 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=2,6 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=3,1 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=5,3 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=6,4 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=5,5 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=4,6 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=3,7 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=2,1 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] DISCARD cancelled tile=-1,1
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=1,2 band=2 strokes=1 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=0,5 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=1,6 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=2,7 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] DISCARD cancelled tile=0,1
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=4,1 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=5,2 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=6,3 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=6,5 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] DISCARD cancelled tile=-1,1
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=4,7 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=3,8 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=2,0 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] DISCARD cancelled tile=0,1
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=-1,-1 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=0,-1 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] DISCARD cancelled tile=-1,0
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=5,6 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=3,-1 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=4,0 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=5,1 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=1,1 band=2 strokes=30 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=0,6 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=1,7 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=2,8 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=0,0 band=2 strokes=149 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=0,4 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=3,0 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=-1,5 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=6,6 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=5,7 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=4,8 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=2,-1 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=4,-1 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=5,0 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=6,1 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=6,7 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=1,0 band=2 strokes=26 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=-1,6 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=0,7 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=1,8 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] DISCARD cancelled tile=-1,0
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=0,2 band=2 strokes=3 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=4,2 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=6,2 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=5,8 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=1,-1 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=-1,7 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=0,8 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=5,-1 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=6,0 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=6,8 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=-1,8 band=2 strokes=0 existingDirty=true existingFbo=true
+plugin:obsidian-paper:137 [handleWebGLTileResult] UPLOAD tile=6,-1 band=2 strokes=0 existingDirty=true existingFbo=true

@@ -44,6 +44,7 @@ export interface TileGridConfig {
   overscanTiles: number;     // Default: 1
   maxTilePhysical: number;   // Max canvas size in pixels (default: 2048)
   minTilePhysical: number;   // Min canvas size in pixels (default: 256)
+  resolutionScale: number;   // Extra resolution multiplier (default: 1)
 }
 
 /**
@@ -51,7 +52,8 @@ export interface TileGridConfig {
  * Clamped between minTilePhysical and maxTilePhysical.
  */
 export function tileSizePhysicalForBand(config: TileGridConfig, zoomBand: number): number {
-  const ideal = config.tileWorldSize * zoomBandBaseZoom(zoomBand) * config.dpr;
+  const scale = config.resolutionScale ?? 1;
+  const ideal = config.tileWorldSize * zoomBandBaseZoom(zoomBand) * config.dpr * scale;
   return Math.min(Math.max(Math.ceil(ideal), config.minTilePhysical), config.maxTilePhysical);
 }
 
@@ -62,4 +64,5 @@ export const DEFAULT_TILE_CONFIG: TileGridConfig = {
   overscanTiles: 1,
   maxTilePhysical: 2048,
   minTilePhysical: 128,
+  resolutionScale: 1,
 };

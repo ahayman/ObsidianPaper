@@ -529,7 +529,8 @@ export function renderStrokeToEngine(
     const points = decodePoints(stroke.pts);
     const stamps = computeAllStamps(points, style, penConfig, penConfig.stamp);
     const texture = stampCtx.getStampTexture(style.grain ?? DEFAULT_GRAIN_VALUE, color);
-    engine.drawStamps(texture, packStampsToFloat32(stamps));
+    const data = packStampsToFloat32(stamps);
+    engine.drawStamps(texture, data);
     return;
   }
 
@@ -628,14 +629,11 @@ function renderInkShadedStrokeEngine(
   const stamps = computeAllInkStamps(points, style, penConfig, penConfig.inkStamp!, presetConfig);
   const texture = stampCtx.getInkStampTexture(style.inkPreset, color);
   engine.setAlpha(style.opacity);
-  engine.drawStamps(texture, packInkStampsToFloat32(stamps));
+  const stampData = packInkStampsToFloat32(stamps);
+  engine.drawStamps(texture, stampData);
 
-  // 2. Mask to outline via destination-in
-  engine.setBlendMode("destination-in");
-  engine.setAlpha(1);
-  engine.setFillColor("#ffffff");
-  engine.fillPath(vertices);
-  engine.setBlendMode("source-over");
+  // 2. Mask to outline: keep stamps inside path, clear outside
+  engine.maskToPath(vertices);
 
   engine.endOffscreen();
 
@@ -644,6 +642,10 @@ function renderInkShadedStrokeEngine(
   engine.setTransform(1, 0, 0, 1, 0, 0);
   engine.drawOffscreen(offscreen, region.sx, region.sy, region.sw, region.sh);
   engine.restore();
+
+  // Restore original tile transform — endOffscreen doesn't restore transforms,
+  // so without this the next stroke would use the offset transform.
+  engine.setTransform(m.a, m.b, m.c, m.d, m.e, m.f);
 }
 
 /**
@@ -690,4 +692,8 @@ function renderStrokeWithGrainEngine(
   engine.setTransform(1, 0, 0, 1, 0, 0);
   engine.drawOffscreen(offscreen, region.sx, region.sy, region.sw, region.sh);
   engine.restore();
+
+  // Restore original tile transform — endOffscreen doesn't restore transforms,
+  // so without this the next stroke would use the offset transform.
+  engine.setTransform(m.a, m.b, m.c, m.d, m.e, m.f);
 }

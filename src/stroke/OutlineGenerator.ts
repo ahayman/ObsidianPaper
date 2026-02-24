@@ -166,16 +166,83 @@ export function outlineToPath2D(outline: number[][]): Path2D | null {
 }
 
 /**
+ * Number of linear segments used to approximate each quadratic Bézier span.
+ * Higher = smoother curves but more vertices. 4 gives good quality without
+ * excessive vertex count (a 200-point outline → ~800 vertices).
+ */
+const BEZIER_SUBDIVISIONS = 4;
+
+/**
  * Convert an outline polygon to a Float32Array of vertex pairs [x0, y0, x1, y1, ...].
- * Used by the RenderEngine path for GPU-ready vertex data.
+ * Uses the same midpoint quadratic Bézier interpolation as outlineToPath2D so that
+ * WebGL stroke rendering matches the smooth Canvas2D path quality.
  */
 export function outlineToFloat32Array(outline: number[][]): Float32Array | null {
   if (outline.length < 2) return null;
-  const arr = new Float32Array(outline.length * 2);
-  for (let i = 0; i < outline.length; i++) {
-    arr[i * 2] = outline[i][0];
-    arr[i * 2 + 1] = outline[i][1];
+  const n = outline.length;
+
+  if (n < 3) {
+    const arr = new Float32Array(n * 2);
+    for (let i = 0; i < n; i++) {
+      arr[i * 2] = outline[i][0];
+      arr[i * 2 + 1] = outline[i][1];
+    }
+    return arr;
   }
+
+  // Each of the n outline points produces one Bézier span, each subdivided
+  // into BEZIER_SUBDIVISIONS segments. We emit the start point of each segment
+  // (the final point wraps back to the first).
+  const totalVerts = n * BEZIER_SUBDIVISIONS;
+  const arr = new Float32Array(totalVerts * 2);
+  let idx = 0;
+
+  // Precompute first midpoint (start of curve)
+  const mx0 = (outline[0][0] + outline[1][0]) * 0.5;
+  const my0 = (outline[0][1] + outline[1][1]) * 0.5;
+
+  // Spans 1..n-1: control = outline[i], end = midpoint(outline[i], outline[i+1])
+  for (let i = 1; i < n; i++) {
+    const prev = (i - 1);
+    const next = (i + 1) % n;
+
+    // Start of this span = midpoint(outline[i-1], outline[i])
+    const sx = (outline[prev][0] + outline[i][0]) * 0.5;
+    const sy = (outline[prev][1] + outline[i][1]) * 0.5;
+
+    // Control point = outline[i]
+    const cx = outline[i][0];
+    const cy = outline[i][1];
+
+    // End of this span = midpoint(outline[i], outline[i+1])
+    const ex = (outline[i][0] + outline[next][0]) * 0.5;
+    const ey = (outline[i][1] + outline[next][1]) * 0.5;
+
+    for (let s = 0; s < BEZIER_SUBDIVISIONS; s++) {
+      const t = s / BEZIER_SUBDIVISIONS;
+      const omt = 1 - t;
+      // Quadratic Bézier: B(t) = (1-t)²·S + 2(1-t)t·C + t²·E
+      arr[idx++] = omt * omt * sx + 2 * omt * t * cx + t * t * ex;
+      arr[idx++] = omt * omt * sy + 2 * omt * t * cy + t * t * ey;
+    }
+  }
+
+  // Final span: control = outline[0], end = mx0, my0 (back to start)
+  {
+    const prev = n - 1;
+    const sx = (outline[prev][0] + outline[0][0]) * 0.5;
+    const sy = (outline[prev][1] + outline[0][1]) * 0.5;
+    const cx = outline[0][0];
+    const cy = outline[0][1];
+
+    for (let s = 0; s < BEZIER_SUBDIVISIONS; s++) {
+      const t = s / BEZIER_SUBDIVISIONS;
+      const omt = 1 - t;
+      arr[idx++] = omt * omt * sx + 2 * omt * t * cx + t * t * mx0;
+      arr[idx++] = omt * omt * sy + 2 * omt * t * cy + t * t * my0;
+    }
+  }
+
   return arr;
 }
 

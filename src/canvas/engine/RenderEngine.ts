@@ -120,6 +120,14 @@ export interface RenderEngine {
     dh: number,
   ): void;
 
+  /**
+   * Apply destination-in masking to the entire framebuffer using a path.
+   * Pixels INSIDE the path are kept; pixels OUTSIDE are cleared to transparent.
+   * Canvas2D: setBlendMode("destination-in") + fill(path).
+   * WebGL: stencil mark + fullscreen destination-in clear for exterior pixels.
+   */
+  maskToPath(vertices: Float32Array): void;
+
   // --- Stamp rendering ---
   /**
    * Draw a batch of stamps from a texture.

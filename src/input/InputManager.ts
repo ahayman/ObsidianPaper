@@ -22,6 +22,8 @@ export interface InputCallbacks {
   onThreeFingerTap: () => void;
   onHover?: (x: number, y: number, pointerType: string) => void;
   onHoverEnd?: () => void;
+  onWheel?: (screenX: number, screenY: number, deltaX: number, deltaY: number, isPinch: boolean) => void;
+  onWheelEnd?: () => void;
 }
 
 interface ActiveTouch {
@@ -72,6 +74,11 @@ export class InputManager {
   private boundDocUp: (e: PointerEvent) => void;
   private boundDocCancel: (e: PointerEvent) => void;
 
+  // Wheel event handling
+  private boundWheel: (e: WheelEvent) => void;
+  private wheelEndTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly WHEEL_END_DEBOUNCE_MS = 150;
+
   constructor(el: HTMLElement, callbacks: InputCallbacks) {
     this.el = el;
     this.callbacks = callbacks;
@@ -88,6 +95,8 @@ export class InputManager {
     this.boundDocMove = this.handleDocPointerMove.bind(this);
     this.boundDocUp = this.handleDocPointerUp.bind(this);
     this.boundDocCancel = this.handleDocPointerCancel.bind(this);
+
+    this.boundWheel = this.handleWheel.bind(this);
 
     this.attach();
   }
@@ -106,6 +115,7 @@ export class InputManager {
     this.el.addEventListener("pointercancel", this.boundPointerCancel);
     this.el.addEventListener("pointerleave", this.boundPointerLeave);
     this.el.addEventListener("contextmenu", this.boundContextMenu);
+    this.el.addEventListener("wheel", this.boundWheel, { passive: false });
   }
 
   /**
@@ -140,7 +150,12 @@ export class InputManager {
     this.el.removeEventListener("pointercancel", this.boundPointerCancel);
     this.el.removeEventListener("pointerleave", this.boundPointerLeave);
     this.el.removeEventListener("contextmenu", this.boundContextMenu);
+    this.el.removeEventListener("wheel", this.boundWheel);
 
+    if (this.wheelEndTimer !== null) {
+      clearTimeout(this.wheelEndTimer);
+      this.wheelEndTimer = null;
+    }
   }
 
   // ─── Document-level capture handlers (pen events) ───────────────────
@@ -234,6 +249,9 @@ export class InputManager {
   private handlePointerDown(e: PointerEvent): void {
     // Pen events are handled by document-level capture handlers
     if (e.pointerType === "pen") return;
+
+    // Let interactive overlays (toolbar, popover) handle mouse clicks normally
+    if (e.pointerType === "mouse" && this.isInteractiveOverlay(e)) return;
 
     e.preventDefault();
 
@@ -464,6 +482,38 @@ export class InputManager {
     if (e.pointerType === "pen" || e.pointerType === "mouse") {
       this.callbacks.onHoverEnd?.();
     }
+  }
+
+  // ─── Wheel handling (trackpad / mouse wheel) ────────────────
+
+  private handleWheel(e: WheelEvent): void {
+    e.preventDefault();
+
+    const rect = this.el.getBoundingClientRect();
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
+
+    // Normalize deltaMode: DOM_DELTA_LINE (1) → pixels
+    let deltaX = e.deltaX;
+    let deltaY = e.deltaY;
+    if (e.deltaMode === 1) {
+      deltaX *= 16;
+      deltaY *= 16;
+    }
+
+    // ctrlKey signals a trackpad pinch gesture (or Ctrl+wheel)
+    const isPinch = e.ctrlKey;
+
+    this.callbacks.onWheel?.(screenX, screenY, deltaX, deltaY, isPinch);
+
+    // Debounce wheel-end
+    if (this.wheelEndTimer !== null) {
+      clearTimeout(this.wheelEndTimer);
+    }
+    this.wheelEndTimer = setTimeout(() => {
+      this.wheelEndTimer = null;
+      this.callbacks.onWheelEnd?.();
+    }, InputManager.WHEEL_END_DEBOUNCE_MS);
   }
 
   /**

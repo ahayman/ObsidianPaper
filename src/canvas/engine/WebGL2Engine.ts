@@ -3,8 +3,8 @@
  *
  * Key design decisions:
  * - Premultiplied alpha throughout (context, textures, shaders, blending)
- * - fillPath uses stencil INVERT trick (no triangulation library needed)
- * - Stencil bit 0 for fillPath INVERT, bits 1-7 for nested clips (up to 7 levels)
+ * - fillPath uses stencil nonzero-winding (INCR_WRAP) for correct self-intersection fill
+ * - Stencil bits 0-4 for fillPath winding count, bits 5-7 for nested clips (up to 3 levels)
  * - Offscreen targets use FBOs with color texture + stencil renderbuffer
  * - setShadow/clearShadow are no-ops (background canvas stays Canvas 2D for shadows)
  */
@@ -20,8 +20,8 @@ import { GLState } from "./GLState";
 import { createShaderProgram, deleteShaderProgram } from "./GLShaders";
 import type { ShaderProgram } from "./GLShaders";
 import { DynamicBuffer, createStaticBuffer, createIndexBuffer, UNIT_QUAD_VERTICES, UNIT_QUAD_INDICES, FULLSCREEN_QUAD_VERTICES, FULLSCREEN_QUAD_INDICES } from "./GLBuffers";
-import { uploadTexture, createOffscreenTarget, resizeOffscreenTarget, destroyOffscreenTarget } from "./GLTextures";
-import type { GLOffscreenTarget } from "./GLTextures";
+import { uploadTexture, uploadGrainTexture, createOffscreenTarget, resizeOffscreenTarget, destroyOffscreenTarget, createMSAAOffscreenTarget, resolveMSAA, destroyMSAAOffscreenTarget } from "./GLTextures";
+import type { GLOffscreenTarget, GLMSAAOffscreenTarget } from "./GLTextures";
 import { parseColor } from "./GLColor";
 import {
   SOLID_VERT, SOLID_FRAG,
@@ -31,6 +31,13 @@ import {
   CIRCLE_VERT, CIRCLE_FRAG,
   LINE_VERT, LINE_FRAG,
 } from "./shaders";
+
+// ─── Stencil bit layout ─────────────────────────────────────────
+// Bits 0-4: winding count for fillPath/maskToPath (nonzero winding rule)
+// Bits 5-7: clip levels (up to 3 nested clips)
+const FILL_MASK = 0x1F;       // bits 0-4 for winding count
+const CLIP_BIT_OFFSET = 4;    // clip bits start at bit 5 (1 << (clipLevel + 4))
+const MAX_CLIP_DEPTH = 3;     // bits 5, 6, 7
 
 // ─── Internal types ─────────────────────────────────────────────
 
@@ -42,6 +49,8 @@ interface GLOffscreen extends OffscreenTarget {
   width: number;
   height: number;
   target: GLOffscreenTarget;
+  /** MSAA render target — render here, resolve to target.colorTexture */
+  msaa: GLMSAAOffscreenTarget | null;
 }
 
 interface SavedState {
@@ -136,17 +145,20 @@ export class WebGL2Engine implements RenderEngine {
 
   // Offscreen FBO stack
   private offscreens = new Map<string, GLOffscreen>();
-  private fboStack: { fbo: WebGLFramebuffer; viewport: [number, number, number, number]; projection: Float32Array }[] = [];
+  private fboStack: { fbo: WebGLFramebuffer; viewport: [number, number, number, number]; projection: Float32Array; scissor: [number, number, number, number] | null; msaa: GLMSAAOffscreenTarget | null }[] = [];
 
-  constructor(canvas: HTMLCanvasElement) {
+  /** Current viewport height — used for scissor Y-flip in clipRect. */
+  private viewportHeight: number;
+
+  constructor(canvas: HTMLCanvasElement, options?: { preserveDrawingBuffer?: boolean }) {
     this.canvas = canvas;
     const gl = canvas.getContext("webgl2", {
       alpha: true,
       premultipliedAlpha: true,
-      antialias: false,
+      antialias: true,
       stencil: true,
       depth: false,
-      preserveDrawingBuffer: false,
+      preserveDrawingBuffer: options?.preserveDrawingBuffer ?? false,
     });
     if (!gl) throw new Error("WebGL2 not available");
     this.gl = gl;
@@ -154,7 +166,7 @@ export class WebGL2Engine implements RenderEngine {
 
     this.currentTransform = mat3Identity();
     this.projection = mat3Projection(canvas.width, canvas.height);
-
+    this.viewportHeight = canvas.height;
     this.initResources();
     this.setupContextLoss();
 
@@ -170,11 +182,63 @@ export class WebGL2Engine implements RenderEngine {
   get width(): number { return this.canvas.width; }
   get height(): number { return this.canvas.height; }
 
+  /** Expose the underlying canvas (used by WebGLTileEngine for drawImage transfer). */
+  getCanvas(): HTMLCanvasElement { return this.canvas; }
+
+  /** Whether the WebGL context is still valid (not lost). */
+  isValid(): boolean { return this.valid; }
+
+  /**
+   * Invalidate all GLState caches. Call after external code (e.g. WebGLTileCompositor)
+   * has modified GL state via raw gl.* calls that bypass GLState tracking.
+   */
+  resetState(): void { this.state.reset(); }
+
+  /** Upload a grain texture with REPEAT wrapping (vs CLAMP_TO_EDGE in createTexture). */
+  createGrainTexture(source: ImageSource): TextureHandle {
+    const glTexture = uploadGrainTexture(this.gl, source);
+    const w = getSourceDimension(source, "width");
+    const h = getSourceDimension(source, "height");
+    const handle: GLTextureHandle = { width: w, height: h, glTexture };
+    return handle;
+  }
+
+  /**
+   * Discard stencil attachment on the currently bound FBO.
+   * iPad TBDR optimization — avoids store-back of stencil data to VRAM.
+   * Caller must ensure an FBO (not the default framebuffer) is bound.
+   */
+  invalidateFramebuffer(): void {
+    const gl = this.gl;
+    try {
+      gl.invalidateFramebuffer(gl.FRAMEBUFFER, [gl.STENCIL_ATTACHMENT]);
+    } catch {
+      // Some drivers don't support invalidateFramebuffer — safe to ignore
+    }
+  }
+
+  /** Flush GPU command queue — ensures drawing buffer is ready for drawImage reads. */
+  flush(): void {
+    this.gl.flush();
+  }
+
   resize(width: number, height: number): void {
     this.canvas.width = width;
     this.canvas.height = height;
     this.projection = mat3Projection(width, height);
+    this.viewportHeight = height;
     this.gl.viewport(0, 0, width, height);
+  }
+
+  /**
+   * Set viewport and projection without resizing the canvas.
+   * Used by WebGLTileEngine to render at tile resolution inside a larger canvas
+   * (Safari doesn't reliably resize WebGL drawing buffers for off-screen canvases).
+   */
+  setViewport(width: number, height: number, offsetY = 0): void {
+    this.gl.viewport(0, offsetY, width, height);
+    this.projection = mat3Projection(width, height);
+    this.viewportHeight = height;
   }
 
   setCanvas(_canvas: HTMLCanvasElement | OffscreenCanvas): void {
@@ -215,6 +279,9 @@ export class WebGL2Engine implements RenderEngine {
 
     // Delete offscreen targets
     for (const offscreen of this.offscreens.values()) {
+      if (offscreen.msaa) {
+        destroyMSAAOffscreenTarget(gl, offscreen.msaa);
+      }
       destroyOffscreenTarget(gl, offscreen.target);
     }
     this.offscreens.clear();
@@ -237,10 +304,19 @@ export class WebGL2Engine implements RenderEngine {
     if (!saved) return;
 
     // Restore clip depth: clear stencil bits for removed clip levels
+    const hadClips = this.clipDepth > 0;
     if (saved.clipDepth < this.clipDepth) {
       this.clearClipLevels(saved.clipDepth + 1, this.clipDepth);
     }
     this.clipDepth = saved.clipDepth;
+
+    // Disable stencil test when all clip levels are removed.
+    // clipPath() enables stencil and leaves it on for subsequent draws;
+    // when restore() pops all clips, stencil must be turned off so
+    // drawOffscreen() and other non-clip-aware calls aren't blocked.
+    if (hadClips && this.clipDepth === 0) {
+      this.state.disableStencil();
+    }
 
     this.currentTransform = saved.transform;
     this.currentAlpha = saved.alpha;
@@ -316,6 +392,7 @@ export class WebGL2Engine implements RenderEngine {
   clear(): void {
     const gl = this.gl;
     gl.clearColor(0, 0, 0, 0);
+    gl.stencilMask(0xFF); // Ensure ALL stencil bits are cleared
     gl.clearStencil(0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
   }
@@ -355,11 +432,15 @@ export class WebGL2Engine implements RenderEngine {
     // Upload path vertices
     this.pathBuffer.upload(vertices);
 
-    // === Pass 1: Stencil INVERT with color write disabled ===
+    // === Pass 1: Two-sided stencil (nonzero winding) with color write disabled ===
+    // Front-facing fan triangles increment, back-facing decrement.
+    // Concave external overlaps cancel out (±1 = 0), while self-intersecting
+    // interior regions accumulate (e.g. +2), correctly filling both.
     this.state.enableStencil();
-    gl.stencilMask(0x01); // Only write to bit 0
-    gl.stencilFunc(gl.ALWAYS, 0, 0x01);
-    gl.stencilOp(gl.KEEP, gl.KEEP, gl.INVERT);
+    gl.stencilMask(FILL_MASK);
+    gl.stencilFunc(gl.ALWAYS, 0, FILL_MASK);
+    gl.stencilOpSeparate(gl.FRONT, gl.KEEP, gl.KEEP, gl.INCR_WRAP);
+    gl.stencilOpSeparate(gl.BACK, gl.KEEP, gl.KEEP, gl.DECR_WRAP);
     gl.colorMask(false, false, false, false);
 
     this.state.useProgram(prog.program);
@@ -371,24 +452,102 @@ export class WebGL2Engine implements RenderEngine {
     gl.vertexAttribPointer(prog.attributes.get("a_position")!, 2, gl.FLOAT, false, 0, 0);
     gl.enableVertexAttribArray(prog.attributes.get("a_position")!);
 
-    // TRIANGLE_FAN from vertex[0] — the stencil INVERT handles concave shapes
+    // TRIANGLE_FAN from vertex[0] — two-sided stencil handles concave + self-intersecting shapes
     const vertCount = vertices.length / 2;
     gl.drawArrays(gl.TRIANGLE_FAN, 0, vertCount);
 
-    // === Pass 2: Draw with stencil test, clear stencil bit ===
+    // === Pass 2: Draw fullscreen quad where stencil winding count != 0, clear stencil ===
     gl.colorMask(true, true, true, true);
-    // Apply clip stencil mask if active
+    gl.stencilMask(FILL_MASK);
+    gl.stencilOp(gl.KEEP, gl.KEEP, gl.ZERO); // Auto-clear winding bits
     const clipMask = this.getClipStencilMask();
     if (clipMask > 0) {
-      gl.stencilFunc(gl.EQUAL, 0x01 | clipMask, 0x01 | clipMask);
+      // Test: winding bits nonzero AND clip bits match
+      gl.stencilFunc(gl.NOTEQUAL, clipMask, FILL_MASK | clipMask);
     } else {
-      gl.stencilFunc(gl.EQUAL, 0x01, 0x01);
+      gl.stencilFunc(gl.NOTEQUAL, 0, FILL_MASK);
     }
-    gl.stencilOp(gl.KEEP, gl.KEEP, gl.ZERO); // Auto-clear bit 0
 
-    gl.drawArrays(gl.TRIANGLE_FAN, 0, vertCount);
+    // Fullscreen quad covers all stencil-marked pixels
+    gl.uniformMatrix3fv(prog.uniforms.get("u_transform")!, false, mat3Identity());
+    gl.uniform4fv(prog.uniforms.get("u_color")!, color);
+
+    this.state.bindVAO(this.solidVAO);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.fullscreenQuadVBO);
+    gl.vertexAttribPointer(prog.attributes.get("a_position")!, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(prog.attributes.get("a_position")!);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.fullscreenQuadIBO);
+    gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
 
     this.state.disableStencil();
+  }
+
+  maskToPath(vertices: Float32Array): void {
+    if (vertices.length < 6) return;
+    const gl = this.gl;
+    const prog = this.solidProg;
+
+    const combined = mat3Multiply(this.projection, this.currentTransform);
+
+    // Upload path vertices
+    this.pathBuffer.upload(vertices);
+
+    // === Pass 1: Mark interior in stencil (two-sided nonzero winding, no color) ===
+    this.state.enableStencil();
+    gl.stencilMask(FILL_MASK);
+    gl.stencilFunc(gl.ALWAYS, 0, FILL_MASK);
+    gl.stencilOpSeparate(gl.FRONT, gl.KEEP, gl.KEEP, gl.INCR_WRAP);
+    gl.stencilOpSeparate(gl.BACK, gl.KEEP, gl.KEEP, gl.DECR_WRAP);
+    gl.colorMask(false, false, false, false);
+
+    this.state.useProgram(prog.program);
+    gl.uniformMatrix3fv(prog.uniforms.get("u_transform")!, false, combined);
+    gl.uniform4fv(prog.uniforms.get("u_color")!, parseColor("#ffffff", 1));
+
+    this.state.bindVAO(this.solidVAO);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.pathBuffer.buffer);
+    gl.vertexAttribPointer(prog.attributes.get("a_position")!, 2, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(prog.attributes.get("a_position")!);
+
+    const vertCount = vertices.length / 2;
+    gl.drawArrays(gl.TRIANGLE_FAN, 0, vertCount);
+
+    // === Pass 2: Clear pixels OUTSIDE the path ===
+    // Stencil passes where winding bits == 0 (outside the path).
+    // destination-out with alpha=1 clears dst to transparent.
+    // Inside the path (winding != 0), stencil fails → stamps are preserved.
+    gl.colorMask(true, true, true, true);
+    gl.stencilMask(0x00); // Don't modify stencil during mask clear
+    gl.stencilFunc(gl.EQUAL, 0, FILL_MASK);
+    gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+
+    // Use GLState for blend mode change so the cache stays in sync
+    this.state.setBlendMode("destination-out");
+
+    // Fullscreen quad in clip-space coordinates
+    gl.uniformMatrix3fv(prog.uniforms.get("u_transform")!, false, mat3Identity());
+    gl.uniform4fv(prog.uniforms.get("u_color")!, parseColor("#ffffff", 1));
+
+    this.state.bindVAO(this.solidVAO);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.fullscreenQuadVBO);
+    gl.vertexAttribPointer(prog.attributes.get("a_position")!, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(prog.attributes.get("a_position")!);
+
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.fullscreenQuadIBO);
+    gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+
+    // === Pass 3: Clear winding stencil bits everywhere ===
+    gl.colorMask(false, false, false, false);
+    gl.stencilMask(FILL_MASK);
+    gl.stencilFunc(gl.NOTEQUAL, 0, FILL_MASK);
+    gl.stencilOp(gl.KEEP, gl.KEEP, gl.ZERO);
+    gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+
+    gl.colorMask(true, true, true, true);
+    this.state.disableStencil();
+
+    // Restore blend mode via GLState (cache stays in sync)
+    this.state.setBlendMode(this.currentBlendMode);
   }
 
   drawImage(
@@ -456,9 +615,10 @@ export class WebGL2Engine implements RenderEngine {
     const ex = m[0] * (x + w) + m[3] * (y + h) + m[6];
     const ey = m[1] * (x + w) + m[4] * (y + h) + m[7];
 
-    // Convert to GL viewport coords (Y-flipped)
+    // Convert to GL viewport coords (Y-flipped using current viewport height,
+    // not canvas height — critical for correct scissor when rendering into FBOs)
     const glX = Math.floor(Math.min(sx, ex));
-    const glY = Math.floor(this.gl.canvas.height - Math.max(sy, ey));
+    const glY = Math.floor(this.viewportHeight - Math.max(sy, ey));
     const glW = Math.ceil(Math.abs(ex - sx));
     const glH = Math.ceil(Math.abs(ey - sy));
 
@@ -472,13 +632,13 @@ export class WebGL2Engine implements RenderEngine {
     const gl = this.gl;
 
     this.clipDepth++;
-    const bit = this.clipDepth; // Bits 1-7 for clips
-    if (bit > 7) {
-      console.warn("WebGL2Engine: max clip depth (7) exceeded");
+    const bit = this.clipDepth; // Clip levels 1-3 → bits 5-7
+    if (bit > MAX_CLIP_DEPTH) {
+      console.warn(`WebGL2Engine: max clip depth (${MAX_CLIP_DEPTH}) exceeded`);
       return;
     }
 
-    const stencilBit = 1 << bit;
+    const stencilBit = 1 << (bit + CLIP_BIT_OFFSET);
     const combined = mat3Multiply(this.projection, this.currentTransform);
 
     // Write the clip region to stencil using INVERT trick
@@ -516,14 +676,39 @@ export class WebGL2Engine implements RenderEngine {
     let offscreen = this.offscreens.get(id);
     if (offscreen) {
       if (offscreen.width !== width || offscreen.height !== height) {
-        resizeOffscreenTarget(this.gl, offscreen.target, width, height);
-        offscreen.width = width;
-        offscreen.height = height;
+        // Size changed — destroy and recreate (MSAA renderbuffers can't be resized)
+        if (offscreen.msaa) {
+          destroyMSAAOffscreenTarget(this.gl, offscreen.msaa);
+        }
+        destroyOffscreenTarget(this.gl, offscreen.target);
+        this.offscreens.delete(id);
+        offscreen = undefined;
+        // Fall through to create new offscreen below
+      } else {
+        return offscreen;
       }
-      return offscreen;
     }
-    const target = createOffscreenTarget(this.gl, width, height);
-    offscreen = { width, height, target };
+    // Save the currently bound FBO before creating targets, which bind
+    // their own FBOs internally and then unbind to default framebuffer (null).
+    // Without this restore, beginOffscreen() would save null as the "parent FBO"
+    // and endOffscreen() would restore rendering to the screen canvas instead
+    // of the tile FBO — causing strokes to render at wrong positions/scales.
+    const gl = this.gl;
+    const prevFBO = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+
+    // Create resolve target (regular FBO with color texture for drawOffscreen to sample)
+    const target = createOffscreenTarget(gl, width, height);
+
+    // Create MSAA render target (4x multisampling for anti-aliased stencil edges)
+    const msaa = createMSAAOffscreenTarget(gl, width, height, 4);
+
+    // Restore the previous FBO
+    gl.bindFramebuffer(gl.FRAMEBUFFER, prevFBO);
+    // Invalidate GLState caches — target creation bound texture + FBO
+    // via raw GL calls that bypass GLState tracking.
+    this.state.invalidateTexture();
+    this.state.invalidateFBO();
+    offscreen = { width, height, target, msaa };
     this.offscreens.set(id, offscreen);
     return offscreen;
   }
@@ -532,7 +717,14 @@ export class WebGL2Engine implements RenderEngine {
     const t = target as GLOffscreen;
     const gl = this.gl;
 
-    // Save current FBO + viewport
+    // Save current FBO + viewport + scissor state
+    const scissorEnabled = gl.isEnabled(gl.SCISSOR_TEST);
+    let savedScissor: [number, number, number, number] | null = null;
+    if (scissorEnabled) {
+      const box = gl.getParameter(gl.SCISSOR_BOX) as Int32Array;
+      savedScissor = [box[0], box[1], box[2], box[3]];
+    }
+
     this.fboStack.push({
       fbo: gl.getParameter(gl.FRAMEBUFFER_BINDING),
       viewport: [
@@ -542,19 +734,46 @@ export class WebGL2Engine implements RenderEngine {
         gl.getParameter(gl.VIEWPORT)[3],
       ],
       projection: this.projection,
+      scissor: savedScissor,
+      msaa: t.msaa,
     });
 
-    this.state.bindFramebuffer(t.target.fbo);
+    // Disable scissor for offscreen rendering — the outer scissor rect
+    // is in the caller's framebuffer coordinates, not the offscreen's.
+    if (scissorEnabled) {
+      gl.disable(gl.SCISSOR_TEST);
+    }
+
+    // Bind MSAA FBO for rendering (resolve happens in endOffscreen)
+    const renderFBO = t.msaa ? t.msaa.msaaFBO : t.target.fbo;
+    this.state.bindFramebuffer(renderFBO);
     gl.viewport(0, 0, t.width, t.height);
     this.projection = mat3Projection(t.width, t.height);
+    this.viewportHeight = t.height;
   }
 
   endOffscreen(): void {
     const prev = this.fboStack.pop();
     if (!prev) return;
+    const gl = this.gl;
+
+    // Resolve MSAA → resolve texture before leaving offscreen
+    if (prev.msaa) {
+      resolveMSAA(gl, prev.msaa);
+      // resolveMSAA binds READ/DRAW framebuffers — need to invalidate GLState
+      this.state.invalidateFBO();
+    }
+
     this.state.bindFramebuffer(prev.fbo);
-    this.gl.viewport(prev.viewport[0], prev.viewport[1], prev.viewport[2], prev.viewport[3]);
+    gl.viewport(prev.viewport[0], prev.viewport[1], prev.viewport[2], prev.viewport[3]);
     this.projection = prev.projection;
+    this.viewportHeight = prev.viewport[3]; // Restore viewport height for scissor Y-flip
+
+    // Restore scissor state
+    if (prev.scissor) {
+      gl.enable(gl.SCISSOR_TEST);
+      gl.scissor(prev.scissor[0], prev.scissor[1], prev.scissor[2], prev.scissor[3]);
+    }
   }
 
   drawOffscreen(target: OffscreenTarget, dx: number, dy: number, dw: number, dh: number): void {
@@ -569,7 +788,9 @@ export class WebGL2Engine implements RenderEngine {
     gl.uniform1f(prog.uniforms.get("u_alpha")!, this.currentAlpha);
     gl.uniform1i(prog.uniforms.get("u_texture")!, 0);
 
-    this.state.bindTexture(t.target.colorTexture);
+    // MSAA resolve writes to msaa.colorTexture; non-MSAA renders to target.colorTexture
+    const tex = t.msaa ? t.msaa.colorTexture : t.target.colorTexture;
+    this.state.bindTexture(tex);
 
     // Build position/texcoord quad
     const positions = new Float32Array([
@@ -845,7 +1066,7 @@ export class WebGL2Engine implements RenderEngine {
   private getClipStencilMask(): number {
     let mask = 0;
     for (let i = 1; i <= this.clipDepth; i++) {
-      mask |= (1 << i);
+      mask |= (1 << (i + CLIP_BIT_OFFSET));
     }
     return mask;
   }
@@ -854,7 +1075,7 @@ export class WebGL2Engine implements RenderEngine {
     const gl = this.gl;
     let mask = 0;
     for (let i = fromLevel; i <= toLevel; i++) {
-      mask |= (1 << i);
+      mask |= (1 << (i + CLIP_BIT_OFFSET));
     }
     gl.stencilMask(mask);
     gl.clearStencil(0);
@@ -911,6 +1132,7 @@ export class WebGL2Engine implements RenderEngine {
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.disable(gl.DEPTH_TEST);
       gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+      this.viewportHeight = this.canvas.height;
     });
   }
 }
