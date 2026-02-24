@@ -124,6 +124,7 @@ export class Renderer {
   private tiledLayer: TiledStaticLayer | null = null;
 
   // RAF batching
+  private gestureRafId: number | null = null;
   private rafId: number | null = null;
   private pendingActiveRender: (() => void) | null = null;
   private pendingBakes: { stroke: Stroke; styles: Record<string, PenStyle>; pageRect?: PageRect; useDarkColors?: boolean }[] = [];
@@ -1094,14 +1095,18 @@ export class Renderer {
    */
   setGestureTransform(tx: number, ty: number, scale: number): void {
     if (this.tiledLayer) {
-      // Tiled: background is in tiles, no separate background canvas.
-      // Composite cached tiles + schedule async renders for missing tiles.
-      this.tiledLayer.gestureUpdate(
-        this.staticCtx, this.staticCanvas,
-        this.cssWidth, this.cssHeight,
-      );
-      if (this.tiledLayer.useWebGLTiles) {
-        this.webglGL?.flush();
+      // Tiled: defer the WebGL composite to the next animation frame.
+      // Trackpad pinch events fire much faster than the display refresh
+      // rate; compositing on every event wastes GPU work and stalls the
+      // main thread. RAF coalesces to one composite per display frame.
+      if (this.gestureRafId === null) {
+        this.gestureRafId = requestAnimationFrame(() => {
+          this.gestureRafId = null;
+          this.tiledLayer?.gestureUpdate(
+            this.staticCtx, this.staticCanvas,
+            this.cssWidth, this.cssHeight,
+          );
+        });
       }
     } else {
       // Legacy: CSS-transform the overscan background + static canvases
@@ -1127,6 +1132,11 @@ export class Renderer {
    * Call this at gesture end, followed by a real render.
    */
   clearGestureTransform(): void {
+    // Cancel any pending gesture RAF so it doesn't fire after gesture end
+    if (this.gestureRafId !== null) {
+      cancelAnimationFrame(this.gestureRafId);
+      this.gestureRafId = null;
+    }
     if (this.tiledLayer) {
       this.tiledLayer.endGesture();
     } else {
@@ -1758,12 +1768,6 @@ class TiledStaticLayer {
           this.glCache.markClean(key);
         }
       }
-      // Diagnostic: log band/tile-size info on each renderVisible
-      if (visibleTiles.length > 0) {
-        const sample = this.glCache.getStale(visibleTiles[0]);
-        const tileScreenPx = this.config.tileWorldSize * this.camera.zoom * this.config.dpr;
-        console.log(`[renderVisible] band=${currentZoomBand} zoom=${this.camera.zoom.toFixed(2)} rendered=${renderedCount}/${visibleTiles.length} texSize=${sample?.textureWidth ?? "?"}px screenQuad=${tileScreenPx.toFixed(0)}px`);
-      }
 
       // Schedule async re-renders for off-screen dirty tiles (background prefetch)
       const toSchedule: TileKey[] = [];
@@ -1922,22 +1926,22 @@ class TiledStaticLayer {
       // ─── WebGL path ───────────────────────────────────────
       this.glCache.protect(visibleKeySet);
 
-      // FBO-render any newly visible tiles synchronously
-      const currentZoomBand = zoomToZoomBand(this.camera.zoom);
+      // Composite already-cached tiles (no synchronous FBO rendering).
+      this.glCompositor.composite(this.camera, screenWidth, screenHeight, this.glCache);
+      this.drawOverlay();
+
+      // Schedule async worker rendering for missing/dirty tiles so they
+      // appear during the gesture (the next gestureUpdate RAF will
+      // composite them once ready).
+      const missing: TileKey[] = [];
       for (const key of visibleTiles) {
         if (!this.glCache.getStale(key)) {
-          const worldBounds = this.grid.tileBounds(key.col, key.row);
-          const entry = this.glCache.allocate(key, worldBounds, currentZoomBand);
-          if (this.currentDoc && this.currentSpatialIndex) {
-            this.webglTileEngine.renderTile(entry, this.currentDoc, this.currentPageLayout, this.currentSpatialIndex, this.currentIsDarkMode);
-          }
-          this.glCache.markClean(key);
+          missing.push(key);
         }
       }
-
-      this.glCompositor.composite(this.camera, screenWidth, screenHeight, this.glCache);
-      this.webglTileEngine.resetState();
-      this.drawOverlay();
+      if (missing.length > 0) {
+        this.scheduleAsync(missing, visibleKeySet);
+      }
       return;
     }
 

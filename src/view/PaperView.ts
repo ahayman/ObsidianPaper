@@ -215,7 +215,6 @@ export class PaperView extends TextFileView {
   getViewData(): string {
     this.renderer?.flushFinalizations();
     this.document.meta.modified = Date.now();
-    this.document.viewport = this.camera.getState();
     return serializeDocument(this.document);
   }
 
@@ -229,14 +228,9 @@ export class PaperView extends TextFileView {
     this.spatialIndex.buildFromStrokes(this.document.strokes);
     this.recomputeLayout();
 
-    // Determine if we should center on first page (new/default viewport)
-    const vp = this.document.viewport;
-    const isDefaultViewport = vp.x === 0 && vp.y === 0 && vp.zoom === 1.0;
-
-    if (isDefaultViewport && this.pageLayout.length > 0) {
+    // Always open at first page, centered and fit to width
+    if (this.pageLayout.length > 0) {
       this.centerOnFirstPage();
-    } else {
-      this.camera.setState({ x: vp.x, y: vp.y, zoom: vp.zoom });
     }
 
     this.renderer?.setPipeline(this.getResolvedPipeline());
@@ -470,7 +464,6 @@ export class PaperView extends TextFileView {
     this.camera.y = centerY - container.height / (2 * this.camera.zoom);
     this.camera.clampPan(container.width, container.height);
     this.requestStaticRender();
-    this.requestSave();
   }
 
   /**
@@ -1214,8 +1207,7 @@ export class PaperView extends TextFileView {
 
       onPanMove: (dx: number, dy: number) => {
         this.camera.pan(dx, dy);
-        const rect = this.contentEl.getBoundingClientRect();
-        this.camera.clampPan(rect.width, rect.height);
+        this.camera.clampPan(this.cssWidth, this.cssHeight);
         // Snapshot base on first move if not set (e.g. pinch-to-pan transition)
         if (!this.gestureBaseCamera) {
           this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom };
@@ -1228,7 +1220,6 @@ export class PaperView extends TextFileView {
         this.gestureBaseCamera = null;
         this.renderer?.clearGestureTransform();
         this.requestStaticRender();
-        this.requestSave();
       },
 
       onPinchMove: (centerX: number, centerY: number, scale: number, panDx: number, panDy: number) => {
@@ -1239,8 +1230,7 @@ export class PaperView extends TextFileView {
         this.camera.pan(panDx, panDy);
         const newZoom = this.pinchBaseZoom * scale;
         this.camera.zoomAt(centerX, centerY, newZoom);
-        const rect = this.contentEl.getBoundingClientRect();
-        this.camera.clampPan(rect.width, rect.height);
+        this.camera.clampPan(this.cssWidth, this.cssHeight);
         // Snapshot base on first pinch move
         if (!this.gestureBaseCamera) {
           this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom };
@@ -1254,7 +1244,6 @@ export class PaperView extends TextFileView {
         this.gestureBaseCamera = null;
         this.renderer?.clearGestureTransform();
         this.requestStaticRender();
-        this.requestSave();
       },
 
       onTwoFingerTap: () => {
@@ -1284,6 +1273,11 @@ export class PaperView extends TextFileView {
       },
 
       onWheel: (screenX: number, screenY: number, deltaX: number, deltaY: number, isPinch: boolean) => {
+        // Snapshot gesture base on first wheel event of a gesture
+        if (!this.gestureBaseCamera) {
+          this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom };
+        }
+
         if (isPinch) {
           // Trackpad pinch or Ctrl+wheel → zoom at cursor
           const zoomFactor = Math.exp(-deltaY * 0.01);
@@ -1303,13 +1297,15 @@ export class PaperView extends TextFileView {
             this.camera.pan(-deltaX, -deltaY);
           }
         }
-        const rect = this.contentEl.getBoundingClientRect();
-        this.camera.clampPan(rect.width, rect.height);
-        this.requestStaticRender();
+        this.camera.clampPan(this.cssWidth, this.cssHeight);
+        this.applyGestureTransform();
       },
 
       onWheelEnd: () => {
-        this.requestSave();
+        this.midGestureRenderPending = false;
+        this.gestureBaseCamera = null;
+        this.renderer?.clearGestureTransform();
+        this.requestStaticRender();
       },
     };
   }

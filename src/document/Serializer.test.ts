@@ -103,12 +103,23 @@ describe("Serializer", () => {
       expect(restored.styles["my-blue"].width).toBe(8);
     });
 
-    it("should preserve viewport state", () => {
+    it("should not serialize viewport state", () => {
       const doc = createEmptyDocument();
       doc.viewport = { x: 100, y: 200, zoom: 1.5 };
 
       const json = serializeDocument(doc);
-      const restored = deserializeDocument(json);
+      const parsed = JSON.parse(json);
+
+      expect(parsed.viewport).toBeUndefined();
+    });
+
+    it("should deserialize viewport from old files for backwards compatibility", () => {
+      const doc = createEmptyDocument();
+      const json = serializeDocument(doc);
+      const parsed = JSON.parse(json);
+      // Simulate an old file that had viewport saved
+      parsed.viewport = { x: 100, y: 200, zoom: 1.5 };
+      const restored = deserializeDocument(JSON.stringify(parsed));
 
       expect(restored.viewport.x).toBe(100);
       expect(restored.viewport.y).toBe(200);

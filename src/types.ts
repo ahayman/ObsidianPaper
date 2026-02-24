@@ -191,7 +191,7 @@ export interface SerializedDocument {
   rp?: string;      // RenderPipeline, omit if undefined
   pd?: SerializedPageDefaults; // Page defaults, omit if undefined
   pages: SerializedPage[];
-  viewport: { x: number; y: number; zoom: number };
+  viewport?: { x: number; y: number; zoom: number };
   channels: string[];
   styles: Record<string, SerializedPenStyle>;
   strokes: SerializedStroke[];

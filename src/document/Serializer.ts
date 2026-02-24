@@ -61,11 +61,6 @@ export function serializeDocument(doc: PaperDocument): string {
       app: doc.meta.appVersion,
     },
     pages: doc.pages.map((p) => serializePage(p)),
-    viewport: {
-      x: doc.viewport.x,
-      y: doc.viewport.y,
-      zoom: doc.viewport.zoom,
-    },
     channels: doc.channels,
     styles: serializeStyles(doc.styles),
     strokes: doc.strokes.map((s) => serializeStroke(s, useCompression)),
