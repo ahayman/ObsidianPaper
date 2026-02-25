@@ -38,6 +38,14 @@ function augmentElement(el: HTMLElement): HTMLElement {
       this.appendChild(child);
       return child;
     };
+    (el as any).createDiv = function (
+      opts?: { cls?: string; text?: string; attr?: Record<string, string> }
+    ) {
+      return (this as any).createEl("div", opts);
+    };
+    (el as any).setText = function (text: string) {
+      this.textContent = text;
+    };
     (el as any).addClass = function (cls: string) {
       this.classList.add(cls);
     };

@@ -46,7 +46,6 @@ describe("PaperSettingsTab", () => {
 
   it("should create setting elements in containerEl", () => {
     tab.display();
-    // Each Setting creates a div child — 5 headings + 12 settings = 17 divs
     const divs = tab.containerEl.querySelectorAll("div");
     expect(divs.length).toBeGreaterThanOrEqual(5);
   });
@@ -54,7 +53,6 @@ describe("PaperSettingsTab", () => {
   it("should accept updated settings", () => {
     const newSettings = { ...DEFAULT_SETTINGS, defaultWidth: 5 };
     tab.updateSettings(newSettings);
-    // Should not throw
     expect(() => tab.display()).not.toThrow();
   });
 
@@ -74,5 +72,46 @@ describe("PaperSettingsTab", () => {
     settings.newNoteLocation = "subfolder";
     tab.updateSettings(settings);
     expect(() => tab.display()).not.toThrow();
+  });
+
+  it("should render 4 tab buttons", () => {
+    tab.display();
+    const buttons = tab.containerEl.querySelectorAll(".paper-settings-tabs__btn");
+    expect(buttons.length).toBe(4);
+    expect(buttons[0].textContent).toBe("Writing");
+    expect(buttons[1].textContent).toBe("Page");
+    expect(buttons[2].textContent).toBe("Device");
+    expect(buttons[3].textContent).toBe("Files & Embeds");
+  });
+
+  it("should show writing tab content by default", () => {
+    tab.display();
+    const contents = tab.containerEl.querySelectorAll(".paper-settings-tab-content");
+    expect(contents.length).toBe(4);
+    expect(contents[0].classList.contains("is-active")).toBe(true);
+    expect(contents[1].classList.contains("is-active")).toBe(false);
+    expect(contents[2].classList.contains("is-active")).toBe(false);
+    expect(contents[3].classList.contains("is-active")).toBe(false);
+  });
+
+  it("should switch tabs on click", () => {
+    tab.display();
+    const buttons = tab.containerEl.querySelectorAll(".paper-settings-tabs__btn");
+    const contents = tab.containerEl.querySelectorAll(".paper-settings-tab-content");
+
+    // Click "Page" tab
+    (buttons[1] as HTMLElement).click();
+
+    expect(buttons[0].classList.contains("is-active")).toBe(false);
+    expect(buttons[1].classList.contains("is-active")).toBe(true);
+    expect(contents[0].classList.contains("is-active")).toBe(false);
+    expect(contents[1].classList.contains("is-active")).toBe(true);
+  });
+
+  it("should show device note in device tab", () => {
+    tab.display();
+    const note = tab.containerEl.querySelector(".paper-settings-device-note");
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain("stored locally");
   });
 });
