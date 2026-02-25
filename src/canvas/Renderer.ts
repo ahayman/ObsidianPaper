@@ -104,7 +104,7 @@ export class Renderer {
   };
 
   // Rendering pipeline
-  private pipeline: RenderPipeline = "textures";
+  private pipeline: RenderPipeline = "basic";
 
   // Stamp-based rendering
   private stampManager: StampTextureManager | null = null;
@@ -558,7 +558,7 @@ export class Renderer {
     const penConfig = getPenConfig(style.pen);
 
     // Stamp-based rendering for pencil
-    if (this.stampManager && this.pipeline === "stamps" && penConfig.stamp && points.length > 0) {
+    if (this.stampManager && this.pipeline === "advanced" && penConfig.stamp && points.length > 0) {
       const color = resolveColor(style.color, this.isDarkMode);
       const qPoints = quantizePoints(points);
       const stamps = computeAllStamps(qPoints, style, penConfig, penConfig.stamp);
@@ -687,7 +687,7 @@ export class Renderer {
 
     // Ink-shaded active stroke for fountain pen: full redraw each frame
     // with clip + source-over deposit on an offscreen canvas.
-    if (this.pipeline === "stamps" && penConfig.inkStamp && points.length > 1) {
+    if (this.pipeline === "advanced" && penConfig.inkStamp && points.length > 1) {
       this.pendingActiveRender = () => {
         if (!penConfig.inkStamp) return;
         if (!this.inkStampManager) this.initInkStamps();
@@ -784,7 +784,7 @@ export class Renderer {
     }
 
     // Stamp-based incremental rendering for pencil
-    if (this.stampManager && this.pipeline === "stamps" && penConfig.stamp && points.length > 0) {
+    if (this.stampManager && this.pipeline === "advanced" && penConfig.stamp && points.length > 0) {
       this.pendingActiveRender = () => {
         if (!this.stampManager || !penConfig.stamp) return;
 
@@ -1423,7 +1423,7 @@ class TiledStaticLayer {
   /** Last docVersion sent to workers. */
   private workerDocVersion = -1;
   /** Current rendering pipeline. */
-  private pipeline: RenderPipeline = "textures";
+  private pipeline: RenderPipeline = "basic";
 
   // WebGL tile rendering components (null when Canvas2D mode)
   private webglTileEngine: WebGLTileEngine | null = null;

@@ -108,7 +108,9 @@
       "WebFetch(domain:raphlinus.github.io)",
       "WebFetch(domain:gasiulis.name)",
       "WebFetch(domain:tavmjong.free.fr)",
-      "WebFetch(domain:inria.hal.science)"
+      "WebFetch(domain:inria.hal.science)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:help.obsidian.md)"
     ]
   }
 }

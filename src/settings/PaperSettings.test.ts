@@ -18,11 +18,6 @@ describe("PaperSettings", () => {
       expect(DEFAULT_SETTINGS.lineSpacing).toBeGreaterThan(0);
     });
 
-    it("should have valid input defaults", () => {
-      expect(DEFAULT_SETTINGS.palmRejection).toBe(true);
-      expect(DEFAULT_SETTINGS.fingerAction).toBe("pan");
-    });
-
     it("should have valid smoothing default", () => {
       expect(DEFAULT_SETTINGS.defaultSmoothing).toBeGreaterThanOrEqual(0);
       expect(DEFAULT_SETTINGS.defaultSmoothing).toBeLessThanOrEqual(1);
@@ -61,7 +56,6 @@ describe("PaperSettings", () => {
       expect(result.defaultWidth).toBe(5);
       // Rest should be defaults
       expect(result.defaultColorId).toBe("#1a1a1a|#e8e8e8");
-      expect(result.palmRejection).toBe(true);
     });
 
     it("should preserve all overridden fields", () => {
@@ -86,8 +80,6 @@ describe("PaperSettings", () => {
         customPageUnit: "cm",
         customPageWidth: 21,
         customPageHeight: 29.7,
-        palmRejection: false,
-        fingerAction: "draw",
         defaultSmoothing: 0.7,
         pencilGrainStrength: 0.6,
         defaultNibAngle: Math.PI / 4,
@@ -101,14 +93,31 @@ describe("PaperSettings", () => {
         defaultFormat: "paper.md",
         penPresets: [],
         activePresetId: null,
-        toolbarPosition: "bottom",
-        defaultRenderPipeline: "textures",
-        defaultRenderEngine: "canvas2d",
         embedMaxWidth: 800,
         embedMaxHeight: 300,
       };
       const result = mergeSettings(custom);
       expect(result).toEqual(custom);
+    });
+
+    it("should strip legacy device-specific fields from loaded data", () => {
+      const loaded = {
+        defaultPenType: "ballpoint",
+        defaultRenderPipeline: "advanced",
+        defaultRenderEngine: "webgl",
+        palmRejection: false,
+        fingerAction: "draw",
+        toolbarPosition: "bottom",
+      } as Partial<PaperSettings> & Record<string, unknown>;
+      const result = mergeSettings(loaded as Partial<PaperSettings>);
+      expect(result.defaultPenType).toBe("ballpoint");
+      // These fields should not exist on the result
+      const raw = result as unknown as Record<string, unknown>;
+      expect(raw["defaultRenderPipeline"]).toBeUndefined();
+      expect(raw["defaultRenderEngine"]).toBeUndefined();
+      expect(raw["palmRejection"]).toBeUndefined();
+      expect(raw["fingerAction"]).toBeUndefined();
+      expect(raw["toolbarPosition"]).toBeUndefined();
     });
 
     it("should handle grain strength fields", () => {

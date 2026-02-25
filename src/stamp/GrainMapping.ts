@@ -50,13 +50,13 @@ export function grainSliderToConfig(t: number): StampTextureConfig {
 }
 
 /**
- * Map a grain slider value to a strength multiplier for the "textures" pipeline.
+ * Map a grain slider value to a strength multiplier for grain rendering.
  *
  * grain=0 (coarse) → heavy texture overlay (strength × 1.6)
  * grain=DEFAULT (0.35) → approximately 1.0 (unchanged)
  * grain=1 (fine) → very light texture (strength × 0.2)
  *
- * This lets the grain slider affect pencil rendering in the textures pipeline
+ * This lets the grain slider affect pencil rendering in the advanced pipeline
  * by modulating how much paper grain shows through.
  */
 export function grainToTextureStrength(baseStrength: number, grainValue: number): number {

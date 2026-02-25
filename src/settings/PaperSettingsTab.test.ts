@@ -1,14 +1,19 @@
 import { App } from "obsidian";
 import PaperPlugin from "../main";
 import { PaperSettingsTab } from "./PaperSettingsTab";
+import type { DeviceSettingsAccessor } from "./PaperSettingsTab";
 import { DEFAULT_SETTINGS } from "./PaperSettings";
 import type { PaperSettings } from "./PaperSettings";
+import { DEFAULT_DEVICE_SETTINGS } from "./DeviceSettings";
+import type { DeviceSettings } from "./DeviceSettings";
 
 describe("PaperSettingsTab", () => {
   let app: App;
   let plugin: PaperPlugin;
   let settings: PaperSettings;
   let onChange: jest.Mock;
+  let deviceAccess: DeviceSettingsAccessor;
+  let deviceSettings: DeviceSettings;
   let tab: PaperSettingsTab;
 
   beforeEach(() => {
@@ -23,7 +28,12 @@ describe("PaperSettingsTab", () => {
     });
     settings = { ...DEFAULT_SETTINGS };
     onChange = jest.fn();
-    tab = new PaperSettingsTab(app, plugin, settings, onChange);
+    deviceSettings = { ...DEFAULT_DEVICE_SETTINGS };
+    deviceAccess = {
+      getDeviceSettings: () => deviceSettings,
+      onDeviceSettingsChange: jest.fn((ds) => { deviceSettings = ds; }),
+    };
+    tab = new PaperSettingsTab(app, plugin, settings, onChange, deviceAccess);
   });
 
   it("should create without error", () => {

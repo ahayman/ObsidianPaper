@@ -16,6 +16,8 @@ import { Toolbar } from "./toolbar/Toolbar";
 import type { ActiveTool, ToolbarCallbacks, ToolbarQueries, ToolbarState } from "./toolbar/ToolbarTypes";
 import type { PaperSettings } from "../settings/PaperSettings";
 import { DEFAULT_SETTINGS, resolvePageSize, resolveMargins } from "../settings/PaperSettings";
+import type { DeviceSettings } from "../settings/DeviceSettings";
+import { DEFAULT_DEVICE_SETTINGS } from "../settings/DeviceSettings";
 import { HoverCursor } from "../input/HoverCursor";
 import { SpatialIndex } from "../spatial/SpatialIndex";
 import { computePageLayout, findPageAtPoint, getDocumentBounds, getEffectiveSize } from "../document/PageLayout";
@@ -53,6 +55,7 @@ export class PaperView extends TextFileView {
   private lastMidGestureRenderTime = 0;
   private static readonly MID_GESTURE_THROTTLE_MS = 250;
   private settings: PaperSettings = DEFAULT_SETTINGS;
+  private deviceSettings: DeviceSettings = DEFAULT_DEVICE_SETTINGS;
   private staticRafId: number | null = null;
   private precompressTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
@@ -78,9 +81,14 @@ export class PaperView extends TextFileView {
   private useBarrelRotation = true;
 
   /**
-   * Callback for persisting settings changes (presets, toolbar position) back to the plugin.
+   * Callback for persisting settings changes (presets) back to the plugin.
    */
   onSettingsChange: ((changes: Partial<PaperSettings>) => void) | null = null;
+
+  /**
+   * Callback for persisting device-specific settings changes back to the plugin.
+   */
+  onDeviceSettingsChange: ((changes: Partial<DeviceSettings>) => void) | null = null;
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
@@ -116,7 +124,7 @@ export class PaperView extends TextFileView {
     this.themeDetector.start();
 
     // Create multi-layer renderer
-    this.renderer = new Renderer(container, this.camera, Platform.isMobile, this.settings.defaultRenderEngine);
+    this.renderer = new Renderer(container, this.camera, Platform.isMobile, this.deviceSettings.defaultRenderEngine);
     this.renderer.isDarkMode = this.themeDetector.isDarkMode;
     this.renderer.initGrain();
     this.renderer.initStamps();
@@ -156,7 +164,7 @@ export class PaperView extends TextFileView {
         inkPreset: this.currentInkPreset,
       },
       this.settings.penPresets,
-      this.settings.toolbarPosition,
+      this.deviceSettings.toolbarPosition,
       this.themeDetector.isDarkMode
     );
 
@@ -296,7 +304,12 @@ export class PaperView extends TextFileView {
       activePresetId: settings.activePresetId,
     });
     this.toolbar?.updatePresets(settings.penPresets, settings.activePresetId);
-    this.toolbar?.setPosition(settings.toolbarPosition);
+  }
+
+  setDeviceSettings(ds: DeviceSettings): void {
+    this.deviceSettings = ds;
+    this.renderer?.setPipeline(this.getResolvedPipeline());
+    this.toolbar?.setPosition(ds.toolbarPosition);
   }
 
   onResize(): void {
@@ -479,7 +492,7 @@ export class PaperView extends TextFileView {
   // ─── Rendering Pipeline ──────────────────────────────────────
 
   private getResolvedPipeline(): RenderPipeline {
-    return this.document.renderPipeline ?? this.settings.defaultRenderPipeline;
+    return this.document.renderPipeline ?? this.deviceSettings.defaultRenderPipeline;
   }
 
   updateRenderPipeline(pipeline: RenderPipeline): void {
@@ -1033,8 +1046,8 @@ export class PaperView extends TextFileView {
         this.onSettingsChange?.({ penPresets: presets, activePresetId });
       },
       onPositionChange: (position) => {
-        this.settings.toolbarPosition = position;
-        this.onSettingsChange?.({ toolbarPosition: position });
+        this.deviceSettings.toolbarPosition = position;
+        this.onDeviceSettingsChange?.({ toolbarPosition: position });
       },
     };
   }

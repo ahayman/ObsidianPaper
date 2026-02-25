@@ -3,6 +3,7 @@ import type { Plugin } from "obsidian";
 import type { PaperSettings, PaperFormat, NewNoteLocation } from "./PaperSettings";
 import { formatSpacingDisplay, displayToWorldUnits } from "./PaperSettings";
 import type { PenType, PaperType, PageSizePreset, PageOrientation, LayoutDirection, PageUnit, SpacingUnit, RenderPipeline, RenderEngineType } from "../types";
+import type { DeviceSettings } from "./DeviceSettings";
 import { isWebGL2Available } from "../canvas/engine/EngineFactory";
 
 const PEN_TYPE_OPTIONS: Record<PenType, string> = {
@@ -20,19 +21,27 @@ const PAPER_TYPE_OPTIONS: Record<PaperType, string> = {
   "dot-grid": "Dot grid",
 };
 
+export interface DeviceSettingsAccessor {
+  getDeviceSettings(): DeviceSettings;
+  onDeviceSettingsChange(ds: DeviceSettings): void;
+}
+
 export class PaperSettingsTab extends PluginSettingTab {
   private settings: PaperSettings;
   private onSettingsChange: (settings: PaperSettings) => void;
+  private deviceAccess: DeviceSettingsAccessor;
 
   constructor(
     app: App,
     plugin: Plugin,
     settings: PaperSettings,
-    onSettingsChange: (settings: PaperSettings) => void
+    onSettingsChange: (settings: PaperSettings) => void,
+    deviceAccess: DeviceSettingsAccessor,
   ) {
     super(app, plugin);
     this.settings = settings;
     this.onSettingsChange = onSettingsChange;
+    this.deviceAccess = deviceAccess;
   }
 
   display(): void {
@@ -365,30 +374,32 @@ export class PaperSettingsTab extends PluginSettingTab {
         });
       });
 
-    // --- Input Section ---
+    // --- Input Section (device-specific, stored in localStorage) ---
     new Setting(containerEl).setName("Input").setHeading();
+
+    const inputDs = this.deviceAccess.getDeviceSettings();
 
     new Setting(containerEl)
       .setName("Palm rejection")
-      .setDesc("Ignore touch input while pen is active")
+      .setDesc("Ignore touch input while pen is active (device-specific)")
       .addToggle((toggle) => {
-        toggle.setValue(this.settings.palmRejection);
+        toggle.setValue(inputDs.palmRejection);
         toggle.onChange((value: boolean) => {
-          this.settings.palmRejection = value;
-          this.notifyChange();
+          const updated = { ...this.deviceAccess.getDeviceSettings(), palmRejection: value };
+          this.deviceAccess.onDeviceSettingsChange(updated);
         });
       });
 
     new Setting(containerEl)
       .setName("Finger action")
-      .setDesc("What finger touch does on the canvas")
+      .setDesc("What finger touch does on the canvas (device-specific)")
       .addDropdown((dropdown) => {
         dropdown.addOption("pan", "Pan & zoom");
         dropdown.addOption("draw", "Draw");
-        dropdown.setValue(this.settings.fingerAction);
+        dropdown.setValue(inputDs.fingerAction);
         dropdown.onChange((value: string) => {
-          this.settings.fingerAction = value as "pan" | "draw";
-          this.notifyChange();
+          const updated = { ...this.deviceAccess.getDeviceSettings(), fingerAction: value as "pan" | "draw" };
+          this.deviceAccess.onDeviceSettingsChange(updated);
         });
       });
 
@@ -426,20 +437,21 @@ export class PaperSettingsTab extends PluginSettingTab {
         });
       });
 
-    // --- Rendering Section ---
+    // --- Rendering Section (device-specific, stored in localStorage) ---
     new Setting(containerEl).setName("Rendering").setHeading();
+
+    const ds = this.deviceAccess.getDeviceSettings();
 
     new Setting(containerEl)
       .setName("Default render pipeline")
-      .setDesc("Controls stroke rendering quality and performance")
+      .setDesc("Controls stroke rendering quality and performance (device-specific)")
       .addDropdown((dropdown) => {
-        dropdown.addOption("basic", "Basic (fastest)");
-        dropdown.addOption("textures", "Textures (default)");
-        dropdown.addOption("stamps", "Stamps (advanced)");
-        dropdown.setValue(this.settings.defaultRenderPipeline);
+        dropdown.addOption("basic", "Basic (default)");
+        dropdown.addOption("advanced", "Advanced");
+        dropdown.setValue(ds.defaultRenderPipeline);
         dropdown.onChange((value: string) => {
-          this.settings.defaultRenderPipeline = value as RenderPipeline;
-          this.notifyChange();
+          const updated = { ...this.deviceAccess.getDeviceSettings(), defaultRenderPipeline: value as RenderPipeline };
+          this.deviceAccess.onDeviceSettingsChange(updated);
         });
       });
 
@@ -447,14 +459,14 @@ export class PaperSettingsTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Rendering engine")
-      .setDesc("Canvas 2D works everywhere. WebGL uses the GPU for better performance. Requires reopening the note.")
+      .setDesc("Canvas 2D works everywhere. WebGL uses the GPU for better performance. Requires reopening the note. (device-specific)")
       .addDropdown((dropdown) => {
         dropdown.addOption("canvas2d", "Canvas 2D");
         dropdown.addOption("webgl", webglAvailable ? "WebGL (GPU)" : "WebGL (GPU) (not supported)");
-        dropdown.setValue(this.settings.defaultRenderEngine);
+        dropdown.setValue(ds.defaultRenderEngine);
         dropdown.onChange((value: string) => {
-          this.settings.defaultRenderEngine = value as RenderEngineType;
-          this.notifyChange();
+          const updated = { ...this.deviceAccess.getDeviceSettings(), defaultRenderEngine: value as RenderEngineType };
+          this.deviceAccess.onDeviceSettingsChange(updated);
         });
       });
 

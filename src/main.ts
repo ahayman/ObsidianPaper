@@ -5,6 +5,8 @@ import { serializeDocument, deserializeDocument } from "./document/Serializer";
 import { DEFAULT_SETTINGS, mergeSettings, resolvePageSize, resolveMargins } from "./settings/PaperSettings";
 import type { PaperSettings } from "./settings/PaperSettings";
 import { PaperSettingsTab } from "./settings/PaperSettingsTab";
+import type { DeviceSettings } from "./settings/DeviceSettings";
+import { DEFAULT_DEVICE_SETTINGS, loadDeviceSettings, saveDeviceSettings } from "./settings/DeviceSettings";
 import { createEmbedPostProcessor } from "./embed/EmbedPostProcessor";
 import type { EmbedEntry } from "./embed/EmbedPostProcessor";
 import { EmbeddedPaperModal } from "./embed/EmbeddedPaperModal";
@@ -12,7 +14,9 @@ import { exportToSvg } from "./export/SvgExporter";
 
 export default class PaperPlugin extends Plugin {
   settings: PaperSettings = DEFAULT_SETTINGS;
+  deviceSettings: DeviceSettings = DEFAULT_DEVICE_SETTINGS;
   private settingsListeners: Set<(settings: PaperSettings) => void> = new Set();
+  private deviceSettingsListeners: Set<(ds: DeviceSettings) => void> = new Set();
   private embedRegistry: EmbedEntry[] = [];
 
   async onload(): Promise<void> {
@@ -20,12 +24,19 @@ export default class PaperPlugin extends Plugin {
 
     this.registerView(VIEW_TYPE_PAPER, (leaf) => {
       const view = new PaperView(leaf);
+      view.setDeviceSettings(this.deviceSettings);
       view.setSettings(this.settings);
       view.onSettingsChange = (changes) => {
         Object.assign(this.settings, changes);
         void this.saveSettings();
         this.notifySettingsListeners();
       };
+      view.onDeviceSettingsChange = (changes) => {
+        Object.assign(this.deviceSettings, changes);
+        this.saveDeviceSettingsLocal();
+        this.notifyDeviceSettingsListeners();
+      };
+      this.onDeviceSettingsChange((ds) => view.setDeviceSettings(ds));
       return view;
     });
     this.registerExtensions([PAPER_EXTENSION], VIEW_TYPE_PAPER);
@@ -55,6 +66,13 @@ export default class PaperPlugin extends Plugin {
         this.settings = s;
         void this.saveSettings();
         this.notifySettingsListeners();
+      }, {
+        getDeviceSettings: () => this.deviceSettings,
+        onDeviceSettingsChange: (ds) => {
+          this.deviceSettings = ds;
+          this.saveDeviceSettingsLocal();
+          this.notifyDeviceSettingsListeners();
+        },
       })
     );
 
@@ -116,6 +134,7 @@ export default class PaperPlugin extends Plugin {
 
   onunload(): void {
     this.settingsListeners.clear();
+    this.deviceSettingsListeners.clear();
     this.embedRegistry.length = 0;
   }
 
@@ -130,9 +149,64 @@ export default class PaperPlugin extends Plugin {
     }
   }
 
+  onDeviceSettingsChange(listener: (ds: DeviceSettings) => void): () => void {
+    this.deviceSettingsListeners.add(listener);
+    return () => this.deviceSettingsListeners.delete(listener);
+  }
+
+  private notifyDeviceSettingsListeners(): void {
+    for (const listener of this.deviceSettingsListeners) {
+      listener(this.deviceSettings);
+    }
+  }
+
+  private saveDeviceSettingsLocal(): void {
+    saveDeviceSettings(this.app, this.deviceSettings);
+  }
+
   private async loadSettings(): Promise<void> {
-    const data: unknown = await this.loadData();
+    const data = await this.loadData() as Record<string, unknown> | null;
     this.settings = mergeSettings(data as Partial<PaperSettings> | null);
+
+    // Load device settings from localStorage
+    this.deviceSettings = loadDeviceSettings(this.app);
+
+    // One-time migration: if localStorage is empty but data.json had device-specific fields,
+    // seed localStorage from the legacy data.json values.
+    const localRaw = this.app.loadLocalStorage("paper-device-settings");
+    if (!localRaw && data) {
+      let migrated = false;
+
+      const legacyPipeline = data["defaultRenderPipeline"] as string | undefined;
+      if (legacyPipeline) {
+        let pipeline = legacyPipeline;
+        if (pipeline === "textures" || pipeline === "stamps") pipeline = "advanced";
+        this.deviceSettings.defaultRenderPipeline = pipeline as DeviceSettings["defaultRenderPipeline"];
+        migrated = true;
+      }
+      const legacyEngine = data["defaultRenderEngine"] as string | undefined;
+      if (legacyEngine) {
+        this.deviceSettings.defaultRenderEngine = legacyEngine as DeviceSettings["defaultRenderEngine"];
+        migrated = true;
+      }
+      if (typeof data["palmRejection"] === "boolean") {
+        this.deviceSettings.palmRejection = data["palmRejection"];
+        migrated = true;
+      }
+      if (data["fingerAction"] === "pan" || data["fingerAction"] === "draw") {
+        this.deviceSettings.fingerAction = data["fingerAction"];
+        migrated = true;
+      }
+      const legacyPosition = data["toolbarPosition"] as string | undefined;
+      if (legacyPosition === "top" || legacyPosition === "bottom" || legacyPosition === "left" || legacyPosition === "right") {
+        this.deviceSettings.toolbarPosition = legacyPosition;
+        migrated = true;
+      }
+
+      if (migrated) {
+        this.saveDeviceSettingsLocal();
+      }
+    }
   }
 
   private async saveSettings(): Promise<void> {
@@ -144,6 +218,7 @@ export default class PaperPlugin extends Plugin {
       this.app,
       file,
       this.settings,
+      this.deviceSettings,
       () => {
         // On dismiss, embeds auto-refresh via the vault modify listener
       },
@@ -151,6 +226,11 @@ export default class PaperPlugin extends Plugin {
         Object.assign(this.settings, changes);
         void this.saveSettings();
         this.notifySettingsListeners();
+      },
+      (changes) => {
+        Object.assign(this.deviceSettings, changes);
+        this.saveDeviceSettingsLocal();
+        this.notifyDeviceSettingsListeners();
       },
     );
     modal.open();

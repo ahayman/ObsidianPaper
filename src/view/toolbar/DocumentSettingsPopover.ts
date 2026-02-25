@@ -136,8 +136,7 @@ export class DocumentSettingsPopover {
 
     const PIPELINE_OPTIONS: { value: RenderPipeline; label: string }[] = [
       { value: "basic", label: "Basic" },
-      { value: "textures", label: "Textures" },
-      { value: "stamps", label: "Stamps" },
+      { value: "advanced", label: "Advanced" },
     ];
 
     const row = section.createEl("div", { cls: "paper-popover__pen-types" });

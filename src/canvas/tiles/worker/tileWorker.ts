@@ -49,7 +49,7 @@ let strokes: Stroke[] = [];
 let styles: Record<string, PenStyle> = {};
 let pages: Page[] = [];
 let pageLayout: PageRect[] = [];
-let renderPipeline = "textures";
+let renderPipeline = "basic";
 
 const pathCache = new StrokePathCache();
 
@@ -595,7 +595,7 @@ function renderStroke(
   // Ink-shaded fountain pen rendering at LOD 0:
   // Clip to the italic outline path and deposit colored stamps via source-over
   // on an offscreen canvas, then composite back.
-  if (inkStampEnabled && renderPipeline === "stamps" && penConfig.inkStamp && lod === 0) {
+  if (inkStampEnabled && renderPipeline === "advanced" && penConfig.inkStamp && lod === 0) {
     // Generate outline path (same as basic rendering)
     const cacheKey = lodCacheKey(stroke.id, lod);
     let path = pathCache.get(cacheKey);
@@ -629,7 +629,7 @@ function renderStroke(
   }
 
   // Stamp-based rendering for pencil at LOD 0
-  if (stampEnabled && renderPipeline === "stamps" && penConfig.stamp && lod === 0) {
+  if (stampEnabled && renderPipeline === "advanced" && penConfig.stamp && lod === 0) {
     const color = resolveColor(style.color, useDarkColors);
     const points = decodePoints(stroke.pts);
     const stamps = computeAllStamps(points, style, penConfig, penConfig.stamp);

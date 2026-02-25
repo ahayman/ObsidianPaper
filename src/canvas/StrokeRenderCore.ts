@@ -102,7 +102,7 @@ export function renderStrokeToContext(
   // Ink-shaded fountain pen rendering at LOD 0:
   // Clip to the italic outline path and deposit colored stamps via source-over
   // on an offscreen canvas, then composite back.
-  if (stampCtx && grainCtx.pipeline === "stamps" && penConfig.inkStamp && lod === 0) {
+  if (stampCtx && grainCtx.pipeline === "advanced" && penConfig.inkStamp && lod === 0) {
     // Generate outline path (same as basic rendering)
     const cacheKey = lodCacheKey(stroke.id, lod);
     let path = pathCache.get(cacheKey);
@@ -136,7 +136,7 @@ export function renderStrokeToContext(
   }
 
   // Stamp-based rendering for pencil at LOD 0
-  if (stampCtx && grainCtx.pipeline === "stamps" && penConfig.stamp && lod === 0) {
+  if (stampCtx && grainCtx.pipeline === "advanced" && penConfig.stamp && lod === 0) {
     const color = resolveColor(style.color, useDarkColors);
     const points = decodePoints(stroke.pts);
     const stamps = computeAllStamps(points, style, penConfig, penConfig.stamp);
@@ -493,7 +493,7 @@ export function renderStrokeToEngine(
   const penConfig = getPenConfig(style.pen);
 
   // Ink-shaded fountain pen rendering at LOD 0
-  if (stampCtx && grainCtx.pipeline === "stamps" && penConfig.inkStamp && lod === 0) {
+  if (stampCtx && grainCtx.pipeline === "advanced" && penConfig.inkStamp && lod === 0) {
     const cacheKey = lodCacheKey(stroke.id, lod);
     let vertices = pathCache.getVertices(cacheKey);
     let decodedPts: StrokePoint[] | undefined;
@@ -540,7 +540,7 @@ export function renderStrokeToEngine(
   }
 
   // Stamp-based rendering for pencil at LOD 0
-  if (stampCtx && grainCtx.pipeline === "stamps" && penConfig.stamp && lod === 0) {
+  if (stampCtx && grainCtx.pipeline === "advanced" && penConfig.stamp && lod === 0) {
     const color = resolveColor(style.color, useDarkColors);
     const points = decodePoints(stroke.pts);
     const stamps = computeAllStamps(points, style, penConfig, penConfig.stamp);

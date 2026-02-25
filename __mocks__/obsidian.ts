@@ -69,6 +69,19 @@ export class App {
   plugins = {
     getPlugin: jest.fn(),
   };
+  private _localStorage: Record<string, string> = {};
+
+  loadLocalStorage(key: string): string | null {
+    return this._localStorage[key] ?? null;
+  }
+
+  saveLocalStorage(key: string, value: string | undefined): void {
+    if (value === undefined) {
+      delete this._localStorage[key];
+    } else {
+      this._localStorage[key] = value;
+    }
+  }
 }
 
 export class Vault {

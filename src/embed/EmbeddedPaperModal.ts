@@ -17,6 +17,8 @@ import { Toolbar } from "../view/toolbar/Toolbar";
 import type { ActiveTool, ToolbarCallbacks, ToolbarQueries, ToolbarState } from "../view/toolbar/ToolbarTypes";
 import type { PaperSettings } from "../settings/PaperSettings";
 import { DEFAULT_SETTINGS, resolvePageSize, resolveMargins } from "../settings/PaperSettings";
+import type { DeviceSettings } from "../settings/DeviceSettings";
+import { DEFAULT_DEVICE_SETTINGS } from "../settings/DeviceSettings";
 import { HoverCursor } from "../input/HoverCursor";
 import { SpatialIndex } from "../spatial/SpatialIndex";
 import { computePageLayout, findPageAtPoint, getDocumentBounds, getEffectiveSize } from "../document/PageLayout";
@@ -37,8 +39,10 @@ const DEFAULT_ERASER_RADIUS = 10;
 export class EmbeddedPaperModal extends Modal {
   private file: TFile;
   private settings: PaperSettings;
+  private deviceSettings: DeviceSettings;
   private onDismiss: () => void;
   private onSettingsChange: ((changes: Partial<PaperSettings>) => void) | null = null;
+  private onDeviceSettingsChanged: ((changes: Partial<DeviceSettings>) => void) | null = null;
 
   private document: PaperDocument = createEmptyDocument();
   private camera: Camera = new Camera();
@@ -84,14 +88,18 @@ export class EmbeddedPaperModal extends Modal {
     app: App,
     file: TFile,
     settings: PaperSettings,
+    deviceSettings: DeviceSettings,
     onDismiss: () => void,
     onSettingsChange?: (changes: Partial<PaperSettings>) => void,
+    onDeviceSettingsChanged?: (changes: Partial<DeviceSettings>) => void,
   ) {
     super(app);
     this.file = file;
     this.settings = settings;
+    this.deviceSettings = deviceSettings;
     this.onDismiss = onDismiss;
     this.onSettingsChange = onSettingsChange ?? null;
+    this.onDeviceSettingsChanged = onDeviceSettingsChanged ?? null;
     this.applySettings(settings);
   }
 
@@ -114,7 +122,7 @@ export class EmbeddedPaperModal extends Modal {
     this.themeDetector.start();
 
     // Create multi-layer renderer
-    this.renderer = new Renderer(container, this.camera, Platform.isMobile, this.settings.defaultRenderEngine);
+    this.renderer = new Renderer(container, this.camera, Platform.isMobile, this.deviceSettings.defaultRenderEngine);
     this.renderer.isDarkMode = this.themeDetector.isDarkMode;
     this.renderer.initGrain();
     this.renderer.initStamps();
@@ -152,7 +160,7 @@ export class EmbeddedPaperModal extends Modal {
         inkPreset: this.currentInkPreset,
       },
       this.settings.penPresets,
-      this.settings.toolbarPosition,
+      this.deviceSettings.toolbarPosition,
       this.themeDetector.isDarkMode,
     );
 
@@ -290,7 +298,7 @@ export class EmbeddedPaperModal extends Modal {
   // ─── Rendering Pipeline ──────────────────────────────────────
 
   private getResolvedPipeline(): RenderPipeline {
-    return this.document.renderPipeline ?? this.settings.defaultRenderPipeline;
+    return this.document.renderPipeline ?? this.deviceSettings.defaultRenderPipeline;
   }
 
   updateRenderPipeline(pipeline: RenderPipeline): void {
@@ -832,8 +840,8 @@ export class EmbeddedPaperModal extends Modal {
         this.onSettingsChange?.({ penPresets: presets, activePresetId });
       },
       onPositionChange: (position) => {
-        this.settings.toolbarPosition = position;
-        this.onSettingsChange?.({ toolbarPosition: position });
+        this.deviceSettings.toolbarPosition = position;
+        this.onDeviceSettingsChanged?.({ toolbarPosition: position });
       },
     };
   }

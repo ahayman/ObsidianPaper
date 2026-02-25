@@ -91,6 +91,13 @@ export function serializeDocument(doc: PaperDocument): string {
  * Deserialize a JSON string to a PaperDocument.
  * Only handles v3 format. Returns a fresh empty document for older/invalid data.
  */
+/** Migrate legacy pipeline values ("textures", "stamps") → "advanced". */
+function migrateRenderPipeline(value: string | undefined): RenderPipeline | undefined {
+  if (!value) return undefined;
+  if (value === "textures" || value === "stamps") return "advanced";
+  return value as RenderPipeline;
+}
+
 export function deserializeDocument(data: string): PaperDocument {
   if (!data || data.trim() === "") {
     return createEmptyDocument();
@@ -120,7 +127,7 @@ export function deserializeDocument(data: string): PaperDocument {
     },
     pages: (parsed.pages ?? []).map((p) => deserializePage(p)),
     layoutDirection: (parsed.layout as LayoutDirection) ?? "vertical",
-    renderPipeline: (parsed.rp as RenderPipeline) ?? undefined,
+    renderPipeline: migrateRenderPipeline(parsed.rp as string | undefined),
     viewport: {
       x: parsed.viewport?.x ?? 0,
       y: parsed.viewport?.y ?? 0,

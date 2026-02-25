@@ -36,7 +36,7 @@ export class TileRenderer {
   private pathCache: StrokePathCache;
   private grainGenerator: GrainTextureGenerator | null = null;
   private grainStrengthOverrides = new Map<PenType, number>();
-  private pipeline: RenderPipeline = "textures";
+  private pipeline: RenderPipeline = "basic";
   private grainOffscreen: OffscreenCanvas | null = null;
   private grainOffscreenCtx: OffscreenCanvasRenderingContext2D | null = null;
   private stampManager: StampTextureManager | null = null;

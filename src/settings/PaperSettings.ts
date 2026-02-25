@@ -8,11 +8,9 @@ import type {
   PageSize,
   SpacingUnit,
   PageMargins,
-  RenderPipeline,
-  RenderEngineType,
 } from "../types";
 import { PAGE_SIZE_PRESETS, PPI, CM_PER_INCH } from "../types";
-import type { PenPreset, ToolbarPosition } from "../view/toolbar/ToolbarTypes";
+import type { PenPreset } from "../view/toolbar/ToolbarTypes";
 
 export type PaperFormat = "paper" | "paper.md";
 export type NewNoteLocation = "specified" | "current" | "subfolder";
@@ -48,10 +46,6 @@ export interface PaperSettings {
   customPageWidth: number;   // In chosen unit (e.g., 8.5 inches)
   customPageHeight: number;  // In chosen unit (e.g., 11 inches)
 
-  // Input
-  palmRejection: boolean;
-  fingerAction: "pan" | "draw";
-
   // Smoothing
   defaultSmoothing: number; // 0-1
 
@@ -64,10 +58,6 @@ export interface PaperSettings {
   defaultNibPressure: number;    // Pressure sensitivity 0-1 (default: 0.5)
   useBarrelRotation: boolean;    // Use Apple Pencil Pro twist for nib angle
 
-  // Rendering pipeline
-  defaultRenderPipeline: RenderPipeline;
-  defaultRenderEngine: RenderEngineType;
-
   // File
   newNoteLocation: NewNoteLocation;
   defaultFolder: string;
@@ -78,7 +68,6 @@ export interface PaperSettings {
   // Toolbar
   penPresets: PenPreset[];
   activePresetId: string | null;
-  toolbarPosition: ToolbarPosition;
 
   // Embeds
   embedMaxWidth: number;   // Max width in px for embedded previews (0 = fill container)
@@ -154,9 +143,6 @@ export const DEFAULT_SETTINGS: PaperSettings = {
   customPageWidth: 8.5,
   customPageHeight: 11,
 
-  palmRejection: true,
-  fingerAction: "pan",
-
   defaultSmoothing: 0.5,
 
   pencilGrainStrength: 0.5,
@@ -166,9 +152,6 @@ export const DEFAULT_SETTINGS: PaperSettings = {
   defaultNibPressure: 0.5,         // Moderate pressure sensitivity
   useBarrelRotation: true,
 
-  defaultRenderPipeline: "textures",
-  defaultRenderEngine: "canvas2d",
-
   newNoteLocation: "specified",
   defaultFolder: "",
   newNoteSubfolder: "",
@@ -177,7 +160,6 @@ export const DEFAULT_SETTINGS: PaperSettings = {
 
   penPresets: DEFAULT_PRESETS,
   activePresetId: "preset-ballpoint-black",
-  toolbarPosition: "top",
 
   embedMaxWidth: 0,
   embedMaxHeight: 400,
@@ -246,5 +228,12 @@ export function formatSpacingDisplay(wu: number, unit: SpacingUnit): string {
  */
 export function mergeSettings(loaded: Partial<PaperSettings> | null): PaperSettings {
   if (!loaded) return { ...DEFAULT_SETTINGS };
-  return { ...DEFAULT_SETTINGS, ...loaded };
+  // Strip legacy device-specific fields (now stored in localStorage)
+  const {
+    defaultRenderPipeline: _rp, defaultRenderEngine: _re,
+    palmRejection: _pr, fingerAction: _fa, toolbarPosition: _tp,
+    ...rest
+  } = loaded as Record<string, unknown>;
+  const merged = { ...DEFAULT_SETTINGS, ...rest } as PaperSettings;
+  return merged;
 }

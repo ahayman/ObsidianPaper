@@ -46,7 +46,7 @@ export class WebGLTileEngine {
   private grainGenerator: GrainTextureGenerator | null = null;
   private grainStrengthOverrides = new Map<PenType, number>();
   private engineGrainTexture: TextureHandle | null = null;
-  private pipeline: RenderPipeline = "textures";
+  private pipeline: RenderPipeline = "basic";
 
   // Stamps — persistent across tile renders (key WebGL advantage)
   private stampManager: StampTextureManager | null = null;
