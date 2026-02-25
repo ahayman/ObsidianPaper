@@ -96,7 +96,19 @@
       "WebFetch(domain:olha-stefanishyna.medium.com)",
       "WebFetch(domain:markaicode.com)",
       "WebFetch(domain:issues.chromium.org)",
-      "WebFetch(domain:registry.khronos.org)"
+      "WebFetch(domain:registry.khronos.org)",
+      "WebFetch(domain:quadst.rip)",
+      "WebFetch(domain:wwwtyro.net)",
+      "WebFetch(domain:arxiv.org)",
+      "WebFetch(domain:nical.github.io)",
+      "WebFetch(domain:www.canva.dev)",
+      "WebFetch(domain:blog.cjgammon.com)",
+      "WebFetch(domain:fontforge.org)",
+      "WebFetch(domain:forkingpaths.dev)",
+      "WebFetch(domain:raphlinus.github.io)",
+      "WebFetch(domain:gasiulis.name)",
+      "WebFetch(domain:tavmjong.free.fr)",
+      "WebFetch(domain:inria.hal.science)"
     ]
   }
 }

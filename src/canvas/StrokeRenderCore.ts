@@ -4,7 +4,10 @@ import {
   generateOutline,
   generateStrokePath,
   StrokePathCache,
+  isItalicStyle,
+  buildItalicConfig,
 } from "../stroke/OutlineGenerator";
+import { generateItalicOutlineSides } from "../stroke/ItalicOutlineGenerator";
 import { resolveColor } from "../color/ColorPalette";
 import { getPenConfig } from "../stroke/PenConfigs";
 import type { RenderEngine, TextureHandle } from "./engine/RenderEngine";
@@ -496,28 +499,41 @@ export function renderStrokeToEngine(
     let decodedPts: StrokePoint[] | undefined;
     if (!vertices) {
       decodedPts = decodePoints(stroke.pts);
-      const outline = generateOutline(decodedPts, style);
-      if (outline.length >= 2) {
-        pathCache.setOutline(cacheKey, outline);
-        vertices = pathCache.getVertices(cacheKey);
+      if (isItalicStyle(style)) {
+        const sides = generateItalicOutlineSides(decodedPts, buildItalicConfig(style));
+        if (sides) {
+          pathCache.setItalicSides(cacheKey, sides);
+          vertices = pathCache.getVertices(cacheKey);
+        }
+      } else {
+        const outline = generateOutline(decodedPts, style);
+        if (outline.length >= 2) {
+          pathCache.setOutline(cacheKey, outline);
+          vertices = pathCache.getVertices(cacheKey);
+        }
       }
     }
     if (!vertices) return;
 
     const color = resolveColor(style.color, useDarkColors);
     const presetConfig = getInkPreset(style.inkPreset);
+    const italic = pathCache.isItalic(cacheKey);
 
     if (presetConfig.shading <= 0) {
       engine.setFillColor(color);
       engine.setAlpha(style.opacity);
-      engine.fillPath(vertices);
+      if (italic) {
+        engine.fillTriangles(vertices);
+      } else {
+        engine.fillPath(vertices);
+      }
       engine.setAlpha(1);
       return;
     }
 
     const points = decodedPts ?? decodePoints(stroke.pts);
     renderInkShadedStrokeEngine(
-      engine, vertices, color, style, penConfig, points, presetConfig,
+      engine, vertices, italic, color, style, penConfig, points, presetConfig,
       stampCtx, grainCtx, stroke.bbox,
     );
     return;
@@ -544,16 +560,25 @@ export function renderStrokeToEngine(
     if (lod > 0) {
       points = simplifyPoints(points, lod);
     }
-    const outline = generateOutline(points, style);
-    if (outline.length >= 2) {
-      pathCache.setOutline(cacheKey, outline);
-      vertices = pathCache.getVertices(cacheKey);
+    if (isItalicStyle(style)) {
+      const sides = generateItalicOutlineSides(points, buildItalicConfig(style));
+      if (sides) {
+        pathCache.setItalicSides(cacheKey, sides);
+        vertices = pathCache.getVertices(cacheKey);
+      }
+    } else {
+      const outline = generateOutline(points, style);
+      if (outline.length >= 2) {
+        pathCache.setOutline(cacheKey, outline);
+        vertices = pathCache.getVertices(cacheKey);
+      }
     }
   }
 
   if (!vertices) return;
 
   const color = resolveColor(style.color, useDarkColors);
+  const italic = pathCache.isItalic(cacheKey);
 
   // Grain-enabled strokes rendered in isolation on offscreen target
   if (grainCtx.pipeline !== "basic" && lod === 0 && penConfig.grain?.enabled) {
@@ -564,7 +589,7 @@ export function renderStrokeToEngine(
       const anchorX = stroke.grainAnchor?.[0] ?? stroke.bbox[0];
       const anchorY = stroke.grainAnchor?.[1] ?? stroke.bbox[1];
       renderStrokeWithGrainEngine(
-        engine, vertices, color, style.opacity, strength,
+        engine, vertices, italic, color, style.opacity, strength,
         anchorX, anchorY, stroke.bbox,
         grainCtx,
       );
@@ -577,12 +602,20 @@ export function renderStrokeToEngine(
     engine.setAlpha(penConfig.baseOpacity);
     engine.setBlendMode("multiply");
     engine.setFillColor(color);
-    engine.fillPath(vertices);
+    if (italic) {
+      engine.fillTriangles(vertices);
+    } else {
+      engine.fillPath(vertices);
+    }
     engine.restore();
   } else {
     engine.setFillColor(color);
     engine.setAlpha(style.opacity);
-    engine.fillPath(vertices);
+    if (italic) {
+      engine.fillTriangles(vertices);
+    } else {
+      engine.fillPath(vertices);
+    }
     engine.setAlpha(1);
   }
 
@@ -603,6 +636,7 @@ export function renderStrokeToEngine(
 function renderInkShadedStrokeEngine(
   engine: RenderEngine,
   vertices: Float32Array,
+  italic: boolean,
   color: string,
   style: PenStyle,
   penConfig: PenConfig,
@@ -633,7 +667,11 @@ function renderInkShadedStrokeEngine(
   engine.drawStamps(texture, stampData);
 
   // 2. Mask to outline: keep stamps inside path, clear outside
-  engine.maskToPath(vertices);
+  if (italic) {
+    engine.maskToTriangles(vertices);
+  } else {
+    engine.maskToPath(vertices);
+  }
 
   engine.endOffscreen();
 
@@ -654,6 +692,7 @@ function renderInkShadedStrokeEngine(
 function renderStrokeWithGrainEngine(
   engine: RenderEngine,
   vertices: Float32Array,
+  italic: boolean,
   color: string,
   opacity: number,
   grainStrength: number,
@@ -674,7 +713,11 @@ function renderStrokeWithGrainEngine(
   // Draw stroke fill
   engine.setFillColor(color);
   engine.setAlpha(opacity);
-  engine.fillPath(vertices);
+  if (italic) {
+    engine.fillTriangles(vertices);
+  } else {
+    engine.fillPath(vertices);
+  }
   engine.setAlpha(1);
 
   // Apply grain — destination-out eraser

@@ -185,9 +185,16 @@ export function computeAllInkStamps(
   presetConfig: InkPresetConfig,
 ): InkStampParams[] {
   if (points.length === 0) return [];
-  const { stamps } = computeInkStamps(
+  const { stamps, newStampCount } = computeInkStamps(
     points, 0, points.length - 1, 0, style, penConfig, inkStampConfig, presetConfig, 0,
   );
+
+  // Fill coverage gaps at sharp direction changes and stroke endpoints.
+  // At corners, stamps from adjacent segments walk in different directions,
+  // leaving uncovered wedges that the destination-in mask reveals as notches.
+  // Deposit extra stamps at these junction points to ensure full coverage.
+  addCornerFillStamps(stamps, points, style, penConfig, inkStampConfig, presetConfig, newStampCount);
+
   return stamps;
 }
 
@@ -231,6 +238,107 @@ export function drawInkShadingStamps(
 
   ctx.setTransform(baseTransform);
   ctx.globalAlpha = 1;
+}
+
+// ─── Corner Fill ─────────────────────────────────────────────
+
+/**
+ * Detect sharp direction changes and deposit extra stamps at those points
+ * to fill coverage gaps. Also ensures stroke start/end have a stamp.
+ */
+function addCornerFillStamps(
+  stamps: InkStampParams[],
+  points: readonly StrokePoint[],
+  style: PenStyle,
+  penConfig: PenConfig,
+  inkStampConfig: InkStampConfig,
+  presetConfig: InkPresetConfig,
+  startStampCount: number,
+): void {
+  if (points.length < 2) return;
+
+  const nibAngle = style.nibAngle ?? penConfig.nibAngle ?? Math.PI / 6;
+  const nibThickness = style.nibThickness ?? penConfig.nibThickness ?? 0.25;
+  const nibPressure = style.nibPressure ?? 0.5;
+  const [minW, maxW] = penConfig.pressureWidthRange;
+  const pCurve = style.pressureCurve ?? penConfig.pressureCurve;
+  const minStampSize = style.width * inkStampConfig.stampSizeFraction * 0.5;
+
+  let stampCount = startStampCount;
+
+  // Helper: deposit a stamp at a point with given direction
+  const depositAt = (pt: StrokePoint, sx: number, sy: number) => {
+    const projWidth = computeProjectedWidth(
+      pt, nibAngle, nibThickness, nibPressure, style, minW, maxW, pCurve, sx, sy,
+    );
+    const stampSize = Math.max(minStampSize, projWidth * inkStampConfig.stampSizeFraction);
+
+    const dither = 1.0 + (hashFloat(stampCount, 0x6A09E667) - 0.5) * 0.2;
+    // Use slow-speed deposit (full opacity) for fill stamps — corners
+    // are typically where the pen slows down.
+    const deposit = Math.max(0.01, presetConfig.baseOpacity * dither);
+
+    let jx = pt.x;
+    let jy = pt.y;
+    if (presetConfig.feathering > 0) {
+      jx += (hashFloat(stampCount, 0x9E3779B9) - 0.5) * 2 * presetConfig.feathering * stampSize;
+      jy += (hashFloat(stampCount, 0x517CC1B7) - 0.5) * 2 * presetConfig.feathering * stampSize;
+    }
+
+    stamps.push({
+      x: jx, y: jy, size: stampSize, opacity: deposit,
+      rotation: 0, scaleX: 1.0, scaleY: 1.0,
+    });
+    stampCount++;
+  };
+
+  // Deposit at stroke start
+  {
+    const dx = points[1].x - points[0].x;
+    const dy = points[1].y - points[0].y;
+    const len = Math.hypot(dx, dy);
+    if (len > 0.001) {
+      depositAt(points[0], dx / len, dy / len);
+    }
+  }
+
+  // Deposit at sharp direction changes
+  for (let i = 1; i < points.length - 1; i++) {
+    const dxIn = points[i].x - points[i - 1].x;
+    const dyIn = points[i].y - points[i - 1].y;
+    const lenIn = Math.hypot(dxIn, dyIn);
+
+    const dxOut = points[i + 1].x - points[i].x;
+    const dyOut = points[i + 1].y - points[i].y;
+    const lenOut = Math.hypot(dxOut, dyOut);
+
+    if (lenIn < 0.001 || lenOut < 0.001) continue;
+
+    // Dot product of unit direction vectors: 1 = straight, -1 = reversal
+    const dot = (dxIn * dxOut + dyIn * dyOut) / (lenIn * lenOut);
+
+    // Deposit at corners sharper than ~45° (dot < 0.7)
+    if (dot < 0.7) {
+      // Use average direction for stamp sizing
+      const avgSx = (dxIn / lenIn + dxOut / lenOut) * 0.5;
+      const avgSy = (dyIn / lenIn + dyOut / lenOut) * 0.5;
+      const avgLen = Math.hypot(avgSx, avgSy);
+      const sx = avgLen > 0.001 ? avgSx / avgLen : dxIn / lenIn;
+      const sy = avgLen > 0.001 ? avgSy / avgLen : dyIn / lenIn;
+      depositAt(points[i], sx, sy);
+    }
+  }
+
+  // Deposit at stroke end
+  {
+    const last = points.length - 1;
+    const dx = points[last].x - points[last - 1].x;
+    const dy = points[last].y - points[last - 1].y;
+    const len = Math.hypot(dx, dy);
+    if (len > 0.001) {
+      depositAt(points[last], dx / len, dy / len);
+    }
+  }
 }
 
 // ─── Internal Helpers ────────────────────────────────────────

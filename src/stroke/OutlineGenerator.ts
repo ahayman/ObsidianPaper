@@ -1,7 +1,7 @@
 import getStroke from "perfect-freehand";
 import type { StrokePoint, PenStyle } from "../types";
 import { getPenConfig } from "./PenConfigs";
-import { generateItalicOutline, type ItalicNibConfig } from "./ItalicOutlineGenerator";
+import { generateItalicOutline, generateItalicOutlineSides, type ItalicNibConfig, type ItalicOutlineSides } from "./ItalicOutlineGenerator";
 
 export interface StrokeOutlineOptions {
   size: number;
@@ -247,6 +247,128 @@ export function outlineToFloat32Array(outline: number[][]): Float32Array | null 
 }
 
 /**
+ * Check whether a PenStyle uses an italic nib (has nibAngle and nibThickness).
+ */
+export function isItalicStyle(style: PenStyle): boolean {
+  const penConfig = getPenConfig(style.pen);
+  const nibAngle = style.nibAngle ?? penConfig.nibAngle;
+  const nibThickness = style.nibThickness ?? penConfig.nibThickness;
+  return nibAngle !== null && nibThickness !== null;
+}
+
+/**
+ * Build an ItalicNibConfig from a PenStyle.
+ * Caller must verify isItalicStyle() first.
+ */
+export function buildItalicConfig(style: PenStyle): ItalicNibConfig {
+  const penConfig = getPenConfig(style.pen);
+  const nibAngle = style.nibAngle ?? penConfig.nibAngle!;
+  const nibThickness = style.nibThickness ?? penConfig.nibThickness!;
+  const nibPressure = style.nibPressure ?? 0.5;
+  const pressureMin = 1.0 - nibPressure * 0.7;
+  return {
+    nibWidth: style.width,
+    nibHeight: style.width * nibThickness,
+    nibAngle: nibAngle,
+    useBarrelRotation: penConfig.useBarrelRotation,
+    pressureCurve: penConfig.pressureCurve,
+    pressureWidthRange: [pressureMin, 1.0],
+    widthSmoothing: 0.4,
+    taperStart: penConfig.taperStart,
+    taperEnd: penConfig.taperEnd,
+  };
+}
+
+/**
+ * Convert italic outline sides to a Path2D using two-triangles-per-segment rendering.
+ * Each segment is split into two triangles (not one quad) because at sharp curves
+ * the quad L0→L1→R1→R0 can form a "bowtie" (self-intersecting quadrilateral).
+ * Canvas2D's nonzero fill rule cancels the crossed region of a bowtie to winding 0,
+ * creating holes. Triangles can't self-intersect, so this is avoided.
+ *
+ * All triangles are normalized to the same winding direction so the nonzero
+ * fill rule never cancels overlapping adjacent segments.
+ */
+export function italicSidesToPath2D(sides: ItalicOutlineSides): Path2D | null {
+  const { leftSide, rightSide } = sides;
+  if (leftSide.length < 2) return null;
+
+  const path = new Path2D();
+  for (let i = 0; i < leftSide.length - 1; i++) {
+    const l0x = leftSide[i][0], l0y = leftSide[i][1];
+    const l1x = leftSide[i + 1][0], l1y = leftSide[i + 1][1];
+    const r1x = rightSide[i + 1][0], r1y = rightSide[i + 1][1];
+    const r0x = rightSide[i][0], r0y = rightSide[i][1];
+
+    // Triangle 1: L[i], L[i+1], R[i+1]
+    addNormalizedTriangle(path, l0x, l0y, l1x, l1y, r1x, r1y);
+
+    // Triangle 2: L[i], R[i+1], R[i]
+    addNormalizedTriangle(path, l0x, l0y, r1x, r1y, r0x, r0y);
+  }
+  return path;
+}
+
+/**
+ * Add a triangle sub-path to a Path2D, normalizing winding direction
+ * so all triangles contribute the same sign under the nonzero fill rule.
+ */
+function addNormalizedTriangle(
+  path: Path2D,
+  ax: number, ay: number,
+  bx: number, by: number,
+  cx: number, cy: number,
+): void {
+  const cross = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  if (cross >= 0) {
+    path.moveTo(ax, ay);
+    path.lineTo(bx, by);
+    path.lineTo(cx, cy);
+  } else {
+    path.moveTo(ax, ay);
+    path.lineTo(cx, cy);
+    path.lineTo(bx, by);
+  }
+  path.closePath();
+}
+
+/**
+ * Convert italic outline sides to a Float32Array of triangle vertices.
+ * Emits two triangles per segment in gl.TRIANGLES format:
+ *   Triangle 1: L[i], L[i+1], R[i+1]
+ *   Triangle 2: L[i], R[i+1], R[i]
+ * Output: 6 vertices per segment, 12 floats per segment.
+ */
+export function italicSidesToFloat32Array(sides: ItalicOutlineSides): Float32Array | null {
+  const { leftSide, rightSide } = sides;
+  const segCount = leftSide.length - 1;
+  if (segCount < 1) return null;
+
+  const arr = new Float32Array(segCount * 12); // 6 vertices * 2 floats
+  let idx = 0;
+
+  for (let i = 0; i < segCount; i++) {
+    // Triangle 1: L[i], L[i+1], R[i+1]
+    arr[idx++] = leftSide[i][0];
+    arr[idx++] = leftSide[i][1];
+    arr[idx++] = leftSide[i + 1][0];
+    arr[idx++] = leftSide[i + 1][1];
+    arr[idx++] = rightSide[i + 1][0];
+    arr[idx++] = rightSide[i + 1][1];
+
+    // Triangle 2: L[i], R[i+1], R[i]
+    arr[idx++] = leftSide[i][0];
+    arr[idx++] = leftSide[i][1];
+    arr[idx++] = rightSide[i + 1][0];
+    arr[idx++] = rightSide[i + 1][1];
+    arr[idx++] = rightSide[i][0];
+    arr[idx++] = rightSide[i][1];
+  }
+
+  return arr;
+}
+
+/**
  * Generate a stroke outline and convert it to a Float32Array in one step.
  */
 export function generateStrokeVertices(
@@ -254,6 +376,10 @@ export function generateStrokeVertices(
   style: PenStyle,
   dejitter: boolean = true,
 ): Float32Array | null {
+  if (isItalicStyle(style)) {
+    const sides = generateItalicOutlineSides(points, buildItalicConfig(style), dejitter);
+    if (sides) return italicSidesToFloat32Array(sides);
+  }
   return outlineToFloat32Array(generateOutline(points, style, dejitter));
 }
 
@@ -265,6 +391,10 @@ export function generateStrokePath(
   style: PenStyle,
   dejitter: boolean = true,
 ): Path2D | null {
+  if (isItalicStyle(style)) {
+    const sides = generateItalicOutlineSides(points, buildItalicConfig(style), dejitter);
+    if (sides) return italicSidesToPath2D(sides);
+  }
   const outline = generateOutline(points, style, dejitter);
   return outlineToPath2D(outline);
 }
@@ -278,6 +408,7 @@ export class StrokePathCache {
   private pathCache = new Map<string, Path2D>();
   private vertexCache = new Map<string, Float32Array>();
   private outlineCache = new Map<string, number[][]>();
+  private italicSidesCache = new Map<string, ItalicOutlineSides>();
 
   /** Get a cached Path2D (legacy callers, workers). */
   get(strokeId: string): Path2D | undefined {
@@ -290,7 +421,21 @@ export class StrokePathCache {
   }
 
   has(strokeId: string): boolean {
-    return this.pathCache.has(strokeId) || this.outlineCache.has(strokeId);
+    return this.pathCache.has(strokeId) || this.outlineCache.has(strokeId) || this.italicSidesCache.has(strokeId);
+  }
+
+  /** Returns true if italic sides are cached for this key. */
+  isItalic(strokeId: string): boolean {
+    return this.italicSidesCache.has(strokeId);
+  }
+
+  /** Store italic outline sides. Path2D and Float32Array are produced lazily. */
+  setItalicSides(strokeId: string, sides: ItalicOutlineSides): void {
+    this.italicSidesCache.set(strokeId, sides);
+    // Invalidate derived caches — they will be rebuilt lazily
+    this.pathCache.delete(strokeId);
+    this.vertexCache.delete(strokeId);
+    this.outlineCache.delete(strokeId);
   }
 
   /** Store raw outline data. Path2D and Float32Array are produced lazily. */
@@ -299,12 +444,24 @@ export class StrokePathCache {
     // Invalidate derived caches — they will be rebuilt lazily
     this.pathCache.delete(strokeId);
     this.vertexCache.delete(strokeId);
+    this.italicSidesCache.delete(strokeId);
   }
 
-  /** Get or lazily build Path2D from cached outline. */
+  /** Get or lazily build Path2D from cached outline or italic sides. */
   getPath(strokeId: string): Path2D | undefined {
     const cached = this.pathCache.get(strokeId);
     if (cached) return cached;
+
+    // Check italic sides first
+    const sides = this.italicSidesCache.get(strokeId);
+    if (sides) {
+      const path = italicSidesToPath2D(sides);
+      if (path) {
+        this.pathCache.set(strokeId, path);
+      }
+      return path ?? undefined;
+    }
+
     const outline = this.outlineCache.get(strokeId);
     if (!outline) return undefined;
     const path = outlineToPath2D(outline);
@@ -314,10 +471,21 @@ export class StrokePathCache {
     return path ?? undefined;
   }
 
-  /** Get or lazily build Float32Array from cached outline. */
+  /** Get or lazily build Float32Array from cached outline or italic sides. */
   getVertices(strokeId: string): Float32Array | undefined {
     const cached = this.vertexCache.get(strokeId);
     if (cached) return cached;
+
+    // Check italic sides first — produces triangle-list vertices
+    const sides = this.italicSidesCache.get(strokeId);
+    if (sides) {
+      const verts = italicSidesToFloat32Array(sides);
+      if (verts) {
+        this.vertexCache.set(strokeId, verts);
+      }
+      return verts ?? undefined;
+    }
+
     const outline = this.outlineCache.get(strokeId);
     if (!outline) return undefined;
     const verts = outlineToFloat32Array(outline);
@@ -331,12 +499,14 @@ export class StrokePathCache {
     this.pathCache.delete(strokeId);
     this.vertexCache.delete(strokeId);
     this.outlineCache.delete(strokeId);
+    this.italicSidesCache.delete(strokeId);
   }
 
   clear(): void {
     this.pathCache.clear();
     this.vertexCache.clear();
     this.outlineCache.clear();
+    this.italicSidesCache.clear();
   }
 
   get size(): number {
@@ -344,6 +514,7 @@ export class StrokePathCache {
     const keys = new Set<string>();
     for (const k of this.pathCache.keys()) keys.add(k);
     for (const k of this.outlineCache.keys()) keys.add(k);
+    for (const k of this.italicSidesCache.keys()) keys.add(k);
     return keys.size;
   }
 }

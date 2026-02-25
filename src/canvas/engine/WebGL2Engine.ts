@@ -550,6 +550,125 @@ export class WebGL2Engine implements RenderEngine {
     this.state.setBlendMode(this.currentBlendMode);
   }
 
+  fillTriangles(vertices: Float32Array): void {
+    if (vertices.length < 6) return; // Need at least 3 vertices (1 triangle)
+    const gl = this.gl;
+    const prog = this.solidProg;
+
+    const combined = mat3Multiply(this.projection, this.currentTransform);
+    const color = parseColor(this._fillColor, this.currentAlpha);
+
+    this.pathBuffer.upload(vertices);
+
+    // === Pass 1: Stencil mark (REPLACE) with color write disabled ===
+    // Unlike fillPath (TRIANGLE_FAN needing nonzero winding count), explicit
+    // triangles represent actual fill area. REPLACE sets stencil to 1 for any
+    // covered pixel — no accumulation, no 5-bit wrapping at tight curves
+    // where 30+ overlapping triangles would wrap INCR_WRAP back to 0.
+    this.state.enableStencil();
+    gl.stencilMask(FILL_MASK);
+    gl.stencilFunc(gl.ALWAYS, 1, FILL_MASK);
+    gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
+    gl.colorMask(false, false, false, false);
+
+    this.state.useProgram(prog.program);
+    gl.uniformMatrix3fv(prog.uniforms.get("u_transform")!, false, combined);
+    gl.uniform4fv(prog.uniforms.get("u_color")!, color);
+
+    this.state.bindVAO(this.solidVAO);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.pathBuffer.buffer);
+    gl.vertexAttribPointer(prog.attributes.get("a_position")!, 2, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(prog.attributes.get("a_position")!);
+
+    const vertCount = vertices.length / 2;
+    gl.drawArrays(gl.TRIANGLES, 0, vertCount);
+
+    // === Pass 2: Draw fullscreen quad where stencil winding count != 0, clear stencil ===
+    gl.colorMask(true, true, true, true);
+    gl.stencilMask(FILL_MASK);
+    gl.stencilOp(gl.KEEP, gl.KEEP, gl.ZERO);
+    const clipMask = this.getClipStencilMask();
+    if (clipMask > 0) {
+      gl.stencilFunc(gl.NOTEQUAL, clipMask, FILL_MASK | clipMask);
+    } else {
+      gl.stencilFunc(gl.NOTEQUAL, 0, FILL_MASK);
+    }
+
+    gl.uniformMatrix3fv(prog.uniforms.get("u_transform")!, false, mat3Identity());
+    gl.uniform4fv(prog.uniforms.get("u_color")!, color);
+
+    this.state.bindVAO(this.solidVAO);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.fullscreenQuadVBO);
+    gl.vertexAttribPointer(prog.attributes.get("a_position")!, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(prog.attributes.get("a_position")!);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.fullscreenQuadIBO);
+    gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+
+    this.state.disableStencil();
+  }
+
+  maskToTriangles(vertices: Float32Array): void {
+    if (vertices.length < 6) return;
+    const gl = this.gl;
+    const prog = this.solidProg;
+
+    const combined = mat3Multiply(this.projection, this.currentTransform);
+
+    this.pathBuffer.upload(vertices);
+
+    // === Pass 1: Mark interior in stencil (REPLACE, no color) ===
+    // REPLACE sets stencil to 1 for any covered pixel — avoids 5-bit
+    // wrapping that INCR_WRAP causes at tight curves with 30+ overlapping triangles.
+    this.state.enableStencil();
+    gl.stencilMask(FILL_MASK);
+    gl.stencilFunc(gl.ALWAYS, 1, FILL_MASK);
+    gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
+    gl.colorMask(false, false, false, false);
+
+    this.state.useProgram(prog.program);
+    gl.uniformMatrix3fv(prog.uniforms.get("u_transform")!, false, combined);
+    gl.uniform4fv(prog.uniforms.get("u_color")!, parseColor("#ffffff", 1));
+
+    this.state.bindVAO(this.solidVAO);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.pathBuffer.buffer);
+    gl.vertexAttribPointer(prog.attributes.get("a_position")!, 2, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(prog.attributes.get("a_position")!);
+
+    const vertCount = vertices.length / 2;
+    gl.drawArrays(gl.TRIANGLES, 0, vertCount);
+
+    // === Pass 2: Clear pixels OUTSIDE the path ===
+    gl.colorMask(true, true, true, true);
+    gl.stencilMask(0x00);
+    gl.stencilFunc(gl.EQUAL, 0, FILL_MASK);
+    gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+
+    this.state.setBlendMode("destination-out");
+
+    gl.uniformMatrix3fv(prog.uniforms.get("u_transform")!, false, mat3Identity());
+    gl.uniform4fv(prog.uniforms.get("u_color")!, parseColor("#ffffff", 1));
+
+    this.state.bindVAO(this.solidVAO);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.fullscreenQuadVBO);
+    gl.vertexAttribPointer(prog.attributes.get("a_position")!, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(prog.attributes.get("a_position")!);
+
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.fullscreenQuadIBO);
+    gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+
+    // === Pass 3: Clear winding stencil bits everywhere ===
+    gl.colorMask(false, false, false, false);
+    gl.stencilMask(FILL_MASK);
+    gl.stencilFunc(gl.NOTEQUAL, 0, FILL_MASK);
+    gl.stencilOp(gl.KEEP, gl.KEEP, gl.ZERO);
+    gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+
+    gl.colorMask(true, true, true, true);
+    this.state.disableStencil();
+
+    this.state.setBlendMode(this.currentBlendMode);
+  }
+
   drawImage(
     source: ImageSource | OffscreenTarget,
     dx: number, dy: number, dw: number, dh: number,

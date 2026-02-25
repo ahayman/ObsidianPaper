@@ -128,6 +128,18 @@ export interface RenderEngine {
    */
   maskToPath(vertices: Float32Array): void;
 
+  /**
+   * Fill explicit triangles. Vertices: [x0,y0, x1,y1, ...], every 3 vertices = 1 triangle.
+   * Used for quad-per-segment italic stroke rendering where each segment is two triangles.
+   */
+  fillTriangles(vertices: Float32Array): void;
+
+  /**
+   * Destination-in mask using explicit triangles.
+   * Same as maskToPath but draws with gl.TRIANGLES instead of gl.TRIANGLE_FAN.
+   */
+  maskToTriangles(vertices: Float32Array): void;
+
   // --- Stamp rendering ---
   /**
    * Draw a batch of stamps from a texture.

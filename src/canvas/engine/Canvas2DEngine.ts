@@ -252,6 +252,24 @@ export class Canvas2DEngine implements RenderEngine {
     ctx.restore();
   }
 
+  fillTriangles(vertices: Float32Array): void {
+    const path = trianglesToPath2D(vertices);
+    if (path) {
+      this.activeCtx.fill(path);
+    }
+  }
+
+  maskToTriangles(vertices: Float32Array): void {
+    const path = trianglesToPath2D(vertices);
+    if (!path) return;
+    const ctx = this.activeCtx;
+    ctx.save();
+    ctx.globalCompositeOperation = "destination-in";
+    ctx.globalAlpha = 1;
+    ctx.fill(path);
+    ctx.restore();
+  }
+
   // --- Stamp rendering ---
 
   drawStamps(texture: TextureHandle, data: Float32Array): void {
@@ -391,6 +409,43 @@ function getSourceHeight(source: ImageSource): number {
     return source.height;
   }
   return 0;
+}
+
+/**
+ * Convert a Float32Array of triangle vertices [x0, y0, x1, y1, x2, y2, ...]
+ * into a Path2D with one closed sub-path per triangle.
+ * Every 3 vertices (6 floats) = 1 triangle.
+ *
+ * All triangles are normalized to the same winding direction so the nonzero
+ * fill rule never cancels overlapping triangles from adjacent stroke segments.
+ */
+function trianglesToPath2D(vertices: Float32Array): Path2D | null {
+  const vertCount = vertices.length / 2;
+  if (vertCount < 3) return null;
+
+  const path = new Path2D();
+  for (let i = 0; i < vertCount; i += 3) {
+    const ax = vertices[i * 2], ay = vertices[i * 2 + 1];
+    const bx = vertices[(i + 1) * 2], by = vertices[(i + 1) * 2 + 1];
+    const cx = vertices[(i + 2) * 2], cy = vertices[(i + 2) * 2 + 1];
+
+    // Cross product sign determines winding direction.
+    // Normalize all triangles to the same sign.
+    const cross = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+
+    if (cross >= 0) {
+      path.moveTo(ax, ay);
+      path.lineTo(bx, by);
+      path.lineTo(cx, cy);
+    } else {
+      // Reverse B and C to flip winding
+      path.moveTo(ax, ay);
+      path.lineTo(cx, cy);
+      path.lineTo(bx, by);
+    }
+    path.closePath();
+  }
+  return path;
 }
 
 /**
