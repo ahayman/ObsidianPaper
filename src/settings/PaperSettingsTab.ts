@@ -222,16 +222,6 @@ export class PaperSettingsTab extends PluginSettingTab {
         });
       });
 
-    new Setting(container)
-      .setName("Use barrel rotation")
-      .setDesc("Twist the pencil to change nib angle dynamically")
-      .addToggle((toggle) => {
-        toggle.setValue(this.settings.useBarrelRotation);
-        toggle.onChange((value: boolean) => {
-          this.settings.useBarrelRotation = value;
-          this.notifyChange();
-        });
-      });
   }
 
   private buildPageTab(container: HTMLElement): void {

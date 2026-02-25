@@ -150,7 +150,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     highlighterMode: false,
     nibAngle: Math.PI / 6,
     nibThickness: 0.25,
-    useBarrelRotation: true,
+    useBarrelRotation: false,
     grain: null,
     stamp: null,
     inkStamp: { textureSize: 64, spacing: 0.15, stampSizeFraction: 2.0 },

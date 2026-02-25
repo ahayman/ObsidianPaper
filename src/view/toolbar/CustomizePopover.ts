@@ -59,6 +59,7 @@ export class CustomizePopover {
   private nibThicknessValue: HTMLElement | null = null;
   private nibPressureSlider: HTMLInputElement | null = null;
   private nibPressureValue: HTMLElement | null = null;
+  private barrelRotationToggle: HTMLInputElement | null = null;
   private colorPicker: ColorPickerPanel | null = null;
   private penTypeBtns: Map<PenType, HTMLElement> = new Map();
   private positionBtns: Map<ToolbarPosition, HTMLElement> = new Map();
@@ -200,6 +201,21 @@ export class CustomizePopover {
         this.callbacks.onStateChange({ nibPressure: v });
       }, (el, valEl) => { this.nibPressureSlider = el; this.nibPressureValue = valEl; },
       this.state.nibPressure.toFixed(2));
+
+    // Barrel rotation toggle — disabled until WebKit maps UITouch.rollAngle to PointerEvent.twist
+    // const brRow = this.nibSection.createEl("div", { cls: "paper-popover__slider-row" });
+    // brRow.createEl("span", { cls: "paper-popover__slider-label", text: "Barrel rotation" });
+    // const brToggle = brRow.createEl("input", {
+    //   type: "checkbox",
+    //   cls: "paper-popover__checkbox",
+    // });
+    // brToggle.checked = this.state.useBarrelRotation;
+    // this.barrelRotationToggle = brToggle;
+    //
+    // brToggle.addEventListener("change", () => {
+    //   this.state.useBarrelRotation = brToggle.checked;
+    //   this.callbacks.onStateChange({ useBarrelRotation: brToggle.checked });
+    // });
 
     this.updateNibVisibility();
 

@@ -110,7 +110,10 @@
       "WebFetch(domain:tavmjong.free.fr)",
       "WebFetch(domain:inria.hal.science)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "WebFetch(domain:help.obsidian.md)"
+      "WebFetch(domain:help.obsidian.md)",
+      "WebFetch(domain:patrickhlauke.github.io)",
+      "WebFetch(domain:www.mail-archive.com)",
+      "Bash(head:*)"
     ]
   }
 }

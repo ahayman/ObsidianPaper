@@ -25,6 +25,7 @@ function makeState(overrides: Partial<ToolbarState> = {}): ToolbarState {
     nibAngle: Math.PI / 6,
     nibThickness: 0.25,
     nibPressure: 0.5,
+    useBarrelRotation: false,
     grain: DEFAULT_GRAIN_VALUE,
     inkPreset: "standard",
     ...overrides,

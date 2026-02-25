@@ -25,6 +25,7 @@ export interface PenStyle {
   nibPressure?: number; // Pressure sensitivity 0-1 (0 = none, 1 = max)
   grain?: number; // Grain slider value 0-1 (pencil only). Controls stamp texture character.
   inkPreset?: string; // Ink preset ID (fountain pen only). Controls ink shading/texture.
+  useBarrelRotation?: boolean; // Use Apple Pencil Pro twist for dynamic nib angle
 }
 
 // --- Stroke Data ---
@@ -211,6 +212,7 @@ export interface SerializedPenStyle {
   nibPressure?: number;
   grain?: number;
   inkPreset?: string;
+  useBarrelRotation?: boolean;
 }
 
 export interface SerializedStroke {

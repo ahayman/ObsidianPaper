@@ -10,6 +10,7 @@ export interface PenPreset {
   nibAngle?: number;       // Radians, fountain only
   nibThickness?: number;   // 0-1, fountain only
   nibPressure?: number;    // 0-1, fountain only
+  useBarrelRotation?: boolean; // Use barrel rotation, fountain only
   grain?: number;          // 0-1, pencil only (grain slider value)
   inkPreset?: string;      // Ink preset ID, fountain only
 }
@@ -27,6 +28,7 @@ export interface ToolbarState {
   nibAngle: number;
   nibThickness: number;
   nibPressure: number;
+  useBarrelRotation: boolean;
   grain: number;
   inkPreset: string;
 }

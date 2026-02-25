@@ -129,7 +129,7 @@ describe("PenEngine", () => {
 
   describe("barrel rotation (twist)", () => {
     it("should use twist as nib angle for fountain pen when non-zero", () => {
-      const config = getPenConfig("fountain");
+      const config = { ...getPenConfig("fountain"), useBarrelRotation: true };
       const prevPoint = makePoint({ x: 100, y: 200, timestamp: 0 });
       const nextPoint = makePoint({ x: 110, y: 200, timestamp: 8 });
 

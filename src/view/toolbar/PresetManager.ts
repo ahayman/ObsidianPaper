@@ -110,6 +110,10 @@ export class PresetManager {
     if (state.nibAngle !== undefined) preset.nibAngle = state.nibAngle;
     if (state.nibThickness !== undefined) preset.nibThickness = state.nibThickness;
     if (state.nibPressure !== undefined) preset.nibPressure = state.nibPressure;
+    // Include barrel rotation for nib-based pens
+    if (penConfig.nibAngle !== null) {
+      preset.useBarrelRotation = state.useBarrelRotation;
+    }
     return preset;
   }
 
@@ -128,7 +132,8 @@ export class PresetManager {
         (p.nibThickness ?? state.nibThickness) === state.nibThickness &&
         (p.nibPressure ?? state.nibPressure) === state.nibPressure &&
         (p.grain ?? DEFAULT_GRAIN_VALUE) === state.grain &&
-        (p.inkPreset ?? "standard") === state.inkPreset
+        (p.inkPreset ?? "standard") === state.inkPreset &&
+        (p.useBarrelRotation ?? false) === state.useBarrelRotation
       ) {
         return p.id;
       }

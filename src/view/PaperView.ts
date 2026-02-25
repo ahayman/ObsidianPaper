@@ -78,7 +78,7 @@ export class PaperView extends TextFileView {
   private currentNibPressure = 0.5;
   private currentGrain = DEFAULT_GRAIN_VALUE;
   private currentInkPreset = "standard";
-  private useBarrelRotation = true;
+  private currentUseBarrelRotation = false;
 
   /**
    * Callback for persisting settings changes (presets) back to the plugin.
@@ -160,6 +160,7 @@ export class PaperView extends TextFileView {
         nibAngle: this.currentNibAngle,
         nibThickness: this.currentNibThickness,
         nibPressure: this.currentNibPressure,
+        useBarrelRotation: this.currentUseBarrelRotation,
         grain: this.currentGrain,
         inkPreset: this.currentInkPreset,
       },
@@ -263,7 +264,6 @@ export class PaperView extends TextFileView {
 
   setSettings(settings: PaperSettings): void {
     this.settings = settings;
-    this.useBarrelRotation = settings.useBarrelRotation;
     this.renderer?.setPipeline(this.getResolvedPipeline());
     this.renderer?.setGrainStrength("pencil", settings.pencilGrainStrength);
 
@@ -277,6 +277,7 @@ export class PaperView extends TextFileView {
         this.currentSmoothing = preset.smoothing;
         this.currentGrain = preset.grain ?? DEFAULT_GRAIN_VALUE;
         this.currentInkPreset = preset.inkPreset ?? "standard";
+        this.currentUseBarrelRotation = preset.useBarrelRotation ?? false;
         if (preset.nibAngle !== undefined) this.currentNibAngle = preset.nibAngle;
         if (preset.nibThickness !== undefined) this.currentNibThickness = preset.nibThickness;
         if (preset.nibPressure !== undefined) this.currentNibPressure = preset.nibPressure;
@@ -299,6 +300,7 @@ export class PaperView extends TextFileView {
       nibAngle: this.currentNibAngle,
       nibThickness: this.currentNibThickness,
       nibPressure: this.currentNibPressure,
+      useBarrelRotation: this.currentUseBarrelRotation,
       grain: this.currentGrain,
       inkPreset: this.currentInkPreset,
       activePresetId: settings.activePresetId,
@@ -993,6 +995,7 @@ export class PaperView extends TextFileView {
       style.nibAngle = this.currentNibAngle;
       style.nibThickness = this.currentNibThickness;
       style.nibPressure = this.currentNibPressure;
+      style.useBarrelRotation = this.currentUseBarrelRotation;
     }
     // Store grain for stamp-based pens (pencil)
     if (penConfig.stamp) {
@@ -1024,6 +1027,7 @@ export class PaperView extends TextFileView {
         this.currentNibAngle = state.nibAngle;
         this.currentNibThickness = state.nibThickness;
         this.currentNibPressure = state.nibPressure;
+        this.currentUseBarrelRotation = state.useBarrelRotation;
         this.currentGrain = state.grain;
         this.currentInkPreset = state.inkPreset;
         this.renderer?.setCurrentInkPreset(state.inkPreset);
@@ -1267,9 +1271,13 @@ export class PaperView extends TextFileView {
         this.redo();
       },
 
-      onHover: (x: number, y: number) => {
+      onHover: (x: number, y: number, _pointerType: string, twist: number) => {
         const penConfig = getPenConfig(this.currentPenType);
         const hasNib = penConfig.nibAngle !== null;
+        let nibAngle = hasNib ? this.currentNibAngle : null;
+        if (hasNib && this.currentUseBarrelRotation && twist !== 0) {
+          nibAngle = twist * Math.PI / 180;
+        }
         this.hoverCursor?.show(x, y, {
           colorId: this.currentColorId,
           width: this.currentWidth,
@@ -1277,7 +1285,7 @@ export class PaperView extends TextFileView {
           isEraser: this.activeTool === "eraser",
           zoom: this.camera.zoom,
           nibThickness: hasNib ? this.currentNibThickness : null,
-          nibAngle: hasNib ? this.currentNibAngle : null,
+          nibAngle,
         });
       },
 
@@ -1381,6 +1389,7 @@ function computeStyleOverrides(
   if (current.nibPressure !== base.nibPressure) { overrides.nibPressure = current.nibPressure; has = true; }
   if (current.grain !== base.grain) { overrides.grain = current.grain; has = true; }
   if (current.inkPreset !== base.inkPreset) { overrides.inkPreset = current.inkPreset; has = true; }
+  if (current.useBarrelRotation !== base.useBarrelRotation) { overrides.useBarrelRotation = current.useBarrelRotation; has = true; }
 
   return has ? overrides : undefined;
 }

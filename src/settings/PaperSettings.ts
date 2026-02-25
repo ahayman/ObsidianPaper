@@ -56,7 +56,6 @@ export interface PaperSettings {
   defaultNibAngle: number;       // Radians (default: Math.PI / 6 ≈ 30°)
   defaultNibThickness: number;   // Ratio 0-1 (default: 0.25)
   defaultNibPressure: number;    // Pressure sensitivity 0-1 (default: 0.5)
-  useBarrelRotation: boolean;    // Use Apple Pencil Pro twist for nib angle
 
   // File
   newNoteLocation: NewNoteLocation;
@@ -150,7 +149,6 @@ export const DEFAULT_SETTINGS: PaperSettings = {
   defaultNibAngle: Math.PI / 6,    // 30 degrees
   defaultNibThickness: 0.25,       // 4:1 aspect ratio
   defaultNibPressure: 0.5,         // Moderate pressure sensitivity
-  useBarrelRotation: true,
 
   newNoteLocation: "specified",
   defaultFolder: "",
@@ -228,10 +226,11 @@ export function formatSpacingDisplay(wu: number, unit: SpacingUnit): string {
  */
 export function mergeSettings(loaded: Partial<PaperSettings> | null): PaperSettings {
   if (!loaded) return { ...DEFAULT_SETTINGS };
-  // Strip legacy device-specific fields (now stored in localStorage)
+  // Strip legacy fields (device settings moved to localStorage, barrel rotation moved to per-preset)
   const {
     defaultRenderPipeline: _rp, defaultRenderEngine: _re,
     palmRejection: _pr, fingerAction: _fa, toolbarPosition: _tp,
+    useBarrelRotation: _br,
     ...rest
   } = loaded as Record<string, unknown>;
   const merged = { ...DEFAULT_SETTINGS, ...rest } as PaperSettings;

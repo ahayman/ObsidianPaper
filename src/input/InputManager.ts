@@ -20,7 +20,7 @@ export interface InputCallbacks {
   onPinchEnd: () => void;
   onTwoFingerTap: () => void;
   onThreeFingerTap: () => void;
-  onHover?: (x: number, y: number, pointerType: string) => void;
+  onHover?: (x: number, y: number, pointerType: string, twist: number) => void;
   onHoverEnd?: () => void;
   onWheel?: (screenX: number, screenY: number, deltaX: number, deltaY: number, isPinch: boolean) => void;
   onWheelEnd?: () => void;
@@ -207,7 +207,8 @@ export class InputManager {
         this.callbacks.onHover?.(
           e.clientX - rect.left,
           e.clientY - rect.top,
-          e.pointerType
+          e.pointerType,
+          e.twist ?? 0
         );
       }
       return;
@@ -388,7 +389,8 @@ export class InputManager {
       this.callbacks.onHover?.(
         e.clientX - rect.left,
         e.clientY - rect.top,
-        e.pointerType
+        e.pointerType,
+        e.twist ?? 0
       );
     }
   }

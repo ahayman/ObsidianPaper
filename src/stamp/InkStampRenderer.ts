@@ -88,6 +88,7 @@ export function computeInkStamps(
   const nibPressure = style.nibPressure ?? 0.5;
   const [minW, maxW] = penConfig.pressureWidthRange;
   const pCurve = style.pressureCurve ?? penConfig.pressureCurve;
+  const useBarrelRotation = style.useBarrelRotation ?? penConfig.useBarrelRotation;
 
   if (fromIndex === toIndex || points.length <= 1) {
     return { stamps, newRemainder: 0, newStampCount: stampCount };
@@ -124,7 +125,7 @@ export function computeInkStamps(
 
     // Projected width for stamp sizing (generous: 2x for modulation coverage)
     const projWidth = computeProjectedWidth(
-      p0, nibAngle, nibThickness, nibPressure, style, minW, maxW, pCurve, sx, sy,
+      p0, nibAngle, nibThickness, nibPressure, style, minW, maxW, pCurve, sx, sy, useBarrelRotation,
     );
     const stampSize = Math.max(minStampSize, projWidth * inkStampConfig.stampSizeFraction);
 
@@ -262,6 +263,7 @@ function addCornerFillStamps(
   const nibPressure = style.nibPressure ?? 0.5;
   const [minW, maxW] = penConfig.pressureWidthRange;
   const pCurve = style.pressureCurve ?? penConfig.pressureCurve;
+  const useBarrelRotation = style.useBarrelRotation ?? penConfig.useBarrelRotation;
   const minStampSize = style.width * inkStampConfig.stampSizeFraction * 0.5;
 
   let stampCount = startStampCount;
@@ -269,7 +271,7 @@ function addCornerFillStamps(
   // Helper: deposit a stamp at a point with given direction
   const depositAt = (pt: StrokePoint, sx: number, sy: number) => {
     const projWidth = computeProjectedWidth(
-      pt, nibAngle, nibThickness, nibPressure, style, minW, maxW, pCurve, sx, sy,
+      pt, nibAngle, nibThickness, nibPressure, style, minW, maxW, pCurve, sx, sy, useBarrelRotation,
     );
     const stampSize = Math.max(minStampSize, projWidth * inkStampConfig.stampSizeFraction);
 
@@ -354,8 +356,9 @@ function computeProjectedWidth(
   pCurve: number,
   sx: number,
   sy: number,
+  useBarrelRotation: boolean = false,
 ): number {
-  const effectiveNibAngle = pt.twist !== 0
+  const effectiveNibAngle = useBarrelRotation && pt.twist !== 0
     ? pt.twist * Math.PI / 180
     : nibAngle;
 

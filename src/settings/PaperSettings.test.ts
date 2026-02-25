@@ -85,7 +85,6 @@ describe("PaperSettings", () => {
         defaultNibAngle: Math.PI / 4,
         defaultNibThickness: 0.3,
         defaultNibPressure: 0.6,
-        useBarrelRotation: false,
         newNoteLocation: "current",
         defaultFolder: "Papers/",
         newNoteSubfolder: "handwriting",
