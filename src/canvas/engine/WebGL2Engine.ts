@@ -26,7 +26,7 @@ import { parseColor } from "./GLColor";
 import {
   SOLID_VERT, SOLID_FRAG,
   TEXTURE_VERT, TEXTURE_FRAG,
-  STAMP_VERT, STAMP_FRAG,
+  STAMP_VERT, STAMP_FRAG, STAMP_DISC_FRAG,
   GRAIN_VERT, GRAIN_FRAG,
   CIRCLE_VERT, CIRCLE_FRAG,
   LINE_VERT, LINE_FRAG,
@@ -111,6 +111,7 @@ export class WebGL2Engine implements RenderEngine {
   private solidProg!: ShaderProgram;
   private textureProg!: ShaderProgram;
   private stampProg!: ShaderProgram;
+  private stampDiscProg!: ShaderProgram;
   private grainProg!: ShaderProgram;
   private circleProg!: ShaderProgram;
   private lineProg!: ShaderProgram;
@@ -256,6 +257,7 @@ export class WebGL2Engine implements RenderEngine {
     deleteShaderProgram(gl, this.solidProg);
     deleteShaderProgram(gl, this.textureProg);
     deleteShaderProgram(gl, this.stampProg);
+    deleteShaderProgram(gl, this.stampDiscProg);
     deleteShaderProgram(gl, this.grainProg);
     deleteShaderProgram(gl, this.circleProg);
     deleteShaderProgram(gl, this.lineProg);
@@ -979,6 +981,52 @@ export class WebGL2Engine implements RenderEngine {
     gl.vertexAttribDivisor(instanceLoc, 0);
   }
 
+  drawStampDiscs(color: string, data: Float32Array): void {
+    if (data.length === 0) return;
+    const gl = this.gl;
+    const prog = this.stampDiscProg;
+    const stampCount = data.length / 4;
+
+    const combined = mat3Multiply(this.projection, this.currentTransform);
+
+    // Parse hex color to RGB floats
+    const r = parseInt(color.slice(1, 3), 16) / 255;
+    const g = parseInt(color.slice(3, 5), 16) / 255;
+    const b = parseInt(color.slice(5, 7), 16) / 255;
+
+    this.state.useProgram(prog.program);
+    gl.uniformMatrix3fv(prog.uniforms.get("u_transform")!, false, combined);
+    gl.uniform1f(prog.uniforms.get("u_alpha")!, this.currentAlpha);
+    gl.uniform3f(prog.uniforms.get("u_color")!, r, g, b);
+
+    this.state.bindVAO(this.stampVAO);
+
+    // Upload instance data
+    this.instanceBuffer.upload(data);
+
+    // Bind instance buffer to a_instance attribute
+    const instanceLoc = prog.attributes.get("a_instance")!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.instanceBuffer.buffer);
+    gl.vertexAttribPointer(instanceLoc, 4, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(instanceLoc);
+    gl.vertexAttribDivisor(instanceLoc, 1);
+
+    // Bind unit quad
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.unitQuadVBO);
+    const posLoc = prog.attributes.get("a_position")!;
+    const tcLoc = prog.attributes.get("a_texcoord")!;
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(posLoc);
+    gl.vertexAttribPointer(tcLoc, 2, gl.FLOAT, false, 16, 8);
+    gl.enableVertexAttribArray(tcLoc);
+
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.unitQuadIBO);
+    gl.drawElementsInstanced(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0, stampCount);
+
+    // Clean up divisor
+    gl.vertexAttribDivisor(instanceLoc, 0);
+  }
+
   // --- Grain texture ---
 
   applyGrain(
@@ -1209,6 +1257,7 @@ export class WebGL2Engine implements RenderEngine {
     this.solidProg = createShaderProgram(gl, SOLID_VERT, SOLID_FRAG);
     this.textureProg = createShaderProgram(gl, TEXTURE_VERT, TEXTURE_FRAG);
     this.stampProg = createShaderProgram(gl, STAMP_VERT, STAMP_FRAG);
+    this.stampDiscProg = createShaderProgram(gl, STAMP_VERT, STAMP_DISC_FRAG);
     this.grainProg = createShaderProgram(gl, GRAIN_VERT, GRAIN_FRAG);
     this.circleProg = createShaderProgram(gl, CIRCLE_VERT, CIRCLE_FRAG);
     this.lineProg = createShaderProgram(gl, LINE_VERT, LINE_FRAG);

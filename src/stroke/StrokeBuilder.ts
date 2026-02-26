@@ -21,6 +21,8 @@ export class StrokeBuilder {
   private xFilter: OneEuroFilter;
   private yFilter: OneEuroFilter;
   private pressureFilter: EMAFilter;
+  private tiltXFilter: EMAFilter;
+  private tiltYFilter: EMAFilter;
   private style: string;
   private pageIndex: number;
   private styleOverrides?: Partial<PenStyle>;
@@ -45,6 +47,8 @@ export class StrokeBuilder {
     this.xFilter = new OneEuroFilter({ minCutoff, beta: 0.007 });
     this.yFilter = new OneEuroFilter({ minCutoff, beta: 0.007 });
     this.pressureFilter = new EMAFilter(0.3);
+    this.tiltXFilter = new EMAFilter(0.4);
+    this.tiltYFilter = new EMAFilter(0.4);
   }
 
   /**
@@ -56,8 +60,8 @@ export class StrokeBuilder {
       x: this.xFilter.filter(point.x, point.timestamp),
       y: this.yFilter.filter(point.y, point.timestamp),
       pressure: this.pressureFilter.filter(point.pressure),
-      tiltX: point.tiltX,
-      tiltY: point.tiltY,
+      tiltX: this.tiltXFilter.filter(point.tiltX),
+      tiltY: this.tiltYFilter.filter(point.tiltY),
       twist: point.twist,
       timestamp: point.timestamp,
     };
@@ -89,10 +93,16 @@ export class StrokeBuilder {
 
   /**
    * Finalize the stroke: encode points, compute bbox, return Stroke object.
+   * @param bboxMargin Extra margin (world units) to expand the bbox by on all sides.
+   *   Use this for stamp-based pens where particles scatter beyond center points.
    */
-  finalize(): Stroke {
+  finalize(bboxMargin: number = 0): Stroke {
     const pts = encodePoints(this.points);
-    const bbox = computeBBox(this.points);
+    const raw = computeBBox(this.points);
+    const bbox: [number, number, number, number] = [
+      raw[0] - bboxMargin, raw[1] - bboxMargin,
+      raw[2] + bboxMargin, raw[3] + bboxMargin,
+    ];
 
     const stroke: Stroke = {
       id: generateStrokeId(),
@@ -119,5 +129,7 @@ export class StrokeBuilder {
     this.xFilter.reset();
     this.yFilter.reset();
     this.pressureFilter.reset();
+    this.tiltXFilter.reset();
+    this.tiltYFilter.reset();
   }
 }

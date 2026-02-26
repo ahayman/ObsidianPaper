@@ -1185,7 +1185,18 @@ export class PaperView extends TextFileView {
           }
 
           this.renderer?.scheduleFinalization(() => {
-            const stroke = builder.finalize();
+            // Compute bbox margin for stamp-based pens: particles scatter
+            // well beyond center points, especially with tilt.
+            const penConfig = getPenConfig(style.pen);
+            let bboxMargin = style.width * 2; // base margin for stroke width
+            if (penConfig.stamp && penConfig.tiltConfig) {
+              // Max scatter spread per side from center: radius × (crossAxisMultiplier + maxSkewOffset).
+              // Use width (diameter) × factor for generous coverage, ensuring the spatial index
+              // routes strokes to all tiles that could contain scattered particles.
+              const tc = penConfig.tiltConfig;
+              bboxMargin = style.width * (tc.crossAxisMultiplier + tc.maxSkewOffset);
+            }
+            const stroke = builder.finalize(bboxMargin);
 
             this.document.strokes.push(stroke);
             this.spatialIndex.insert(stroke, this.document.strokes.length - 1);

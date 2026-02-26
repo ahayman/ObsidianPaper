@@ -544,9 +544,10 @@ export function renderStrokeToEngine(
     const color = resolveColor(style.color, useDarkColors);
     const points = decodePoints(stroke.pts);
     const stamps = computeAllStamps(points, style, penConfig, penConfig.stamp);
-    const texture = stampCtx.getStampTexture(style.grain ?? DEFAULT_GRAIN_VALUE, color);
     const data = packStampsToFloat32(stamps);
-    engine.drawStamps(texture, data);
+    engine.setAlpha(style.opacity);
+    engine.drawStampDiscs(color, data);
+    engine.setAlpha(1);
     return;
   }
 

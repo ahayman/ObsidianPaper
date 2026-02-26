@@ -1,7 +1,31 @@
 import type { StrokePoint, PenStyle } from "../types";
-import type { PenConfig } from "../stroke/PenConfigs";
+import type { PenConfig, PenTiltConfig } from "../stroke/PenConfigs";
 import type { PenStampConfig } from "../stroke/PenConfigs";
 import { DEFAULT_GRAIN_VALUE } from "./GrainMapping";
+
+// ─── Tilt ─────────────────────────────────────────────────────
+
+interface TiltInfo {
+  /** Tilt magnitude in degrees (0 = perpendicular, ~70 = max practical) */
+  magnitude: number;
+  /** Tilt direction angle in radians */
+  angle: number;
+  /** Blend factor 0-1: 0 = skew mode, 1 = full shading mode */
+  shadingBlend: number;
+}
+
+/** Dead zone below which tilt is ignored (noise floor). */
+const TILT_DEAD_ZONE = 2;
+
+function computeTiltInfo(tiltX: number, tiltY: number, config: PenTiltConfig): TiltInfo | null {
+  const magnitude = Math.sqrt(tiltX * tiltX + tiltY * tiltY);
+  if (magnitude < TILT_DEAD_ZONE) return null;
+  const angle = Math.atan2(tiltY, tiltX);
+  const shadingBlend = Math.max(0, Math.min(1,
+    (magnitude - config.tolerance) / config.transitionRange,
+  ));
+  return { magnitude, angle, shadingBlend };
+}
 
 /**
  * Parameters for a single stamp placement.
@@ -64,15 +88,18 @@ export function computeStamps(
   let stampCount = startStampCount;
   const grainValue = style.grain ?? DEFAULT_GRAIN_VALUE;
   const particleSize = particleSizeForWidth(style.width);
+  const tc = penConfig.tiltConfig;
 
   // Handle single-point case (tap)
   if (fromIndex === toIndex || points.length <= 1) {
     if (points.length >= 1 && fromIndex < points.length) {
       const pt = points[fromIndex];
       const diameter = computeDiameter(pt.pressure, style, penConfig);
+      const ti = tc ? computeTiltInfo(pt.tiltX, pt.tiltY, tc) : null;
       stampCount = emitScatter(
         stamps, pt.x, pt.y, diameter, particleSize,
         stampCount, grainValue, pt.pressure, penConfig, style,
+        ti, tc,
       );
     }
     return { stamps, newRemainder: 0, newStampCount: stampCount };
@@ -93,15 +120,18 @@ export function computeStamps(
 
     // Step size based on particle size (not stroke diameter)
     const step = spacing * particleSize;
+    const segAngle = Math.atan2(dy, dx);
 
     let walked = -remainder;
 
     // First scatter at start of stroke
     if (stampCount === 0 && stamps.length === 0 && i === clampedFrom) {
       const diameter = computeDiameter(p0.pressure, style, penConfig);
+      const ti = tc ? computeTiltInfo(p0.tiltX, p0.tiltY, tc) : null;
       stampCount = emitScatter(
         stamps, p0.x, p0.y, diameter, particleSize,
         stampCount, grainValue, p0.pressure, penConfig, style,
+        ti, tc, segAngle,
       );
     }
 
@@ -110,10 +140,12 @@ export function computeStamps(
       const t = walked / segLen;
       const interpPt = interpolatePoint(p0, p1, t);
       const diameter = computeDiameter(interpPt.pressure, style, penConfig);
+      const ti = tc ? computeTiltInfo(interpPt.tiltX, interpPt.tiltY, tc) : null;
 
       stampCount = emitScatter(
         stamps, interpPt.x, interpPt.y, diameter, particleSize,
         stampCount, grainValue, interpPt.pressure, penConfig, style,
+        ti, tc, segAngle,
       );
     }
 
@@ -230,29 +262,91 @@ function emitScatter(
   pressure: number,
   penConfig: PenConfig,
   style: PenStyle,
+  tiltInfo?: TiltInfo | null,
+  tiltConfig?: PenTiltConfig | null,
+  strokeAngle?: number,
 ): number {
   const radius = diameter / 2;
-  const numParticles = Math.max(1, Math.round(1.5 * diameter / particleSize));
   let stampCount = startCount;
 
   const pCurve = style.pressureCurve ?? penConfig.pressureCurve;
   const pT = Math.pow(Math.max(0, Math.min(1, pressure)), pCurve);
+
+  // Tilt-derived parameters
+  const hasTilt = tiltInfo != null && tiltConfig != null;
+  const t = hasTilt ? tiltInfo.shadingBlend : 0;
+
+  // Compute effective width multiplier based on stroke direction vs tilt direction.
+  // Cross-axis (perpendicular to tilt): full shading width — the lead's side contacts paper.
+  // Along-axis (parallel to tilt): reduced width — only the tip edge contacts paper.
+  let effectiveMultiplier = hasTilt ? tiltConfig.crossAxisMultiplier : 1;
+  if (hasTilt && strokeAngle != null) {
+    const angleDiff = Math.abs(Math.sin(strokeAngle - tiltInfo.angle));
+    // angleDiff: 0 = parallel to tilt (along-axis), 1 = perpendicular (cross-axis)
+    effectiveMultiplier = tiltConfig.alongAxisMultiplier +
+      (tiltConfig.crossAxisMultiplier - tiltConfig.alongAxisMultiplier) * angleDiff;
+  }
+
+  // Ellipse axes: shading mode widens along tilt direction
+  const majorRadius = hasTilt ? radius * (1 + (effectiveMultiplier - 1) * t) : radius;
+  const minorRadius = hasTilt ? radius * (1 + 0.3 * t) : radius;
+
+  // Skew offset: shift center opposite to tilt, fades as shading kicks in
+  let offsetX = 0;
+  let offsetY = 0;
+  if (hasTilt) {
+    const skewStrength = Math.min(1, tiltInfo.magnitude / tiltConfig.tolerance) * (1 - t * 0.5);
+    offsetX = -Math.cos(tiltInfo.angle) * radius * tiltConfig.maxSkewOffset * skewStrength;
+    offsetY = -Math.sin(tiltInfo.angle) * radius * tiltConfig.maxSkewOffset * skewStrength;
+  }
+
+  // More particles in shading mode to fill wider area
+  const baseParticles = Math.max(1, Math.round(1.5 * diameter / particleSize));
+  const numParticles = Math.round(baseParticles * (1 + 2 * t));
+
+  // Opacity reduction in shading mode
+  const tiltOpacityScale = hasTilt ? 1 - tiltConfig.opacityReduction * t : 1;
+
+  // Distribution bias: center-heavy (0.8) → more uniform (0.5) in shading mode
+  const centerBias = 0.8 - 0.3 * t;
+
+  // Precompute rotation for ellipse alignment to tilt direction
+  const cosA = hasTilt ? Math.cos(tiltInfo.angle) : 1;
+  const sinA = hasTilt ? Math.sin(tiltInfo.angle) : 0;
 
   for (let j = 0; j < numParticles; j++) {
     // Two independent high-quality hashes for polar coordinates
     const h1 = hashFloat(stampCount, 0x9E3779B9);
     const h2 = hashFloat(stampCount, 0x517CC1B7);
 
-    // Center-biased radial distribution: pow(r, 0.8) concentrates toward center
-    // (compared to sqrt(r)=0.5 for uniform disk; higher = more center-heavy)
-    const r = radius * Math.pow(h1, 0.8);
+    const rNorm = Math.pow(h1, centerBias);
     const theta = h2 * Math.PI * 2;
-    const px = cx + r * Math.cos(theta);
-    const py = cy + r * Math.sin(theta);
 
-    // Edge falloff: alpha decreases toward stroke edge
-    const edgeT = r / radius; // 0 at center, 1 at edge
-    const edgeFalloff = 1 - edgeT * edgeT; // quadratic falloff
+    let px: number, py: number;
+    let edgeT: number;
+
+    if (hasTilt && t > 0) {
+      // Elliptical distribution aligned to tilt axis
+      const ex = rNorm * majorRadius * Math.cos(theta);
+      const ey = rNorm * minorRadius * Math.sin(theta);
+
+      // Rotate ellipse to align major axis with tilt direction
+      px = cx + ex * cosA - ey * sinA + offsetX;
+      py = cy + ex * sinA + ey * cosA + offsetY;
+
+      // Edge falloff using elliptical distance
+      const exNorm = majorRadius > 0 ? ex / majorRadius : 0;
+      const eyNorm = minorRadius > 0 ? ey / minorRadius : 0;
+      edgeT = Math.sqrt(exNorm * exNorm + eyNorm * eyNorm);
+    } else {
+      // Standard circular distribution (with optional skew offset)
+      const r = radius * rNorm;
+      px = cx + r * Math.cos(theta) + offsetX;
+      py = cy + r * Math.sin(theta) + offsetY;
+      edgeT = r / radius;
+    }
+
+    const edgeFalloff = 1 - edgeT * edgeT;
 
     // Grain noise (scaled to stroke diameter for proportional texture)
     let alpha = computeGrainOpacity(px, py, grainValue, diameter);
@@ -263,8 +357,8 @@ function emitScatter(
       alpha *= minO + (maxO - minO) * pT;
     }
 
-    // Apply edge falloff
-    alpha *= edgeFalloff;
+    // Apply edge falloff and tilt opacity
+    alpha *= edgeFalloff * tiltOpacityScale;
 
     stamps.push({
       x: px, y: py,

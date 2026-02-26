@@ -148,6 +148,14 @@ export interface RenderEngine {
    */
   drawStamps(texture: TextureHandle, data: Float32Array): void;
 
+  /**
+   * Draw a batch of stamp particles as hard circles (no texture).
+   * Data is a Float32Array of [x, y, size, opacity] tuples.
+   * WebGL uses instanced SDF discs; Canvas2D loops arc() calls.
+   * Used for pencil stamps to match active Canvas2D arc() rendering.
+   */
+  drawStampDiscs(color: string, data: Float32Array): void;
+
   // --- Grain texture ---
   /**
    * Apply a grain texture as an eraser pattern over the current content.

@@ -783,15 +783,12 @@ export class Renderer {
       return;
     }
 
-    // Stamp-based incremental rendering for pencil
+    // Stamp-based rendering for pencil: full redraw each frame.
     if (this.stampManager && this.pipeline === "advanced" && penConfig.stamp && points.length > 0) {
       this.pendingActiveRender = () => {
         if (!this.stampManager || !penConfig.stamp) return;
 
-        // Clear canvas on first frame of new stroke
-        if (this.activeStampCount === 0) {
-          this.clearCanvas(this.activeCtx);
-        }
+        this.clearCanvas(this.activeCtx);
 
         const dark = useDarkColors ?? this.isDarkMode;
         const color = resolveColor(style.color, dark);
@@ -811,15 +808,10 @@ export class Renderer {
         const baseTransform = this.activeCtx.getTransform();
 
         // Quantize points to match encode→decode precision used by final render.
-        // Compute ALL stamps from scratch — only draw new ones.
         const qPoints = quantizePoints(points);
         const allStamps = computeAllStamps(qPoints, style, penConfig, penConfig.stamp);
-
-        if (allStamps.length > this.activeStampCount) {
-          const newStamps = allStamps.slice(this.activeStampCount);
-          drawStamps(this.activeCtx, newStamps, color, baseTransform, style.opacity);
-          this.activeStampCount = allStamps.length;
-        }
+        drawStamps(this.activeCtx, allStamps, color, baseTransform, style.opacity);
+        this.activeStampCount = allStamps.length;
 
         if (pageRect) {
           this.activeCtx.restore();
@@ -899,6 +891,14 @@ export class Renderer {
     this.clearCanvas(this.predictionCtx);
 
     if (predictedPoints.length === 0) return;
+
+    // Skip outline-based prediction for stamp-rendered pens (pencil).
+    // The outline doesn't account for tilt widening, so it visually
+    // constrains the tilt-widened stamps rendered on the active canvas.
+    const penConfig = getPenConfig(style.pen);
+    if (this.stampManager && this.pipeline === "advanced" && penConfig.stamp) {
+      return;
+    }
 
     // Combine last few real points with predicted for continuity
     const tailCount = Math.min(3, allPoints.length);
@@ -1468,7 +1468,7 @@ class TiledStaticLayer {
         const webglEngine = new WebGLTileEngine(webglCanvas, config, pathCache);
         const gl = webglEngine.getGL();
         this.webglTileEngine = webglEngine;
-        this.glCache = new WebGLTileCache(gl, config);
+        this.glCache = new WebGLTileCache(gl, config, 0); // MSAA disabled for testing
         this.glCompositor = new WebGLTileCompositor(gl, this.grid, config);
         this.useWebGLTiles = true;
       } catch (e) {
@@ -1519,7 +1519,7 @@ class TiledStaticLayer {
           const gl = newEngine.getGL();
           this.webglTileEngine?.destroy();
           this.webglTileEngine = newEngine;
-          this.glCache = new WebGLTileCache(gl, config);
+          this.glCache = new WebGLTileCache(gl, config, 0); // MSAA disabled for testing
           this.glCompositor?.destroy();
           this.glCompositor = new WebGLTileCompositor(gl, this.grid, config);
 

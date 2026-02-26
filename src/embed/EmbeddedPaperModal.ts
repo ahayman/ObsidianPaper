@@ -972,7 +972,13 @@ export class EmbeddedPaperModal extends Modal {
           }
 
           this.renderer?.scheduleFinalization(() => {
-            const stroke = builder.finalize();
+            const penConfig = getPenConfig(style.pen);
+            let bboxMargin = style.width * 2;
+            if (penConfig.stamp && penConfig.tiltConfig) {
+              const tc = penConfig.tiltConfig;
+              bboxMargin = style.width * (tc.crossAxisMultiplier + tc.maxSkewOffset);
+            }
+            const stroke = builder.finalize(bboxMargin);
             this.document.strokes.push(stroke);
             this.spatialIndex.insert(stroke, this.document.strokes.length - 1);
             this.undoManager.pushAddStroke(stroke);

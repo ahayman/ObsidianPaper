@@ -15,6 +15,21 @@ export interface PenStampConfig {
   rotationJitter: number;
 }
 
+export interface PenTiltConfig {
+  /** Tilt magnitude (degrees) below which only skew offset applies */
+  tolerance: number;
+  /** Degrees of transition band between skew and shading modes */
+  transitionRange: number;
+  /** Maximum width multiplier when stroke is perpendicular to tilt (cross-axis shading) */
+  crossAxisMultiplier: number;
+  /** Width multiplier when stroke is parallel to tilt (along-axis dragging) */
+  alongAxisMultiplier: number;
+  /** Maximum opacity reduction at full shading tilt (0-1) */
+  opacityReduction: number;
+  /** Maximum skew offset as fraction of radius */
+  maxSkewOffset: number;
+}
+
 export interface InkStampConfig {
   /** Ink stamp texture size in pixels (default 64) */
   textureSize: number;
@@ -65,6 +80,8 @@ export interface PenConfig {
   stamp: PenStampConfig | null;
   /** Ink stamp configuration for fountain pen, null = not supported */
   inkStamp: InkStampConfig | null;
+  /** Tilt-based scatter configuration, null = no tilt scatter */
+  tiltConfig: PenTiltConfig | null;
 }
 
 export const PEN_CONFIGS: Record<PenType, PenConfig> = {
@@ -88,6 +105,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     grain: null,
     stamp: null,
     inkStamp: null,
+    tiltConfig: null,
   },
 
   "felt-tip": {
@@ -110,6 +128,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     grain: null,
     stamp: null,
     inkStamp: null,
+    tiltConfig: { tolerance: 40, transitionRange: 20, crossAxisMultiplier: 2.0, alongAxisMultiplier: 1.3, opacityReduction: 0.2, maxSkewOffset: 0.3 },
   },
 
   pencil: {
@@ -132,6 +151,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     grain: { enabled: true, strength: 0.5 },
     stamp: { textureSize: 48, spacing: 0.5, rotationJitter: Math.PI / 12 },
     inkStamp: null,
+    tiltConfig: { tolerance: 40, transitionRange: 20, crossAxisMultiplier: 3.5, alongAxisMultiplier: 1.5, opacityReduction: 0.4, maxSkewOffset: 0.4 },
   },
 
   fountain: {
@@ -154,6 +174,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     grain: null,
     stamp: null,
     inkStamp: { textureSize: 64, spacing: 0.15, stampSizeFraction: 2.0 },
+    tiltConfig: null,
   },
 
   highlighter: {
@@ -176,6 +197,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     grain: null,
     stamp: null,
     inkStamp: null,
+    tiltConfig: null,
   },
 };
 

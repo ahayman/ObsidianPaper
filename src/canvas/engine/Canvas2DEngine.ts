@@ -289,6 +289,24 @@ export class Canvas2DEngine implements RenderEngine {
     }
   }
 
+  drawStampDiscs(color: string, data: Float32Array): void {
+    const ctx = this.activeCtx;
+    const TWO_PI = Math.PI * 2;
+    ctx.fillStyle = color;
+    for (let i = 0; i < data.length; i += 4) {
+      const x = data[i];
+      const y = data[i + 1];
+      const size = data[i + 2];
+      const opacity = data[i + 3];
+      if (opacity < 0.05) continue;
+      ctx.globalAlpha = opacity;
+      ctx.beginPath();
+      ctx.arc(x, y, size * 0.5, 0, TWO_PI);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
   // --- Grain texture ---
 
   applyGrain(

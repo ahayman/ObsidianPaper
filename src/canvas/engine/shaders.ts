@@ -90,6 +90,22 @@ void main() {
 }
 `;
 
+// Hard-circle stamp for pencil particles (matches Canvas2D arc() rendering).
+export const STAMP_DISC_FRAG = `#version 300 es
+precision highp float;
+uniform float u_alpha;
+uniform vec3 u_color;
+in vec2 v_texcoord;
+in float v_opacity;
+out vec4 fragColor;
+void main() {
+  vec2 d = v_texcoord * 2.0 - 1.0;
+  float dist = dot(d, d);
+  if (dist > 1.0) discard;
+  fragColor = vec4(u_color * v_opacity * u_alpha, v_opacity * u_alpha);
+}
+`;
+
 // ─── Grain Program ──────────────────────────────────────────────────
 // Fullscreen quad with tiled grain texture. Used with destination-out blend.
 
