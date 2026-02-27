@@ -8,25 +8,23 @@
  * WebGL advantage over the Canvas 2D path (not recreated per tile).
  */
 
-import type { PaperDocument, RenderPipeline } from "../../types";
-import type { PenType } from "../../types";
+import type { PaperDocument } from "../../types";
 import type { SpatialIndex } from "../../spatial/SpatialIndex";
 import type { PageRect } from "../../document/PageLayout";
 import type { TileGridConfig } from "./TileTypes";
 import { zoomBandBaseZoom } from "./TileTypes";
 import type { GLTileEntry } from "./WebGLTileCache";
 import { StrokePathCache } from "../../stroke/OutlineGenerator";
-import { GrainTextureGenerator } from "../GrainTextureGenerator";
 import { selectLodLevel } from "../../stroke/StrokeSimplifier";
 import { resolvePageBackground } from "../../color/ColorUtils";
 import { renderStrokeToEngine } from "../StrokeRenderCore";
 import type { EngineGrainContext, EngineStampContext } from "../StrokeRenderCore";
-import type { StampTextureManager } from "../../stamp/StampTextureManager";
 import { InkStampTextureManager } from "../../stamp/InkStampTextureManager";
 import { renderDeskFillEngine, renderPageBackgroundEngine } from "../BackgroundRenderer";
 import type { TextureHandle } from "../engine/RenderEngine";
 import { resolveMSAA } from "../engine/GLTextures";
 import { WebGL2Engine } from "../engine/WebGL2Engine";
+import type { RenderResources } from "../../rendering/RenderResources";
 
 function bboxOverlaps(
   a: [number, number, number, number],
@@ -42,16 +40,14 @@ export class WebGLTileEngine {
   private pathCache: StrokePathCache;
   private valid = true;
 
-  // Grain
-  private grainGenerator: GrainTextureGenerator | null = null;
-  private grainStrengthOverrides = new Map<PenType, number>();
+  // Grain texture handle for engine-based rendering
   private engineGrainTexture: TextureHandle | null = null;
-  private pipeline: RenderPipeline = "basic";
 
   // Stamps — persistent across tile renders (key WebGL advantage)
-  private stampManager: StampTextureManager | null = null;
-  private inkStampManager: InkStampTextureManager | null = null;
   private stampTextureCache = new Map<string, TextureHandle>();
+
+  /** Shared rendering resources (grain, stamps, pipeline). */
+  private resources: RenderResources;
 
   constructor(canvas: HTMLCanvasElement, config: TileGridConfig, pathCache: StrokePathCache) {
     this.config = config;
@@ -59,6 +55,13 @@ export class WebGLTileEngine {
     this.engine = new WebGL2Engine(canvas, { preserveDrawingBuffer: true });
     // Cache the GL context — browsers return the same object for the same canvas
     this.gl = canvas.getContext("webgl2")!;
+    this.resources = {
+      grainGenerator: null,
+      grainStrengthOverrides: new Map(),
+      stampManager: null,
+      inkStampManager: null,
+      pipeline: "basic",
+    };
     this.setupContextLoss(canvas);
   }
 
@@ -195,38 +198,31 @@ export class WebGLTileEngine {
     engine.setViewport(canvas.width, canvas.height);
   }
 
-  // ─── Config forwarding ─────────────────────────────────────
+  // ─── Resource management ────────────────────────────────────
 
-  setGrainGenerator(generator: GrainTextureGenerator | null): void {
-    this.grainGenerator = generator;
+  /**
+   * Set the shared render resources. The WebGLTileEngine reads from this
+   * reference directly — no per-field setters needed.
+   */
+  setResources(resources: RenderResources): void {
+    this.resources = resources;
+  }
+
+  /**
+   * Sync the engine grain texture from the current resources.
+   * Must be called after setResources() or when the grain generator changes.
+   */
+  syncGrainTexture(): void {
     if (this.engineGrainTexture) {
       this.engine.deleteTexture(this.engineGrainTexture);
       this.engineGrainTexture = null;
     }
-    if (generator && this.engine.isValid()) {
-      const canvas = generator.getCanvas();
+    if (this.resources.grainGenerator && this.engine.isValid()) {
+      const canvas = this.resources.grainGenerator.getCanvas();
       if (canvas) {
         this.engineGrainTexture = this.engine.createGrainTexture(canvas);
       }
     }
-  }
-
-  setGrainStrength(penType: PenType, strength: number): void {
-    this.grainStrengthOverrides.set(penType, strength);
-  }
-
-  setPipeline(pipeline: RenderPipeline): void {
-    this.pipeline = pipeline;
-  }
-
-  setStampManager(manager: StampTextureManager | null): void {
-    this.stampManager = manager;
-    this.clearStampTextureCache();
-  }
-
-  setInkStampManager(manager: InkStampTextureManager | null): void {
-    this.inkStampManager = manager;
-    this.clearStampTextureCache();
   }
 
   // ─── Internal ──────────────────────────────────────────────
@@ -234,19 +230,19 @@ export class WebGLTileEngine {
   private getEngineGrainContext(canvasWidth: number, canvasHeight: number): EngineGrainContext {
     return {
       grainTexture: this.engineGrainTexture,
-      strengthOverrides: this.grainStrengthOverrides,
-      pipeline: this.pipeline,
+      strengthOverrides: this.resources.grainStrengthOverrides,
+      pipeline: this.resources.pipeline,
       canvasWidth,
       canvasHeight,
     };
   }
 
   private getEngineStampContext(): EngineStampContext | null {
-    if (!this.stampManager || !this.engine.isValid()) return null;
+    if (!this.resources.stampManager || !this.engine.isValid()) return null;
     const engine = this.engine;
-    const stampManager = this.stampManager;
+    const stampManager = this.resources.stampManager;
     const textureCache = this.stampTextureCache;
-    const inkStampManager = this.inkStampManager;
+    const resources = this.resources;
 
     return {
       getStampTexture: (grainValue: number, color: string): TextureHandle => {
@@ -261,7 +257,7 @@ export class WebGLTileEngine {
         return tex;
       },
       getInkStampTexture: (presetId: string | undefined, color: string): TextureHandle => {
-        let mgr = inkStampManager;
+        let mgr = resources.inkStampManager;
         if (!mgr) {
           mgr = new InkStampTextureManager();
         }
@@ -296,12 +292,7 @@ export class WebGLTileEngine {
 
     canvas.addEventListener("webglcontextrestored", () => {
       this.valid = true;
-      if (this.grainGenerator) {
-        const grainCanvas = this.grainGenerator.getCanvas();
-        if (grainCanvas) {
-          this.engineGrainTexture = this.engine.createGrainTexture(grainCanvas);
-        }
-      }
+      this.syncGrainTexture();
     });
   }
 

@@ -151,6 +151,18 @@ function makeSpatialIndex() {
   } as any;
 }
 
+/** Helper: set grain generator on engine via setResources + syncGrainTexture. */
+function setGrain(engine: WebGLTileEngine, generator: any): void {
+  engine.setResources({
+    grainGenerator: generator,
+    grainStrengthOverrides: new Map(),
+    stampManager: null,
+    inkStampManager: null,
+    pipeline: "basic",
+  });
+  engine.syncGrainTexture();
+}
+
 // ─── Tests ──────────────────────────────────────────────────────
 
 describe("WebGLTileEngine", () => {
@@ -376,7 +388,7 @@ describe("WebGLTileEngine", () => {
         getCanvas: jest.fn(() => ({ width: 256, height: 256 })),
       } as any;
 
-      engine.setGrainGenerator(mockGenerator);
+      setGrain(engine,mockGenerator);
 
       expect(mockEngine.createGrainTexture).toHaveBeenCalled();
 
@@ -387,11 +399,11 @@ describe("WebGLTileEngine", () => {
       const engine = new WebGLTileEngine(canvas, makeConfig(), new StrokePathCache());
 
       const gen1 = { getCanvas: () => ({ width: 256, height: 256 }) } as any;
-      engine.setGrainGenerator(gen1);
+      setGrain(engine,gen1);
       expect(mockEngine.createGrainTexture).toHaveBeenCalledTimes(1);
 
       const gen2 = { getCanvas: () => ({ width: 512, height: 512 }) } as any;
-      engine.setGrainGenerator(gen2);
+      setGrain(engine,gen2);
       expect(mockEngine.deleteTexture).toHaveBeenCalled();
       expect(mockEngine.createGrainTexture).toHaveBeenCalledTimes(2);
 
@@ -402,10 +414,10 @@ describe("WebGLTileEngine", () => {
       const engine = new WebGLTileEngine(canvas, makeConfig(), new StrokePathCache());
 
       const gen = { getCanvas: () => ({ width: 256, height: 256 }) } as any;
-      engine.setGrainGenerator(gen);
+      setGrain(engine,gen);
 
       // Setting to null should delete the texture
-      engine.setGrainGenerator(null);
+      setGrain(engine,null);
       expect(mockEngine.deleteTexture).toHaveBeenCalled();
 
       engine.destroy();
@@ -415,7 +427,7 @@ describe("WebGLTileEngine", () => {
       const engine = new WebGLTileEngine(canvas, makeConfig(), new StrokePathCache());
 
       const gen = { getCanvas: () => null } as any;
-      engine.setGrainGenerator(gen);
+      setGrain(engine,gen);
 
       // Should not create texture when canvas is null
       expect(mockEngine.createGrainTexture).not.toHaveBeenCalled();
@@ -429,7 +441,7 @@ describe("WebGLTileEngine", () => {
       const engine = new WebGLTileEngine(canvas, makeConfig(), new StrokePathCache());
 
       const gen = { getCanvas: () => ({ width: 256, height: 256 }) } as any;
-      engine.setGrainGenerator(gen);
+      setGrain(engine,gen);
 
       canvas._triggerEvent("webglcontextlost", { preventDefault: jest.fn() });
 
@@ -443,7 +455,7 @@ describe("WebGLTileEngine", () => {
 
       const grainCanvas = { width: 256, height: 256 };
       const gen = { getCanvas: () => grainCanvas } as any;
-      engine.setGrainGenerator(gen);
+      setGrain(engine,gen);
 
       jest.clearAllMocks();
       mockEngine.isValid.mockReturnValue(true);
@@ -502,7 +514,7 @@ describe("WebGLTileEngine", () => {
       const engine = new WebGLTileEngine(canvas, makeConfig(), new StrokePathCache());
 
       const gen = { getCanvas: () => ({ width: 256, height: 256 }) } as any;
-      engine.setGrainGenerator(gen);
+      setGrain(engine,gen);
 
       jest.clearAllMocks();
 

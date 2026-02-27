@@ -10,28 +10,24 @@ import {
 } from "../stroke/OutlineGenerator";
 import { resolveColor } from "../color/ColorPalette";
 import { getPenConfig } from "../stroke/PenConfigs";
+import type { PenConfig } from "../stroke/PenConfigs";
 import type { PenType } from "../types";
 import { GrainTextureGenerator } from "./GrainTextureGenerator";
 import { selectLodLevel } from "../stroke/StrokeSimplifier";
 import { BackgroundRenderer, DESK_COLORS } from "./BackgroundRenderer";
 import type { BackgroundConfig } from "./BackgroundRenderer";
 import { resolvePageBackground } from "../color/ColorUtils";
-import {
-  renderStrokeToContext,
-  applyGrainToStroke,
-  computeScreenBBox,
-} from "./StrokeRenderCore";
+import { renderStrokeToContext } from "./StrokeRenderCore";
 import type { GrainRenderContext, StampRenderContext } from "./StrokeRenderCore";
 import { StampTextureManager } from "../stamp/StampTextureManager";
 import { InkStampTextureManager } from "../stamp/InkStampTextureManager";
-import { DEFAULT_GRAIN_VALUE, grainToTextureStrength } from "../stamp/GrainMapping";
-import {
-  computeAllStamps,
-  drawStamps,
-} from "../stamp/StampRenderer";
-import { computeAllInkStamps, drawInkShadingStamps } from "../stamp/InkStampRenderer";
-import { getInkPreset } from "../stamp/InkPresets";
-import { quantizePoints } from "../document/PointEncoder";
+import { DEFAULT_GRAIN_VALUE } from "../stamp/GrainMapping";
+import { resolveMaterial } from "../rendering/StrokeMaterial";
+import type { StrokeMaterial } from "../rendering/StrokeMaterial";
+import { executeMaterial } from "../rendering/MaterialExecutor";
+import type { ExecutorResources } from "../rendering/MaterialExecutor";
+import { prepareActiveStrokeData } from "../rendering/StrokeDataPreparer";
+import { Canvas2DBackend } from "../rendering/Canvas2DBackend";
 import { TileGrid } from "./tiles/TileGrid";
 import { TileCache } from "./tiles/TileCache";
 import { TileRenderer } from "./tiles/TileRenderer";
@@ -48,6 +44,7 @@ import { createRenderEngine } from "./engine/EngineFactory";
 import { WebGLTileEngine } from "./tiles/WebGLTileEngine";
 import { WebGLTileCache } from "./tiles/WebGLTileCache";
 import { WebGLTileCompositor } from "./tiles/WebGLTileCompositor";
+import type { RenderResources } from "../rendering/RenderResources";
 
 /**
  * Multi-layer canvas renderer managing:
@@ -353,7 +350,7 @@ export class Renderer {
 
   setPipeline(pipeline: RenderPipeline): void {
     this.pipeline = pipeline;
-    this.tiledLayer?.setPipeline(pipeline);
+    this.syncResourcesToTiledLayer();
   }
 
   renderStaticLayer(
@@ -545,11 +542,16 @@ export class Renderer {
   /**
    * Render raw points directly to the static canvas.
    * Bypasses encode/decode and path caching — used for diagnostic/minimal path.
+   *
+   * Uses the material system: resolveMaterial → prepareActiveStrokeData → executeMaterial
+   * via Canvas2DBackend.
    */
   renderPointsToStatic(
     points: readonly StrokePoint[],
     style: PenStyle
   ): void {
+    if (points.length === 0) return;
+
     const ctx = this.staticCtx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.scale(this.dpr, this.dpr);
@@ -557,76 +559,32 @@ export class Renderer {
 
     const penConfig = getPenConfig(style.pen);
 
-    // Stamp-based rendering for pencil
-    if (this.stampManager && this.pipeline === "advanced" && penConfig.stamp && points.length > 0) {
-      const color = resolveColor(style.color, this.isDarkMode);
-      const qPoints = quantizePoints(points);
-      const stamps = computeAllStamps(qPoints, style, penConfig, penConfig.stamp);
-      drawStamps(ctx, stamps, color, ctx.getTransform(), style.opacity);
+    // Determine effective pipeline: if stamps are unavailable, fall through to fill
+    const effectivePipeline = this.getEffectivePipeline(penConfig);
+    const material = resolveMaterial(penConfig, style, effectivePipeline, 0);
+
+    // Compute bbox from points
+    const bbox = computeBBoxFromPoints(points, style.width);
+    const grainOverride = this.grainStrengthOverrides.get(style.pen);
+
+    const data = prepareActiveStrokeData(
+      points, style, penConfig, material, this.isDarkMode, bbox,
+      points.length > 0 ? [points[0].x, points[0].y] : undefined,
+      grainOverride,
+    );
+
+    if (!data.vertices && !data.stampData) {
       this.camera.resetContext(ctx);
       return;
     }
 
-    const path = generateStrokePath(points, style);
-    if (path) {
-      const color = resolveColor(style.color, this.isDarkMode);
+    const resources = this.buildCanvas2DResources(
+      material, style, data.color,
+      this.staticCanvas.width, this.staticCanvas.height,
+    );
 
-      // Grain-enabled strokes rendered in isolation
-      if (this.pipeline !== "basic" && penConfig.grain?.enabled && points.length > 0) {
-        const baseStrength = this.grainStrengthOverrides.get(style.pen) ?? penConfig.grain.strength;
-        const grainValue = style.grain ?? DEFAULT_GRAIN_VALUE;
-        const strength = grainToTextureStrength(baseStrength, grainValue);
-        if (strength > 0) {
-          let bMinX = Infinity, bMinY = Infinity, bMaxX = -Infinity, bMaxY = -Infinity;
-          for (const pt of points) {
-            if (pt.x < bMinX) bMinX = pt.x;
-            if (pt.y < bMinY) bMinY = pt.y;
-            if (pt.x > bMaxX) bMaxX = pt.x;
-            if (pt.y > bMaxY) bMaxY = pt.y;
-          }
-          const m = style.width * 2;
-          const ptsBbox: [number, number, number, number] = [bMinX - m, bMinY - m, bMaxX + m, bMaxY + m];
-          const grainCtx = this.getGrainRenderContext(this.staticCanvas.width, this.staticCanvas.height);
-          const offscreen = grainCtx.getOffscreen(256, 256);
-          if (offscreen) {
-            // Use shared grain rendering via StrokeRenderCore
-            const m = ctx.getTransform();
-            const region = computeScreenBBox(ptsBbox, m, grainCtx.canvasWidth, grainCtx.canvasHeight);
-            if (region) {
-              const offCtx = offscreen.ctx;
-              offCtx.setTransform(1, 0, 0, 1, 0, 0);
-              offCtx.clearRect(0, 0, region.sw, region.sh);
-              offCtx.setTransform(m.a, m.b, m.c, m.d, m.e - region.sx, m.f - region.sy);
-              offCtx.fillStyle = color;
-              offCtx.globalAlpha = style.opacity;
-              offCtx.fill(path);
-              offCtx.globalAlpha = 1;
-              applyGrainToStroke(offCtx, path, strength, points[0].x, points[0].y, grainCtx);
-              ctx.save();
-              ctx.setTransform(1, 0, 0, 1, 0, 0);
-              ctx.drawImage(offscreen.canvas, 0, 0, region.sw, region.sh, region.sx, region.sy, region.sw, region.sh);
-              ctx.restore();
-            }
-          }
-          this.camera.resetContext(ctx);
-          return;
-        }
-      }
-
-      if (penConfig.highlighterMode) {
-        ctx.save();
-        ctx.globalAlpha = penConfig.baseOpacity;
-        ctx.globalCompositeOperation = "multiply";
-        ctx.fillStyle = color;
-        ctx.fill(path);
-        ctx.restore();
-      } else {
-        ctx.fillStyle = color;
-        ctx.globalAlpha = style.opacity;
-        ctx.fill(path);
-        ctx.globalAlpha = 1;
-      }
-    }
+    const backend = new Canvas2DBackend(ctx);
+    executeMaterial(backend, material, data, resources);
 
     this.camera.resetContext(ctx);
   }
@@ -676,6 +634,9 @@ export class Renderer {
    * Render the active stroke (currently being drawn).
    * Batched via requestAnimationFrame.
    * Clips to page rect if provided.
+   *
+   * Uses the material system: resolveMaterial → prepareActiveStrokeData → executeMaterial
+   * via Canvas2DBackend.
    */
   renderActiveStroke(
     points: readonly StrokePoint[],
@@ -683,145 +644,13 @@ export class Renderer {
     pageRect?: PageRect,
     useDarkColors?: boolean,
   ): void {
+    if (points.length === 0) return;
+
     const penConfig = getPenConfig(style.pen);
 
-    // Ink-shaded active stroke for fountain pen: full redraw each frame
-    // with clip + source-over deposit on an offscreen canvas.
-    if (this.pipeline === "advanced" && penConfig.inkStamp && points.length > 1) {
-      this.pendingActiveRender = () => {
-        if (!penConfig.inkStamp) return;
-        if (!this.inkStampManager) this.initInkStamps();
-
-        this.clearCanvas(this.activeCtx);
-        this.activeCtx.setTransform(1, 0, 0, 1, 0, 0);
-        this.activeCtx.scale(this.dpr, this.dpr);
-        this.camera.applyToContext(this.activeCtx);
-
-        if (pageRect) {
-          this.activeCtx.save();
-          this.activeCtx.beginPath();
-          this.activeCtx.rect(pageRect.x, pageRect.y, pageRect.width, pageRect.height);
-          this.activeCtx.clip();
-        }
-
-        const path = generateStrokePath(points, style, false);
-        if (path) {
-          const dark = useDarkColors ?? this.isDarkMode;
-          const color = resolveColor(style.color, dark);
-          const presetConfig = getInkPreset(style.inkPreset ?? this.currentInkPreset);
-          const qPoints = quantizePoints(points);
-
-          // Compute bbox from points
-          let bMinX = Infinity, bMinY = Infinity, bMaxX = -Infinity, bMaxY = -Infinity;
-          for (const pt of qPoints) {
-            if (pt.x < bMinX) bMinX = pt.x;
-            if (pt.y < bMinY) bMinY = pt.y;
-            if (pt.x > bMaxX) bMaxX = pt.x;
-            if (pt.y > bMaxY) bMaxY = pt.y;
-          }
-          const m = style.width * 2;
-          const bbox: [number, number, number, number] = [bMinX - m, bMinY - m, bMaxX + m, bMaxY + m];
-
-          const transform = this.activeCtx.getTransform();
-          const region = computeScreenBBox(bbox, transform, this.activeCanvas.width, this.activeCanvas.height);
-
-          if (region && presetConfig.shading > 0) {
-            const offCtx = this.ensureGrainOffscreen(region.sw, region.sh);
-            if (offCtx && this.grainOffscreen) {
-              offCtx.setTransform(1, 0, 0, 1, 0, 0);
-              offCtx.clearRect(0, 0, region.sw, region.sh);
-              offCtx.setTransform(
-                transform.a, transform.b, transform.c, transform.d,
-                transform.e - region.sx, transform.f - region.sy,
-              );
-
-              // 1. Deposit colored stamps via source-over on offscreen
-              const stamps = computeAllInkStamps(qPoints, style, penConfig, penConfig.inkStamp, presetConfig);
-              const inkCache = this.inkStampManager!.getCache(style.inkPreset ?? this.currentInkPreset);
-              const stampTexture = inkCache.getColored(color);
-              drawInkShadingStamps(offCtx, stamps, stampTexture, offCtx.getTransform(), style.opacity);
-
-              // 2. Mask to the stroke outline path
-              offCtx.globalCompositeOperation = "destination-in";
-              offCtx.globalAlpha = 1;
-              offCtx.fill(path);
-              offCtx.globalCompositeOperation = "source-over";
-
-              // 3. Composite back
-              this.activeCtx.save();
-              this.activeCtx.setTransform(1, 0, 0, 1, 0, 0);
-              this.activeCtx.drawImage(
-                this.grainOffscreen,
-                0, 0, region.sw, region.sh,
-                region.sx, region.sy, region.sw, region.sh,
-              );
-              this.activeCtx.restore();
-            } else {
-              // Fallback: plain fill
-              this.activeCtx.fillStyle = color;
-              this.activeCtx.globalAlpha = style.opacity;
-              this.activeCtx.fill(path);
-              this.activeCtx.globalAlpha = 1;
-            }
-          } else {
-            // No shading or off-screen: plain fill
-            this.activeCtx.fillStyle = color;
-            this.activeCtx.globalAlpha = style.opacity;
-            this.activeCtx.fill(path);
-            this.activeCtx.globalAlpha = 1;
-          }
-        }
-
-        if (pageRect) {
-          this.activeCtx.restore();
-        }
-
-        this.camera.resetContext(this.activeCtx);
-      };
-
-      this.scheduleFrame();
-      return;
-    }
-
-    // Stamp-based rendering for pencil: full redraw each frame.
-    if (this.stampManager && this.pipeline === "advanced" && penConfig.stamp && points.length > 0) {
-      this.pendingActiveRender = () => {
-        if (!this.stampManager || !penConfig.stamp) return;
-
-        this.clearCanvas(this.activeCtx);
-
-        const dark = useDarkColors ?? this.isDarkMode;
-        const color = resolveColor(style.color, dark);
-
-        // Setup transform
-        this.activeCtx.setTransform(1, 0, 0, 1, 0, 0);
-        this.activeCtx.scale(this.dpr, this.dpr);
-        this.camera.applyToContext(this.activeCtx);
-
-        if (pageRect) {
-          this.activeCtx.save();
-          this.activeCtx.beginPath();
-          this.activeCtx.rect(pageRect.x, pageRect.y, pageRect.width, pageRect.height);
-          this.activeCtx.clip();
-        }
-
-        const baseTransform = this.activeCtx.getTransform();
-
-        // Quantize points to match encode→decode precision used by final render.
-        const qPoints = quantizePoints(points);
-        const allStamps = computeAllStamps(qPoints, style, penConfig, penConfig.stamp);
-        drawStamps(this.activeCtx, allStamps, color, baseTransform, style.opacity);
-        this.activeStampCount = allStamps.length;
-
-        if (pageRect) {
-          this.activeCtx.restore();
-        }
-
-        this.camera.resetContext(this.activeCtx);
-      };
-
-      this.scheduleFrame();
-      return;
+    // Ensure ink stamp manager is initialized for fountain pen
+    if (this.pipeline === "advanced" && penConfig.inkStamp && !this.inkStampManager) {
+      this.initInkStamps();
     }
 
     this.pendingActiveRender = () => {
@@ -837,34 +666,27 @@ export class Renderer {
         this.activeCtx.clip();
       }
 
-      const path = generateStrokePath(points, style, false);
-      if (path) {
-        const dark = useDarkColors ?? this.isDarkMode;
-        const color = resolveColor(style.color, dark);
+      const dark = useDarkColors ?? this.isDarkMode;
+      const effectivePipeline = this.getEffectivePipeline(penConfig);
+      const material = resolveMaterial(penConfig, style, effectivePipeline, 0);
 
-        if (penConfig.highlighterMode) {
-          this.activeCtx.save();
-          this.activeCtx.globalAlpha = penConfig.baseOpacity;
-          this.activeCtx.globalCompositeOperation = "multiply";
-          this.activeCtx.fillStyle = color;
-          this.activeCtx.fill(path);
-          this.activeCtx.restore();
-        } else {
-          this.activeCtx.fillStyle = color;
-          this.activeCtx.globalAlpha = style.opacity;
-          this.activeCtx.fill(path);
-          this.activeCtx.globalAlpha = 1;
-        }
+      const bbox = computeBBoxFromPoints(points, style.width);
+      const grainOverride = this.grainStrengthOverrides.get(style.pen);
 
-        // Grain overlay for active stroke
-        if (this.pipeline !== "basic" && penConfig.grain?.enabled && points.length > 0) {
-          const baseStrength = this.grainStrengthOverrides.get(style.pen) ?? penConfig.grain.strength;
-          const grainValue = style.grain ?? DEFAULT_GRAIN_VALUE;
-          const strength = grainToTextureStrength(baseStrength, grainValue);
-          if (strength > 0) {
-            this.applyGrainToStrokeLocal(this.activeCtx, path, strength, points[0].x, points[0].y);
-          }
-        }
+      const data = prepareActiveStrokeData(
+        points, style, penConfig, material, dark, bbox,
+        points.length > 0 ? [points[0].x, points[0].y] : undefined,
+        grainOverride,
+      );
+
+      if (data.vertices || data.stampData) {
+        const resources = this.buildCanvas2DResources(
+          material, style, data.color,
+          this.activeCanvas.width, this.activeCanvas.height,
+        );
+
+        const backend = new Canvas2DBackend(this.activeCtx);
+        executeMaterial(backend, material, data, resources);
       }
 
       if (pageRect) {
@@ -984,11 +806,8 @@ export class Renderer {
   initGrain(): void {
     this.grainGenerator = new GrainTextureGenerator();
     this.grainGenerator.initialize();
-    if (this.tiledLayer) {
-      this.tiledLayer.tileRenderer.setGrainGenerator(this.grainGenerator);
-      this.tiledLayer.setWebGLGrainGenerator(this.grainGenerator);
-      this.tiledLayer.initWorkerGrain(this.grainGenerator);
-    }
+    this.syncResourcesToTiledLayer();
+    this.tiledLayer?.initWorkerGrain(this.grainGenerator);
   }
 
   /**
@@ -998,11 +817,8 @@ export class Renderer {
     this.stampManager = new StampTextureManager();
     // Pre-generate the default grain cache
     this.stampManager.getCache(DEFAULT_GRAIN_VALUE);
-    if (this.tiledLayer) {
-      this.tiledLayer.tileRenderer.setStampManager(this.stampManager);
-      this.tiledLayer.setWebGLStampManager(this.stampManager);
-      this.tiledLayer.initWorkerStamps();
-    }
+    this.syncResourcesToTiledLayer();
+    this.tiledLayer?.initWorkerStamps();
   }
 
   /**
@@ -1012,11 +828,8 @@ export class Renderer {
     this.inkStampManager = new InkStampTextureManager();
     // Pre-generate the standard preset cache
     this.inkStampManager.getCache("standard");
-    if (this.tiledLayer) {
-      this.tiledLayer.tileRenderer.setInkStampManager(this.inkStampManager);
-      this.tiledLayer.setWebGLInkStampManager(this.inkStampManager);
-      this.tiledLayer.initWorkerInkStamps();
-    }
+    this.syncResourcesToTiledLayer();
+    this.tiledLayer?.initWorkerInkStamps();
   }
 
   /**
@@ -1031,8 +844,7 @@ export class Renderer {
    */
   setGrainStrength(penType: PenType, strength: number): void {
     this.grainStrengthOverrides.set(penType, strength);
-    this.tiledLayer?.tileRenderer.setGrainStrength(penType, strength);
-    this.tiledLayer?.setWebGLGrainStrength(penType, strength);
+    this.syncResourcesToTiledLayer();
     this.tiledLayer?.updateWorkerGrain(this.grainGenerator, this.grainStrengthOverrides);
   }
 
@@ -1205,34 +1017,22 @@ export class Renderer {
       this.tiledLayer.setAfterCompositeCallback(() => this.webglGL?.flush());
     }
 
-    // Share grain resources with tile renderers
+    // Share all rendering resources with tile renderers via single call
+    this.syncResourcesToTiledLayer();
+
+    // Initialize worker resources
     if (this.grainGenerator) {
-      this.tiledLayer.tileRenderer.setGrainGenerator(this.grainGenerator);
-      this.tiledLayer.setWebGLGrainGenerator(this.grainGenerator);
       this.tiledLayer.initWorkerGrain(this.grainGenerator);
-    }
-    for (const [penType, strength] of this.grainStrengthOverrides) {
-      this.tiledLayer.tileRenderer.setGrainStrength(penType, strength);
-      this.tiledLayer.setWebGLGrainStrength(penType, strength);
     }
     if (this.grainStrengthOverrides.size > 0) {
       this.tiledLayer.updateWorkerGrain(this.grainGenerator, this.grainStrengthOverrides);
     }
-
-    // Share stamp resources
     if (this.stampManager) {
-      this.tiledLayer.tileRenderer.setStampManager(this.stampManager);
-      this.tiledLayer.setWebGLStampManager(this.stampManager);
       this.tiledLayer.initWorkerStamps();
     }
     if (this.inkStampManager) {
-      this.tiledLayer.tileRenderer.setInkStampManager(this.inkStampManager);
-      this.tiledLayer.setWebGLInkStampManager(this.inkStampManager);
       this.tiledLayer.initWorkerInkStamps();
     }
-
-    // Share pipeline
-    this.tiledLayer.setPipeline(this.pipeline);
   }
 
   disableTiling(): void {
@@ -1294,18 +1094,78 @@ export class Renderer {
     renderStrokeToContext(ctx, stroke, styles, lod, dark, this.pathCache, grainCtx, stampCtx);
   }
 
-  private applyGrainToStrokeLocal(
-    ctx: CanvasRenderingContext2D,
-    path: Path2D,
-    grainStrength: number,
-    anchorX: number,
-    anchorY: number,
-  ): void {
-    const grainCtx = this.getGrainRenderContext(
-      this.activeCanvas.width,
-      this.activeCanvas.height,
-    );
-    applyGrainToStroke(ctx, path, grainStrength, anchorX, anchorY, grainCtx);
+  /**
+   * Determine the effective pipeline for the material resolver.
+   * If stamp/ink resources are unavailable, treat as "basic" so the resolver
+   * falls through to fill body instead of stamp/ink bodies that can't render.
+   */
+  private getEffectivePipeline(penConfig: PenConfig): RenderPipeline {
+    if (penConfig.inkStamp && !this.inkStampManager) return "basic";
+    if (penConfig.stamp && !this.stampManager) return "basic";
+    return this.pipeline;
+  }
+
+  /**
+   * Build ExecutorResources for Canvas2D rendering from the Renderer's resources.
+   */
+  private buildCanvas2DResources(
+    material: StrokeMaterial,
+    style: PenStyle,
+    color: string,
+    canvasWidth: number,
+    canvasHeight: number,
+  ): ExecutorResources {
+    const resources: ExecutorResources = {
+      grainTexture: null,
+      inkStampTexture: null,
+      canvasWidth,
+      canvasHeight,
+    };
+
+    // Grain texture from generator
+    if (material.effects.some(e => e.type === "grain") && this.grainGenerator) {
+      const grainCanvas = this.grainGenerator.getCanvas();
+      if (grainCanvas) {
+        resources.grainTexture = Canvas2DBackend.createTexture(
+          grainCanvas, grainCanvas.width, grainCanvas.height,
+        );
+      }
+    }
+
+    // Ink stamp texture from manager
+    if (material.body.type === "inkShading" && this.inkStampManager) {
+      const inkCache = this.inkStampManager.getCache(style.inkPreset ?? this.currentInkPreset);
+      const stampTexture = inkCache.getColored(color);
+      resources.inkStampTexture = Canvas2DBackend.createTexture(
+        stampTexture, stampTexture.width, stampTexture.height,
+      );
+    }
+
+    return resources;
+  }
+
+  /**
+   * Build a RenderResources snapshot from the Renderer's current state.
+   * The resources object shares references (not copies) with the Renderer,
+   * so changes to grainStrengthOverrides are visible through the reference.
+   */
+  private buildRenderResources(): RenderResources {
+    return {
+      grainGenerator: this.grainGenerator,
+      grainStrengthOverrides: this.grainStrengthOverrides,
+      stampManager: this.stampManager,
+      inkStampManager: this.inkStampManager,
+      pipeline: this.pipeline,
+    };
+  }
+
+  /**
+   * Push the current render resources to the tiled layer (if enabled).
+   * Called after any resource change (grain, stamps, pipeline).
+   */
+  private syncResourcesToTiledLayer(): void {
+    if (!this.tiledLayer) return;
+    this.tiledLayer.setResources(this.buildRenderResources());
   }
 
   /**
@@ -1394,6 +1254,24 @@ function bboxOverlaps(
 }
 
 /**
+ * Compute a bounding box from live points with stroke width margin.
+ */
+function computeBBoxFromPoints(
+  points: readonly StrokePoint[],
+  strokeWidth: number,
+): [number, number, number, number] {
+  let bMinX = Infinity, bMinY = Infinity, bMaxX = -Infinity, bMaxY = -Infinity;
+  for (const pt of points) {
+    if (pt.x < bMinX) bMinX = pt.x;
+    if (pt.y < bMinY) bMinY = pt.y;
+    if (pt.x > bMaxX) bMaxX = pt.x;
+    if (pt.y > bMaxY) bMaxY = pt.y;
+  }
+  const m = strokeWidth * 2;
+  return [bMinX - m, bMinY - m, bMaxX + m, bMaxY + m];
+}
+
+/**
  * Orchestrates tile-based static stroke rendering.
  * Manages TileGrid, TileCache, TileRenderer, TileCompositor, and TileRenderScheduler.
  *
@@ -1422,8 +1300,6 @@ class TiledStaticLayer {
   private docVersion = 0;
   /** Last docVersion sent to workers. */
   private workerDocVersion = -1;
-  /** Current rendering pipeline. */
-  private pipeline: RenderPipeline = "basic";
 
   // WebGL tile rendering components (null when Canvas2D mode)
   private webglTileEngine: WebGLTileEngine | null = null;
@@ -1435,10 +1311,14 @@ class TiledStaticLayer {
   private webglOverlayCanvas: HTMLCanvasElement | null = null;
   /** Reference to the webgl canvas for context loss event handling. */
   private webglCanvas: HTMLCanvasElement | null = null;
-  /** Tracked config state for context restore re-initialization. */
-  private currentGrainGenerator: GrainTextureGenerator | null = null;
-  private currentStampManager: StampTextureManager | null = null;
-  private currentInkStampManager: InkStampTextureManager | null = null;
+  /** Tracked resources for context restore re-initialization and forwarding. */
+  private currentResources: RenderResources = {
+    grainGenerator: null,
+    grainStrengthOverrides: new Map(),
+    stampManager: null,
+    inkStampManager: null,
+    pipeline: "basic",
+  };
 
   // Cached state for scheduler callbacks
   private currentDoc: PaperDocument | null = null;
@@ -1523,17 +1403,9 @@ class TiledStaticLayer {
           this.glCompositor?.destroy();
           this.glCompositor = new WebGLTileCompositor(gl, this.grid, config);
 
-          // Re-apply config state
-          if (this.currentGrainGenerator) {
-            this.webglTileEngine.setGrainGenerator(this.currentGrainGenerator);
-          }
-          if (this.currentStampManager) {
-            this.webglTileEngine.setStampManager(this.currentStampManager);
-          }
-          if (this.currentInkStampManager) {
-            this.webglTileEngine.setInkStampManager(this.currentInkStampManager);
-          }
-          this.webglTileEngine.setPipeline(this.pipeline);
+          // Re-apply resources to the new engine
+          this.webglTileEngine.setResources(this.currentResources);
+          this.webglTileEngine.syncGrainTexture();
 
           this.useWebGLTiles = true;
           this.glCache.invalidateAll();
@@ -1641,34 +1513,17 @@ class TiledStaticLayer {
     this.workerScheduler.initInkStamps();
   }
 
-  /** Update the rendering pipeline for the tile renderer and workers. */
-  setPipeline(pipeline: RenderPipeline): void {
-    this.pipeline = pipeline;
-    this.tileRenderer.setPipeline(pipeline);
-    this.webglTileEngine?.setPipeline(pipeline);
-    // Force doc resync so workers pick up the new pipeline
+  /**
+   * Set the shared rendering resources for tile renderer and WebGL tile engine.
+   * Replaces the old per-type forwarding methods (setWebGLGrainGenerator, etc.).
+   */
+  setResources(resources: RenderResources): void {
+    this.currentResources = resources;
+    this.tileRenderer.setResources(resources);
+    this.webglTileEngine?.setResources(resources);
+    this.webglTileEngine?.syncGrainTexture();
+    // Force doc resync so workers pick up any pipeline change
     this.bumpDocVersion();
-  }
-
-  // ─── WebGL Tile Engine Config Forwarding ───────────────────
-
-  setWebGLGrainGenerator(generator: GrainTextureGenerator | null): void {
-    this.currentGrainGenerator = generator;
-    this.webglTileEngine?.setGrainGenerator(generator);
-  }
-
-  setWebGLGrainStrength(penType: PenType, strength: number): void {
-    this.webglTileEngine?.setGrainStrength(penType, strength);
-  }
-
-  setWebGLStampManager(manager: StampTextureManager | null): void {
-    this.currentStampManager = manager;
-    this.webglTileEngine?.setStampManager(manager);
-  }
-
-  setWebGLInkStampManager(manager: InkStampTextureManager | null): void {
-    this.currentInkStampManager = manager;
-    this.webglTileEngine?.setInkStampManager(manager);
   }
 
   /** Send document state to workers only if it changed since last sync. */
@@ -1677,7 +1532,7 @@ class TiledStaticLayer {
     if (!this.currentDoc) return;
     if (this.workerDocVersion === this.docVersion) return;
     this.workerDocVersion = this.docVersion;
-    this.workerScheduler.updateDocument(this.currentDoc, this.currentPageLayout, this.pipeline);
+    this.workerScheduler.updateDocument(this.currentDoc, this.currentPageLayout, this.currentResources.pipeline);
   }
 
   /** Mark document as changed so next syncDocumentToWorkers() sends an update. */

@@ -23,6 +23,11 @@ import { getInkPreset } from "../stamp/InkPresets";
 import type { InkPresetConfig } from "../stamp/InkPresets";
 import type { PenConfig } from "../stroke/PenConfigs";
 import { DEFAULT_GRAIN_VALUE, grainToTextureStrength } from "../stamp/GrainMapping";
+import { resolveMaterial } from "../rendering/StrokeMaterial";
+import { executeMaterial } from "../rendering/MaterialExecutor";
+import type { ExecutorResources } from "../rendering/MaterialExecutor";
+import { prepareStrokeData } from "../rendering/StrokeDataPreparer";
+import { WebGLBackend } from "../rendering/WebGLBackend";
 
 /**
  * Abstraction over grain rendering resources that works with both
@@ -474,10 +479,10 @@ export interface EngineStampContext {
 
 /**
  * Render a single stroke using the RenderEngine abstraction.
- * Parallel function to renderStrokeToContext() — same logic but uses
- * engine.fillPath(vertices), engine.drawStamps(), etc.
  *
- * The old renderStrokeToContext() remains for workers (raw Canvas 2D).
+ * Uses the material system: resolveMaterial → prepareStrokeData → executeMaterial.
+ * The WebGLBackend delegates all calls 1:1 to the engine, producing the same
+ * method call sequence as the previous inline implementation.
  */
 export function renderStrokeToEngine(
   engine: RenderEngine,
@@ -492,252 +497,43 @@ export function renderStrokeToEngine(
   const style = resolveStyle(stroke, styles);
   const penConfig = getPenConfig(style.pen);
 
-  // Ink-shaded fountain pen rendering at LOD 0
-  if (stampCtx && grainCtx.pipeline === "advanced" && penConfig.inkStamp && lod === 0) {
-    const cacheKey = lodCacheKey(stroke.id, lod);
-    let vertices = pathCache.getVertices(cacheKey);
-    let decodedPts: StrokePoint[] | undefined;
-    if (!vertices) {
-      decodedPts = decodePoints(stroke.pts);
-      if (isItalicStyle(style)) {
-        const sides = generateItalicOutlineSides(decodedPts, buildItalicConfig(style));
-        if (sides) {
-          pathCache.setItalicSides(cacheKey, sides);
-          vertices = pathCache.getVertices(cacheKey);
-        }
-      } else {
-        const outline = generateOutline(decodedPts, style);
-        if (outline.length >= 2) {
-          pathCache.setOutline(cacheKey, outline);
-          vertices = pathCache.getVertices(cacheKey);
-        }
-      }
-    }
-    if (!vertices) return;
+  // Determine effective pipeline: if stamps are unavailable, material system
+  // would resolve to stamp/ink bodies that can't render. In that case, treat
+  // as if pipeline is "basic" for the material resolver so it falls through
+  // to fill body. This matches the old `stampCtx &&` guard conditions.
+  const effectivePipeline: RenderPipeline =
+    (!stampCtx && (penConfig.inkStamp || penConfig.stamp))
+      ? "basic"
+      : grainCtx.pipeline;
 
-    const color = resolveColor(style.color, useDarkColors);
-    const presetConfig = getInkPreset(style.inkPreset);
-    const italic = pathCache.isItalic(cacheKey);
+  // Resolve material
+  const material = resolveMaterial(penConfig, style, effectivePipeline, lod);
 
-    if (presetConfig.shading <= 0) {
-      engine.setFillColor(color);
-      engine.setAlpha(style.opacity);
-      if (italic) {
-        engine.fillTriangles(vertices);
-      } else {
-        engine.fillPath(vertices);
-      }
-      engine.setAlpha(1);
-      return;
-    }
+  // Grain strength override from context
+  const grainOverride = grainCtx.strengthOverrides.get(style.pen);
 
-    const points = decodedPts ?? decodePoints(stroke.pts);
-    renderInkShadedStrokeEngine(
-      engine, vertices, italic, color, style, penConfig, points, presetConfig,
-      stampCtx, grainCtx, stroke.bbox,
-    );
-    return;
+  // Prepare data
+  const data = prepareStrokeData(
+    stroke, style, penConfig, material, pathCache, lod, useDarkColors, grainOverride,
+  );
+
+  // Skip if no renderable data
+  if (!data.vertices && !data.stampData) return;
+
+  // Build executor resources from engine contexts
+  const resources: ExecutorResources = {
+    grainTexture: grainCtx.grainTexture ?? null,
+    inkStampTexture: null,
+    canvasWidth: grainCtx.canvasWidth,
+    canvasHeight: grainCtx.canvasHeight,
+  };
+
+  // Resolve ink stamp texture if needed
+  if (material.body.type === "inkShading" && stampCtx && data.stampData) {
+    resources.inkStampTexture = stampCtx.getInkStampTexture(style.inkPreset, data.color);
   }
 
-  // Stamp-based rendering for pencil at LOD 0
-  if (stampCtx && grainCtx.pipeline === "advanced" && penConfig.stamp && lod === 0) {
-    const color = resolveColor(style.color, useDarkColors);
-    const points = decodePoints(stroke.pts);
-    const stamps = computeAllStamps(points, style, penConfig, penConfig.stamp);
-    const data = packStampsToFloat32(stamps);
-    engine.setAlpha(style.opacity);
-    engine.drawStampDiscs(color, data);
-    engine.setAlpha(1);
-    return;
-  }
-
-  // Get or generate vertices (LOD-aware cache key)
-  const cacheKey = lodCacheKey(stroke.id, lod);
-  let vertices = pathCache.getVertices(cacheKey);
-  let decodedPoints: StrokePoint[] | undefined;
-  if (!vertices) {
-    decodedPoints = decodePoints(stroke.pts);
-    let points = decodedPoints;
-    if (lod > 0) {
-      points = simplifyPoints(points, lod);
-    }
-    if (isItalicStyle(style)) {
-      const sides = generateItalicOutlineSides(points, buildItalicConfig(style));
-      if (sides) {
-        pathCache.setItalicSides(cacheKey, sides);
-        vertices = pathCache.getVertices(cacheKey);
-      }
-    } else {
-      const outline = generateOutline(points, style);
-      if (outline.length >= 2) {
-        pathCache.setOutline(cacheKey, outline);
-        vertices = pathCache.getVertices(cacheKey);
-      }
-    }
-  }
-
-  if (!vertices) return;
-
-  const color = resolveColor(style.color, useDarkColors);
-  const italic = pathCache.isItalic(cacheKey);
-
-  // Grain-enabled strokes rendered in isolation on offscreen target
-  if (grainCtx.pipeline !== "basic" && lod === 0 && penConfig.grain?.enabled) {
-    const baseStrength = grainCtx.strengthOverrides.get(style.pen) ?? penConfig.grain.strength;
-    const grainValue = style.grain ?? DEFAULT_GRAIN_VALUE;
-    const strength = grainToTextureStrength(baseStrength, grainValue);
-    if (strength > 0 && grainCtx.grainTexture) {
-      const anchorX = stroke.grainAnchor?.[0] ?? stroke.bbox[0];
-      const anchorY = stroke.grainAnchor?.[1] ?? stroke.bbox[1];
-      renderStrokeWithGrainEngine(
-        engine, vertices, italic, color, style.opacity, strength,
-        anchorX, anchorY, stroke.bbox,
-        grainCtx,
-      );
-      return;
-    }
-  }
-
-  if (penConfig.highlighterMode) {
-    engine.save();
-    engine.setAlpha(penConfig.baseOpacity);
-    engine.setBlendMode("multiply");
-    engine.setFillColor(color);
-    if (italic) {
-      engine.fillTriangles(vertices);
-    } else {
-      engine.fillPath(vertices);
-    }
-    engine.restore();
-  } else {
-    engine.setFillColor(color);
-    engine.setAlpha(style.opacity);
-    if (italic) {
-      engine.fillTriangles(vertices);
-    } else {
-      engine.fillPath(vertices);
-    }
-    engine.setAlpha(1);
-  }
-
-  // Fountain pen ink pooling (skip at high LOD, italic nib strokes, and basic pipeline)
-  if (grainCtx.pipeline !== "basic" && style.pen === "fountain" && lod === 0 && style.nibAngle == null) {
-    const points = decodedPoints ?? decodePoints(stroke.pts);
-    const pools = detectInkPools(points, style.width);
-    if (pools.length > 0) {
-      // Ink pooling uses raw Canvas 2D — skip in engine path for now.
-      // TODO: Implement engine-based ink pooling if needed.
-    }
-  }
-}
-
-/**
- * Render an ink-shaded fountain pen stroke using RenderEngine offscreen targets.
- */
-function renderInkShadedStrokeEngine(
-  engine: RenderEngine,
-  vertices: Float32Array,
-  italic: boolean,
-  color: string,
-  style: PenStyle,
-  penConfig: PenConfig,
-  points: readonly StrokePoint[],
-  presetConfig: InkPresetConfig,
-  stampCtx: EngineStampContext,
-  grainCtx: EngineGrainContext,
-  bbox: [number, number, number, number],
-): void {
-  const wm = style.width * 1.5;
-  const expandedBbox: [number, number, number, number] = [
-    bbox[0] - wm, bbox[1] - wm, bbox[2] + wm, bbox[3] + wm,
-  ];
-  const m = engine.getTransform();
-  const region = computeScreenBBox(expandedBbox, m, grainCtx.canvasWidth, grainCtx.canvasHeight);
-  if (!region) return;
-
-  const offscreen = engine.getOffscreen("inkShading", region.sw, region.sh);
-  engine.beginOffscreen(offscreen);
-  engine.clear();
-  engine.setTransform(m.a, m.b, m.c, m.d, m.e - region.sx, m.f - region.sy);
-
-  // 1. Deposit colored stamps via source-over
-  const stamps = computeAllInkStamps(points, style, penConfig, penConfig.inkStamp!, presetConfig);
-  const texture = stampCtx.getInkStampTexture(style.inkPreset, color);
-  engine.setAlpha(style.opacity);
-  const stampData = packInkStampsToFloat32(stamps);
-  engine.drawStamps(texture, stampData);
-
-  // 2. Mask to outline: keep stamps inside path, clear outside
-  if (italic) {
-    engine.maskToTriangles(vertices);
-  } else {
-    engine.maskToPath(vertices);
-  }
-
-  engine.endOffscreen();
-
-  // 3. Composite back
-  engine.save();
-  engine.setTransform(1, 0, 0, 1, 0, 0);
-  engine.drawOffscreen(offscreen, region.sx, region.sy, region.sw, region.sh);
-  engine.restore();
-
-  // Restore original tile transform — endOffscreen doesn't restore transforms,
-  // so without this the next stroke would use the offset transform.
-  engine.setTransform(m.a, m.b, m.c, m.d, m.e, m.f);
-}
-
-/**
- * Render a stroke with grain in isolation on an offscreen target via RenderEngine.
- */
-function renderStrokeWithGrainEngine(
-  engine: RenderEngine,
-  vertices: Float32Array,
-  italic: boolean,
-  color: string,
-  opacity: number,
-  grainStrength: number,
-  anchorX: number,
-  anchorY: number,
-  bbox: [number, number, number, number],
-  grainCtx: EngineGrainContext,
-): void {
-  const m = engine.getTransform();
-  const region = computeScreenBBox(bbox, m, grainCtx.canvasWidth, grainCtx.canvasHeight);
-  if (!region) return;
-
-  const offscreen = engine.getOffscreen("grainIsolation", region.sw, region.sh);
-  engine.beginOffscreen(offscreen);
-  engine.clear();
-  engine.setTransform(m.a, m.b, m.c, m.d, m.e - region.sx, m.f - region.sy);
-
-  // Draw stroke fill
-  engine.setFillColor(color);
-  engine.setAlpha(opacity);
-  if (italic) {
-    engine.fillTriangles(vertices);
-  } else {
-    engine.fillPath(vertices);
-  }
-  engine.setAlpha(1);
-
-  // Apply grain — destination-out eraser
-  if (grainCtx.grainTexture) {
-    engine.save();
-    engine.clipPath(vertices);
-    engine.applyGrain(grainCtx.grainTexture, anchorX, anchorY, grainStrength);
-    engine.restore();
-  }
-
-  engine.endOffscreen();
-
-  // Composite back
-  engine.save();
-  engine.setTransform(1, 0, 0, 1, 0, 0);
-  engine.drawOffscreen(offscreen, region.sx, region.sy, region.sw, region.sh);
-  engine.restore();
-
-  // Restore original tile transform — endOffscreen doesn't restore transforms,
-  // so without this the next stroke would use the offset transform.
-  engine.setTransform(m.a, m.b, m.c, m.d, m.e, m.f);
+  // Execute
+  const backend = new WebGLBackend(engine);
+  executeMaterial(backend, material, data, resources);
 }

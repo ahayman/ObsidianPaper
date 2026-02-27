@@ -3,7 +3,7 @@ module.exports = {
   preset: "ts-jest",
   testEnvironment: "jsdom",
   roots: ["<rootDir>/src"],
-  testMatch: ["**/__tests__/**/*.ts?(x)", "**/?(*.)+(spec|test).ts?(x)"],
+  testMatch: ["**/__tests__/**/*.test.ts?(x)", "**/?(*.)+(spec|test).ts?(x)"],
   transform: {
     "^.+\\.[jt]sx?$": [
       "ts-jest",
@@ -29,6 +29,7 @@ module.exports = {
   transformIgnorePatterns: [
     "node_modules/(?!(rbush|quickselect|simplex-noise)/)",
   ],
+  setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"],
   clearMocks: true,
   restoreMocks: true,
 };

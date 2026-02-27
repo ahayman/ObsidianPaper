@@ -1,4 +1,5 @@
 import type { PenType } from "../types";
+import type { OutlineStrategyId } from "./OutlineStrategy";
 
 export interface PenGrainConfig {
   enabled: boolean;
@@ -82,6 +83,8 @@ export interface PenConfig {
   inkStamp: InkStampConfig | null;
   /** Tilt-based scatter configuration, null = no tilt scatter */
   tiltConfig: PenTiltConfig | null;
+  /** Outline generation strategy. "standard" = perfect-freehand, "italic" = nib-projected. */
+  outlineStrategy: OutlineStrategyId;
 }
 
 export const PEN_CONFIGS: Record<PenType, PenConfig> = {
@@ -106,6 +109,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     stamp: null,
     inkStamp: null,
     tiltConfig: null,
+    outlineStrategy: "standard",
   },
 
   "felt-tip": {
@@ -129,6 +133,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     stamp: null,
     inkStamp: null,
     tiltConfig: { tolerance: 40, transitionRange: 20, crossAxisMultiplier: 2.0, alongAxisMultiplier: 1.3, opacityReduction: 0.2, maxSkewOffset: 0.3 },
+    outlineStrategy: "standard",
   },
 
   pencil: {
@@ -152,6 +157,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     stamp: { textureSize: 48, spacing: 0.5, rotationJitter: Math.PI / 12 },
     inkStamp: null,
     tiltConfig: { tolerance: 40, transitionRange: 20, crossAxisMultiplier: 3.5, alongAxisMultiplier: 1.5, opacityReduction: 0.4, maxSkewOffset: 0.4 },
+    outlineStrategy: "standard",
   },
 
   fountain: {
@@ -175,6 +181,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     stamp: null,
     inkStamp: { textureSize: 64, spacing: 0.15, stampSizeFraction: 2.0 },
     tiltConfig: null,
+    outlineStrategy: "italic",
   },
 
   highlighter: {
@@ -198,6 +205,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     stamp: null,
     inkStamp: null,
     tiltConfig: null,
+    outlineStrategy: "standard",
   },
 };
 

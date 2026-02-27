@@ -1,5 +1,4 @@
-import type { PaperDocument, RenderPipeline } from "../../types";
-import type { PenType } from "../../types";
+import type { PaperDocument } from "../../types";
 import type { SpatialIndex } from "../../spatial/SpatialIndex";
 import type { PageRect } from "../../document/PageLayout";
 import type { TileEntry } from "./TileTypes";
@@ -7,17 +6,16 @@ import { zoomBandBaseZoom } from "./TileTypes";
 import type { TileGrid } from "./TileGrid";
 import type { TileGridConfig } from "./TileTypes";
 import { StrokePathCache } from "../../stroke/OutlineGenerator";
-import { GrainTextureGenerator } from "../GrainTextureGenerator";
 import { selectLodLevel } from "../../stroke/StrokeSimplifier";
 import { resolvePageBackground } from "../../color/ColorUtils";
 import { renderStrokeToContext } from "../StrokeRenderCore";
 import { renderStrokeToEngine } from "../StrokeRenderCore";
 import type { GrainRenderContext, StampRenderContext, EngineGrainContext, EngineStampContext } from "../StrokeRenderCore";
-import type { StampTextureManager } from "../../stamp/StampTextureManager";
 import { InkStampTextureManager } from "../../stamp/InkStampTextureManager";
 import { renderDeskFill, renderPageBackground, renderDeskFillEngine, renderPageBackgroundEngine } from "../BackgroundRenderer";
 import type { RenderEngine, TextureHandle } from "../engine/RenderEngine";
 import { Canvas2DEngine } from "../engine/Canvas2DEngine";
+import type { RenderResources } from "../../rendering/RenderResources";
 
 function bboxOverlaps(
   a: [number, number, number, number],
@@ -34,13 +32,11 @@ export class TileRenderer {
   private grid: TileGrid;
   private config: TileGridConfig;
   private pathCache: StrokePathCache;
-  private grainGenerator: GrainTextureGenerator | null = null;
-  private grainStrengthOverrides = new Map<PenType, number>();
-  private pipeline: RenderPipeline = "basic";
   private grainOffscreen: OffscreenCanvas | null = null;
   private grainOffscreenCtx: OffscreenCanvasRenderingContext2D | null = null;
-  private stampManager: StampTextureManager | null = null;
-  private inkStampManager: InkStampTextureManager | null = null;
+
+  /** Shared rendering resources (grain, stamps, pipeline). */
+  private resources: RenderResources;
 
   /** When true, tile rendering uses the RenderEngine abstraction. */
   private useEngine: boolean;
@@ -53,31 +49,21 @@ export class TileRenderer {
     this.config = config;
     this.pathCache = pathCache;
     this.useEngine = useEngine;
+    this.resources = {
+      grainGenerator: null,
+      grainStrengthOverrides: new Map(),
+      stampManager: null,
+      inkStampManager: null,
+      pipeline: "basic",
+    };
   }
 
-  initGrain(): void {
-    this.grainGenerator = new GrainTextureGenerator();
-    this.grainGenerator.initialize();
-  }
-
-  setGrainGenerator(generator: GrainTextureGenerator | null): void {
-    this.grainGenerator = generator;
-  }
-
-  setGrainStrength(penType: PenType, strength: number): void {
-    this.grainStrengthOverrides.set(penType, strength);
-  }
-
-  setPipeline(pipeline: RenderPipeline): void {
-    this.pipeline = pipeline;
-  }
-
-  setStampManager(manager: StampTextureManager | null): void {
-    this.stampManager = manager;
-  }
-
-  setInkStampManager(manager: InkStampTextureManager | null): void {
-    this.inkStampManager = manager;
+  /**
+   * Set the shared render resources. The TileRenderer reads from this
+   * reference directly — no per-field setters needed.
+   */
+  setResources(resources: RenderResources): void {
+    this.resources = resources;
   }
 
   /**
@@ -141,14 +127,14 @@ export class TileRenderer {
 
     const strokeIdSet = new Set(strokeIds);
     const grainCtx = this.getGrainRenderContext(tilePhysical, tilePhysical);
-    const stampCtx: StampRenderContext | null = this.stampManager
+    const stampCtx: StampRenderContext | null = this.resources.stampManager
       ? {
-          getCache: (gv) => this.stampManager!.getCache(gv),
+          getCache: (gv) => this.resources.stampManager!.getCache(gv),
           getInkCache: (presetId) => {
-            if (!this.inkStampManager) {
-              this.inkStampManager = new InkStampTextureManager();
+            if (!this.resources.inkStampManager) {
+              this.resources.inkStampManager = new InkStampTextureManager();
             }
-            return this.inkStampManager.getCache(presetId);
+            return this.resources.inkStampManager.getCache(presetId);
           },
         }
       : null;
@@ -289,9 +275,9 @@ export class TileRenderer {
 
   private getGrainRenderContext(canvasWidth: number, canvasHeight: number): GrainRenderContext {
     return {
-      generator: this.grainGenerator,
-      strengthOverrides: this.grainStrengthOverrides,
-      pipeline: this.pipeline,
+      generator: this.resources.grainGenerator,
+      strengthOverrides: this.resources.grainStrengthOverrides,
+      pipeline: this.resources.pipeline,
       getOffscreen: (minW: number, minH: number) => {
         const ctx = this.ensureGrainOffscreen(minW, minH);
         if (!ctx || !this.grainOffscreen) return null;
@@ -305,17 +291,17 @@ export class TileRenderer {
   private getEngineGrainContext(canvasWidth: number, canvasHeight: number): EngineGrainContext {
     return {
       grainTexture: this.engineGrainTexture,
-      strengthOverrides: this.grainStrengthOverrides,
-      pipeline: this.pipeline,
+      strengthOverrides: this.resources.grainStrengthOverrides,
+      pipeline: this.resources.pipeline,
       canvasWidth,
       canvasHeight,
     };
   }
 
   private getEngineStampContext(): EngineStampContext | null {
-    if (!this.stampManager || !this.engine) return null;
+    if (!this.resources.stampManager || !this.engine) return null;
     const engine = this.engine;
-    const stampManager = this.stampManager;
+    const stampManager = this.resources.stampManager;
     // Cache of engine textures created from stamp image sources
     const textureCache = new Map<string, TextureHandle>();
     return {
@@ -331,13 +317,13 @@ export class TileRenderer {
         return tex;
       },
       getInkStampTexture: (presetId: string | undefined, color: string): TextureHandle => {
-        if (!this.inkStampManager) {
-          this.inkStampManager = new InkStampTextureManager();
+        if (!this.resources.inkStampManager) {
+          this.resources.inkStampManager = new InkStampTextureManager();
         }
         const key = `ink-${presetId ?? "default"}-${color}`;
         let tex = textureCache.get(key);
         if (!tex) {
-          const cache = this.inkStampManager.getCache(presetId);
+          const cache = this.resources.inkStampManager.getCache(presetId);
           const colored = cache.getColored(color);
           tex = engine.createTexture(colored);
           textureCache.set(key, tex);
@@ -366,8 +352,7 @@ export class TileRenderer {
   }
 
   destroy(): void {
-    this.grainGenerator?.destroy();
-    this.grainGenerator = null;
+    // Note: grainGenerator is NOT owned by TileRenderer — don't destroy it.
     this.grainOffscreen = null;
     this.grainOffscreenCtx = null;
     if (this.engineGrainTexture && this.engine) {
