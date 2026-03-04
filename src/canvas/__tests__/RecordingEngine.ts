@@ -269,6 +269,13 @@ export class RecordingEngine implements RenderEngine {
     });
   }
 
+  drawMarkerStamps(texture: TextureHandle, data: Float32Array): void {
+    this.calls.push({
+      method: "drawMarkerStamps",
+      args: [{ w: texture.width, h: texture.height }, Array.from(data)],
+    });
+  }
+
   // --- Grain texture ---
 
   applyGrain(
@@ -276,10 +283,11 @@ export class RecordingEngine implements RenderEngine {
     offsetX: number,
     offsetY: number,
     strength: number,
+    pixelAligned?: boolean,
   ): void {
     this.calls.push({
       method: "applyGrain",
-      args: [{ w: texture.width, h: texture.height }, offsetX, offsetY, strength],
+      args: [{ w: texture.width, h: texture.height }, offsetX, offsetY, strength, ...(pixelAligned ? [true] : [])],
     });
   }
 

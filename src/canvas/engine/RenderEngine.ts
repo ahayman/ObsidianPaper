@@ -156,6 +156,13 @@ export interface RenderEngine {
    */
   drawStampDiscs(color: string, data: Float32Array): void;
 
+  /**
+   * Draw a batch of rotated rectangular stamps (marker/felt-tip).
+   * Data is a Float32Array of [x, y, width, height, rotation, opacity] tuples.
+   * WebGL uses instanced drawing with per-stamp rotation; Canvas2D uses save/rotate/drawImage.
+   */
+  drawMarkerStamps(texture: TextureHandle, data: Float32Array): void;
+
   // --- Grain texture ---
   /**
    * Apply a grain texture as an eraser pattern over the current content.
@@ -167,6 +174,7 @@ export interface RenderEngine {
     offsetX: number,
     offsetY: number,
     strength: number,
+    pixelAligned?: boolean,
   ): void;
 
   // --- Texture management ---

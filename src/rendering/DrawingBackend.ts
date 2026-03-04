@@ -80,17 +80,26 @@ export interface DrawingBackend {
    */
   drawStamps(texture: TextureRef, data: Float32Array): void;
 
+  /**
+   * Draw a batch of rotated rectangular stamps (marker/felt-tip).
+   * Data: Float32Array of [x, y, width, height, rotation, opacity] tuples.
+   */
+  drawMarkerStamps(texture: TextureRef, data: Float32Array): void;
+
   // ── Grain texture ────────────────────────────────────────
 
   /**
    * Apply a grain texture as an eraser pattern over the current content.
    * Uses destination-out compositing.
+   * When pixelAligned is true, the texture tiles at 1:1 pixel resolution
+   * (used for fiber overlay). Default false uses grain-appropriate scaling.
    */
   applyGrain(
     texture: TextureRef,
     offsetX: number,
     offsetY: number,
     strength: number,
+    pixelAligned?: boolean,
   ): void;
 
   // ── Masking ──────────────────────────────────────────────

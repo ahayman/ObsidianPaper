@@ -106,6 +106,37 @@ void main() {
 }
 `;
 
+// ─── Marker Stamp Program (Instanced, Rotated) ─────────────────────
+// Draws rotated rectangular textured quads for felt-tip marker stamps.
+// Per-instance data: [x, y, width, height, rotation, opacity] (6 floats, stride 24).
+// Uses 3 attribute locations for the 3 vec2 components.
+
+export const MARKER_STAMP_VERT = `#version 300 es
+precision highp float;
+uniform mat3 u_transform;
+in vec2 a_position;      // unit quad [-0.5, 0.5]
+in vec2 a_texcoord;      // [0, 1] UVs
+in vec2 a_stampPos;      // [x, y] world position (per instance)
+in vec2 a_stampSize;     // [width, height] (per instance)
+in vec2 a_stampRotOp;    // [rotation, opacity] (per instance)
+out vec2 v_texcoord;
+out float v_opacity;
+void main() {
+  float rot = a_stampRotOp.x;
+  float c = cos(rot);
+  float s = sin(rot);
+  vec2 scaled = a_position * a_stampSize;
+  vec2 rotated = vec2(scaled.x * c - scaled.y * s, scaled.x * s + scaled.y * c);
+  vec2 worldPos = a_stampPos + rotated;
+  vec3 pos = u_transform * vec3(worldPos, 1.0);
+  gl_Position = vec4(pos.xy, 0.0, 1.0);
+  v_texcoord = a_texcoord;
+  v_opacity = a_stampRotOp.y;
+}
+`;
+
+// Reuses STAMP_FRAG for the fragment shader (same texture sampling + opacity).
+
 // ─── Grain Program ──────────────────────────────────────────────────
 // Fullscreen quad with tiled grain texture. Used with destination-out blend.
 

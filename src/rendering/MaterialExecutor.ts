@@ -36,11 +36,19 @@ export interface StrokeRenderData {
   /** Packed stamp data: Float32Array of [x, y, size, opacity] tuples. */
   stampData?: Float32Array;
 
+  // ── Marker stamp data (populated when body is markerStamps) ──
+  /** Packed marker stamp data: Float32Array of [x, y, width, height, rotation, opacity] tuples. */
+  markerStampData?: Float32Array;
+
   // ── Grain data (populated when effects include grain) ──
   /** Grain texture anchor point [x, y] in world space. */
   grainAnchor?: [number, number];
   /** Computed grain texture strength. */
   grainStrength?: number;
+
+  // ── Fiber data (populated when effects include fiberOverlay) ──
+  /** Fiber texture anchor [x, y] in world space. Per-stroke offset for unique patterns. */
+  fiberAnchor?: [number, number];
 
   // ── Stroke dimensions (for offscreen bbox expansion) ──
   /** Stroke width for bbox expansion in ink shading. */
@@ -53,6 +61,10 @@ export interface ExecutorResources {
   grainTexture: TextureRef | null;
   /** Ink stamp texture for drawStamps() in ink shading body. Null if not available. */
   inkStampTexture: TextureRef | null;
+  /** Marker stamp texture for drawMarkerStamps(). Null if not available. */
+  markerStampTexture: TextureRef | null;
+  /** Fiber overlay texture for felt-tip fiber streaks. Null if not available. */
+  fiberOverlayTexture: TextureRef | null;
   /** Canvas width in physical pixels (for screen bbox computation). */
   canvasWidth: number;
   /** Canvas height in physical pixels (for screen bbox computation). */
@@ -88,7 +100,9 @@ export function executeMaterial(
     );
     if (!screenBBox) return; // Fully off-screen
 
-    const offscreenId = body.type === "inkShading" ? "inkShading" : "grainIsolation";
+    const offscreenId = body.type === "inkShading" ? "inkShading"
+      : body.type === "markerStamps" ? "markerStamps"
+      : "grainIsolation";
     offscreen = backend.getOffscreen(offscreenId, screenBBox.sw, screenBBox.sh);
     backend.beginOffscreen(offscreen);
     backend.clear();
@@ -111,13 +125,16 @@ export function executeMaterial(
     case "inkShading":
       renderInkShadingBody(backend, data, bodyOpacity, resources);
       break;
+    case "markerStamps":
+      renderMarkerStampsBody(backend, data, bodyOpacity, resources);
+      break;
     default:
       assertNever(body);
   }
 
   // ── Apply effects ──────────────────────────────────────
   for (const effect of effects) {
-    applyEffect(backend, effect, data, resources);
+    applyEffect(backend, effect, data, resources, screenBBox);
   }
 
   // ── Close isolation ────────────────────────────────────
@@ -187,6 +204,17 @@ function renderInkShadingBody(
   backend.drawStamps(resources.inkStampTexture, data.stampData);
 }
 
+function renderMarkerStampsBody(
+  backend: DrawingBackend,
+  data: StrokeRenderData,
+  opacity: number,
+  resources: ExecutorResources,
+): void {
+  if (!data.markerStampData || !resources.markerStampTexture) return;
+  backend.setAlpha(opacity);
+  backend.drawMarkerStamps(resources.markerStampTexture, data.markerStampData);
+}
+
 // ─── Effect Applicators ─────────────────────────────────────
 
 function applyEffect(
@@ -194,6 +222,7 @@ function applyEffect(
   effect: MaterialEffect,
   data: StrokeRenderData,
   resources: ExecutorResources,
+  screenBBox: { sx: number; sy: number; sw: number; sh: number } | null,
 ): void {
   switch (effect.type) {
     case "outlineMask":
@@ -201,6 +230,9 @@ function applyEffect(
       break;
     case "grain":
       applyGrain(backend, data, resources);
+      break;
+    case "fiberOverlay":
+      applyFiberOverlay(backend, data, resources, effect.strength);
       break;
     case "inkPooling":
       // Ink pooling uses raw Canvas2D radial gradients.
@@ -237,6 +269,27 @@ function applyGrain(
     data.grainStrength,
   );
   backend.restore();
+}
+
+/**
+ * Apply fiber overlay texture via destination-out to add visible felt-tip streaks.
+ * Reuses the applyGrain mechanism (same tiled destination-out operation).
+ * Uses per-stroke fiberAnchor (world-space bbox origin) so each stroke gets
+ * a unique fiber pattern — overlapping strokes layer visibly instead of
+ * producing identical textures. pixelAligned ensures 1:1 pixel tiling in WebGL.
+ */
+function applyFiberOverlay(
+  backend: DrawingBackend,
+  data: StrokeRenderData,
+  resources: ExecutorResources,
+  strength: number,
+): void {
+  if (!resources.fiberOverlayTexture || strength <= 0) return;
+  // Per-stroke anchor: world-space offset produces unique pattern per stroke,
+  // enabling proper layering when strokes overlap.
+  const offsetX = data.fiberAnchor?.[0] ?? 0;
+  const offsetY = data.fiberAnchor?.[1] ?? 0;
+  backend.applyGrain(resources.fiberOverlayTexture, offsetX, offsetY, strength, true);
 }
 
 // ─── Helpers ────────────────────────────────────────────────

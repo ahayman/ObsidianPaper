@@ -5,6 +5,7 @@
 
 import type { StampParams } from "./StampRenderer";
 import type { InkStampParams } from "./InkStampRenderer";
+import type { MarkerStampParams } from "./MarkerStampRenderer";
 
 /**
  * Pack pencil stamps into a Float32Array for engine consumption.
@@ -40,6 +41,31 @@ export function packInkStampsToFloat32(stamps: readonly InkStampParams[]): Float
     data[i * 4 + 1] = stamps[i].y;
     data[i * 4 + 2] = stamps[i].size;
     data[i * 4 + 3] = stamps[i].opacity;
+  }
+  return data;
+}
+
+/**
+ * Pack marker stamps into a Float32Array for engine consumption.
+ * Layout: [x, y, width, height, rotation, opacity] per stamp (6 floats per stamp).
+ */
+export function packMarkerStampsToFloat32(stamps: readonly MarkerStampParams[]): Float32Array {
+  let count = 0;
+  for (let i = 0; i < stamps.length; i++) {
+    if (stamps[i].opacity >= 0.05) count++;
+  }
+
+  const data = new Float32Array(count * 6);
+  let j = 0;
+  for (let i = 0; i < stamps.length; i++) {
+    if (stamps[i].opacity < 0.05) continue;
+    data[j] = stamps[i].x;
+    data[j + 1] = stamps[i].y;
+    data[j + 2] = stamps[i].width;
+    data[j + 3] = stamps[i].height;
+    data[j + 4] = stamps[i].rotation;
+    data[j + 5] = stamps[i].opacity;
+    j += 6;
   }
   return data;
 }

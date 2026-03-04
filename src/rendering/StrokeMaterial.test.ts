@@ -105,10 +105,19 @@ describe("resolveMaterial", () => {
       expect(m.blending).toBe("source-over");
     });
 
-    it("advanced LOD 0: same (no stamps/grain)", () => {
+    it("advanced LOD 0: markerStamps body with isolation, fiber overlay, and outline mask", () => {
       const m = resolveMaterial(config, feltTipStyle, "advanced", 0);
+      expect(m.body.type).toBe("markerStamps");
+      expect(m.isolation).toBe(true);
+      expect(m.effects).toEqual([
+        { type: "fiberOverlay", strength: 0.7 * config.markerStamp!.fiberDensity },
+        { type: "outlineMask" },
+      ]);
+    });
+
+    it("advanced LOD > 0: falls back to fill", () => {
+      const m = resolveMaterial(config, feltTipStyle, "advanced", 1);
       expect(m.body.type).toBe("fill");
-      expect(m.effects).toEqual([]);
     });
   });
 

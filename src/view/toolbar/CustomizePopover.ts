@@ -47,6 +47,9 @@ export class CustomizePopover {
   private grainSection: HTMLElement | null = null;
   private grainSlider: HTMLInputElement | null = null;
   private grainValue: HTMLElement | null = null;
+  private inkDepletionSection: HTMLElement | null = null;
+  private inkDepletionSlider: HTMLInputElement | null = null;
+  private inkDepletionValue: HTMLElement | null = null;
   private nibSection: HTMLElement | null = null;
   private presetActionsSection: HTMLElement | null = null;
   private widthSlider: HTMLInputElement | null = null;
@@ -173,6 +176,29 @@ export class CustomizePopover {
 
     this.updateInkPresetVisibility();
 
+    // 5c. Ink Depletion (felt-tip only)
+    this.inkDepletionSection = content.createEl("div", { cls: "paper-popover__section paper-popover__ink-depletion" });
+    const depletionRow = this.inkDepletionSection.createEl("div", { cls: "paper-popover__slider-row" });
+    depletionRow.createEl("span", { cls: "paper-popover__slider-label", text: "Ink depletion" });
+    const depletionSlider = depletionRow.createEl("input", {
+      cls: "paper-popover__slider",
+      type: "range",
+      attr: { min: "0", max: "1", step: "0.05", value: String(this.state.inkDepletion) },
+    });
+    this.inkDepletionSlider = depletionSlider;
+    const depletionHints = depletionRow.createEl("span", { cls: "paper-popover__slider-value" });
+    depletionHints.textContent = this.state.inkDepletion.toFixed(2);
+    this.inkDepletionValue = depletionHints;
+
+    depletionSlider.addEventListener("input", () => {
+      const v = parseFloat(depletionSlider.value);
+      this.state.inkDepletion = v;
+      this.inkDepletionValue!.textContent = v.toFixed(2);
+      this.callbacks.onStateChange({ inkDepletion: v });
+    });
+
+    this.updateInkDepletionVisibility();
+
     // 6. Nib Settings (fountain only)
     this.nibSection = content.createEl("div", { cls: "paper-popover__section paper-popover__nib" });
     this.nibSection.createEl("div", { cls: "paper-popover__section-title", text: "Nib settings" });
@@ -248,6 +274,7 @@ export class CustomizePopover {
         this.state.penType = pt.type;
         this.updateGrainVisibility();
         this.updateInkPresetVisibility();
+        this.updateInkDepletionVisibility();
         this.updateNibVisibility();
         this.callbacks.onStateChange({ penType: pt.type });
       });
@@ -339,6 +366,15 @@ export class CustomizePopover {
     const penConfig = getPenConfig(this.state.penType);
     const hasInkStamp = penConfig.inkStamp !== null;
     this.inkPresetSection.toggleClass("is-hidden", !hasInkStamp);
+  }
+
+  // ─── Ink Depletion Visibility ─────────────────────────────
+
+  private updateInkDepletionVisibility(): void {
+    if (!this.inkDepletionSection) return;
+    const penConfig = getPenConfig(this.state.penType);
+    const hasMarkerStamp = penConfig.markerStamp !== null;
+    this.inkDepletionSection.toggleClass("is-hidden", !hasMarkerStamp);
   }
 
   // ─── Nib Visibility ────────────────────────────────────────

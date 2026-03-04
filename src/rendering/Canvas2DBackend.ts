@@ -148,6 +148,26 @@ export class Canvas2DBackend implements DrawingBackend {
     }
   }
 
+  drawMarkerStamps(texture: TextureRef, data: Float32Array): void {
+    const tex = texture as Canvas2DTextureRef;
+    const ctx = this.activeCtx;
+    for (let i = 0; i < data.length; i += 6) {
+      const x = data[i]!;
+      const y = data[i + 1]!;
+      const w = data[i + 2]!;
+      const h = data[i + 3]!;
+      const rotation = data[i + 4]!;
+      const opacity = data[i + 5]!;
+      if (opacity < 0.05) continue;
+      ctx.save();
+      ctx.globalAlpha = opacity;
+      ctx.translate(x, y);
+      ctx.rotate(rotation);
+      ctx.drawImage(tex.source, -w * 0.5, -h * 0.5, w, h);
+      ctx.restore();
+    }
+  }
+
   // ── Grain texture ────────────────────────────────────────
 
   applyGrain(
@@ -155,6 +175,7 @@ export class Canvas2DBackend implements DrawingBackend {
     offsetX: number,
     offsetY: number,
     strength: number,
+    _pixelAligned?: boolean,
   ): void {
     const tex = texture as Canvas2DTextureRef;
     const ctx = this.activeCtx;

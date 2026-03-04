@@ -107,6 +107,10 @@ export class PresetManager {
     if (penConfig.inkStamp) {
       preset.inkPreset = state.inkPreset;
     }
+    // Include ink depletion for marker stamps (felt-tip)
+    if (penConfig.markerStamp) {
+      preset.inkDepletion = state.inkDepletion;
+    }
     if (state.nibAngle !== undefined) preset.nibAngle = state.nibAngle;
     if (state.nibThickness !== undefined) preset.nibThickness = state.nibThickness;
     if (state.nibPressure !== undefined) preset.nibPressure = state.nibPressure;
@@ -133,6 +137,7 @@ export class PresetManager {
         (p.nibPressure ?? state.nibPressure) === state.nibPressure &&
         (p.grain ?? DEFAULT_GRAIN_VALUE) === state.grain &&
         (p.inkPreset ?? "standard") === state.inkPreset &&
+        (p.inkDepletion ?? 0) === state.inkDepletion &&
         (p.useBarrelRotation ?? false) === state.useBarrelRotation
       ) {
         return p.id;

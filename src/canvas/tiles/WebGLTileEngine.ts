@@ -17,9 +17,10 @@ import type { GLTileEntry } from "./WebGLTileCache";
 import { StrokePathCache } from "../../stroke/OutlineGenerator";
 import { selectLodLevel } from "../../stroke/StrokeSimplifier";
 import { resolvePageBackground } from "../../color/ColorUtils";
-import { renderStrokeToEngine } from "../StrokeRenderCore";
+import { renderStrokeToEngine, getFiberOverlay } from "../StrokeRenderCore";
 import type { EngineGrainContext, EngineStampContext } from "../StrokeRenderCore";
 import { InkStampTextureManager } from "../../stamp/InkStampTextureManager";
+import { MarkerStampTextureManager } from "../../stamp/MarkerStampTextureManager";
 import { renderDeskFillEngine, renderPageBackgroundEngine } from "../BackgroundRenderer";
 import type { TextureHandle } from "../engine/RenderEngine";
 import { resolveMSAA } from "../engine/GLTextures";
@@ -42,6 +43,8 @@ export class WebGLTileEngine {
 
   // Grain texture handle for engine-based rendering
   private engineGrainTexture: TextureHandle | null = null;
+  // Fiber overlay texture handle for felt-tip fiber streaks
+  private engineFiberTexture: TextureHandle | null = null;
 
   // Stamps — persistent across tile renders (key WebGL advantage)
   private stampTextureCache = new Map<string, TextureHandle>();
@@ -60,6 +63,7 @@ export class WebGLTileEngine {
       grainStrengthOverrides: new Map(),
       stampManager: null,
       inkStampManager: null,
+      markerStampManager: null,
       pipeline: "basic",
     };
     this.setupContextLoss(canvas);
@@ -228,8 +232,15 @@ export class WebGLTileEngine {
   // ─── Internal ──────────────────────────────────────────────
 
   private getEngineGrainContext(canvasWidth: number, canvasHeight: number): EngineGrainContext {
+    // Lazily create fiber overlay texture for felt-tip fiber streaks
+    if (!this.engineFiberTexture && this.resources.markerStampManager && this.engine.isValid()) {
+      const fiberCanvas = getFiberOverlay();
+      this.engineFiberTexture = this.engine.createGrainTexture(fiberCanvas);
+    }
+
     return {
       grainTexture: this.engineGrainTexture,
+      fiberOverlayTexture: this.engineFiberTexture,
       strengthOverrides: this.resources.grainStrengthOverrides,
       pipeline: this.resources.pipeline,
       canvasWidth,
@@ -238,7 +249,9 @@ export class WebGLTileEngine {
   }
 
   private getEngineStampContext(): EngineStampContext | null {
-    if (!this.resources.stampManager || !this.engine.isValid()) return null;
+    if (!this.engine.isValid()) return null;
+    // Need stamp context if any stamp-based pen is available
+    if (!this.resources.stampManager && !this.resources.markerStampManager) return null;
     const engine = this.engine;
     const stampManager = this.resources.stampManager;
     const textureCache = this.stampTextureCache;
@@ -246,6 +259,7 @@ export class WebGLTileEngine {
 
     return {
       getStampTexture: (grainValue: number, color: string): TextureHandle => {
+        if (!stampManager) return { width: 0, height: 0 } as TextureHandle;
         const key = `stamp-${grainValue}-${color}`;
         let tex = textureCache.get(key);
         if (!tex) {
@@ -271,6 +285,22 @@ export class WebGLTileEngine {
         }
         return tex;
       },
+      getMarkerStampTexture: (color: string): TextureHandle | null => {
+        let mgr = resources.markerStampManager;
+        if (!mgr) {
+          mgr = new MarkerStampTextureManager();
+          resources.markerStampManager = mgr;
+        }
+        const key = `marker-${color}`;
+        let tex = textureCache.get(key);
+        if (!tex) {
+          const cache = mgr.getCache();
+          const colored = cache.getColored(color);
+          tex = engine.createTexture(colored);
+          textureCache.set(key, tex);
+        }
+        return tex;
+      },
     };
   }
 
@@ -287,6 +317,7 @@ export class WebGLTileEngine {
       e.preventDefault();
       this.valid = false;
       this.engineGrainTexture = null;
+      this.engineFiberTexture = null;
       this.stampTextureCache.clear();
     });
 
@@ -301,6 +332,10 @@ export class WebGLTileEngine {
     if (this.engineGrainTexture && this.engine.isValid()) {
       this.engine.deleteTexture(this.engineGrainTexture);
       this.engineGrainTexture = null;
+    }
+    if (this.engineFiberTexture && this.engine.isValid()) {
+      this.engine.deleteTexture(this.engineFiberTexture);
+      this.engineFiberTexture = null;
     }
     this.engine.destroy();
   }

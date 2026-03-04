@@ -27,6 +27,7 @@ import {
   SOLID_VERT, SOLID_FRAG,
   TEXTURE_VERT, TEXTURE_FRAG,
   STAMP_VERT, STAMP_FRAG, STAMP_DISC_FRAG,
+  MARKER_STAMP_VERT,
   GRAIN_VERT, GRAIN_FRAG,
   CIRCLE_VERT, CIRCLE_FRAG,
   LINE_VERT, LINE_FRAG,
@@ -112,6 +113,7 @@ export class WebGL2Engine implements RenderEngine {
   private textureProg!: ShaderProgram;
   private stampProg!: ShaderProgram;
   private stampDiscProg!: ShaderProgram;
+  private markerStampProg!: ShaderProgram;
   private grainProg!: ShaderProgram;
   private circleProg!: ShaderProgram;
   private lineProg!: ShaderProgram;
@@ -131,6 +133,7 @@ export class WebGL2Engine implements RenderEngine {
   private solidVAO!: WebGLVertexArrayObject;
   private textureVAO!: WebGLVertexArrayObject;
   private stampVAO!: WebGLVertexArrayObject;
+  private markerStampVAO!: WebGLVertexArrayObject;
   private grainVAO!: WebGLVertexArrayObject;
   private circleVAO!: WebGLVertexArrayObject;
   private lineVAO!: WebGLVertexArrayObject;
@@ -148,7 +151,8 @@ export class WebGL2Engine implements RenderEngine {
   private offscreens = new Map<string, GLOffscreen>();
   private fboStack: { fbo: WebGLFramebuffer; viewport: [number, number, number, number]; projection: Float32Array; scissor: [number, number, number, number] | null; msaa: GLMSAAOffscreenTarget | null }[] = [];
 
-  /** Current viewport height — used for scissor Y-flip in clipRect. */
+  /** Current viewport dimensions — used for scissor Y-flip and applyGrain scale. */
+  private viewportWidth: number;
   private viewportHeight: number;
 
   constructor(canvas: HTMLCanvasElement, options?: { preserveDrawingBuffer?: boolean }) {
@@ -167,6 +171,7 @@ export class WebGL2Engine implements RenderEngine {
 
     this.currentTransform = mat3Identity();
     this.projection = mat3Projection(canvas.width, canvas.height);
+    this.viewportWidth = canvas.width;
     this.viewportHeight = canvas.height;
     this.initResources();
     this.setupContextLoss();
@@ -227,6 +232,7 @@ export class WebGL2Engine implements RenderEngine {
     this.canvas.width = width;
     this.canvas.height = height;
     this.projection = mat3Projection(width, height);
+    this.viewportWidth = width;
     this.viewportHeight = height;
     this.gl.viewport(0, 0, width, height);
   }
@@ -239,6 +245,7 @@ export class WebGL2Engine implements RenderEngine {
   setViewport(width: number, height: number, offsetY = 0): void {
     this.gl.viewport(0, offsetY, width, height);
     this.projection = mat3Projection(width, height);
+    this.viewportWidth = width;
     this.viewportHeight = height;
   }
 
@@ -870,6 +877,7 @@ export class WebGL2Engine implements RenderEngine {
     this.state.bindFramebuffer(renderFBO);
     gl.viewport(0, 0, t.width, t.height);
     this.projection = mat3Projection(t.width, t.height);
+    this.viewportWidth = t.width;
     this.viewportHeight = t.height;
   }
 
@@ -888,7 +896,8 @@ export class WebGL2Engine implements RenderEngine {
     this.state.bindFramebuffer(prev.fbo);
     gl.viewport(prev.viewport[0], prev.viewport[1], prev.viewport[2], prev.viewport[3]);
     this.projection = prev.projection;
-    this.viewportHeight = prev.viewport[3]; // Restore viewport height for scissor Y-flip
+    this.viewportWidth = prev.viewport[2];
+    this.viewportHeight = prev.viewport[3];
 
     // Restore scissor state
     if (prev.scissor) {
@@ -1027,6 +1036,64 @@ export class WebGL2Engine implements RenderEngine {
     gl.vertexAttribDivisor(instanceLoc, 0);
   }
 
+  drawMarkerStamps(texture: TextureHandle, data: Float32Array): void {
+    if (data.length === 0) return;
+    const gl = this.gl;
+    const prog = this.markerStampProg;
+    const tex = texture as GLTextureHandle;
+    const STRIDE = 6; // [x, y, width, height, rotation, opacity]
+    const STRIDE_BYTES = STRIDE * 4; // 24 bytes
+    const stampCount = data.length / STRIDE;
+
+    const combined = mat3Multiply(this.projection, this.currentTransform);
+
+    this.state.useProgram(prog.program);
+    gl.uniformMatrix3fv(prog.uniforms.get("u_transform")!, false, combined);
+    gl.uniform1f(prog.uniforms.get("u_alpha")!, this.currentAlpha);
+    gl.uniform1i(prog.uniforms.get("u_texture")!, 0);
+
+    this.state.bindTexture(tex.glTexture);
+    this.state.bindVAO(this.markerStampVAO);
+
+    // Upload instance data
+    this.instanceBuffer.upload(data);
+
+    // Bind 3 instance attributes from the interleaved buffer
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.instanceBuffer.buffer);
+
+    const posLoc = prog.attributes.get("a_stampPos")!;
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, STRIDE_BYTES, 0);
+    gl.enableVertexAttribArray(posLoc);
+    gl.vertexAttribDivisor(posLoc, 1);
+
+    const sizeLoc = prog.attributes.get("a_stampSize")!;
+    gl.vertexAttribPointer(sizeLoc, 2, gl.FLOAT, false, STRIDE_BYTES, 8);
+    gl.enableVertexAttribArray(sizeLoc);
+    gl.vertexAttribDivisor(sizeLoc, 1);
+
+    const rotOpLoc = prog.attributes.get("a_stampRotOp")!;
+    gl.vertexAttribPointer(rotOpLoc, 2, gl.FLOAT, false, STRIDE_BYTES, 16);
+    gl.enableVertexAttribArray(rotOpLoc);
+    gl.vertexAttribDivisor(rotOpLoc, 1);
+
+    // Bind unit quad
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.unitQuadVBO);
+    const quadPosLoc = prog.attributes.get("a_position")!;
+    const tcLoc = prog.attributes.get("a_texcoord")!;
+    gl.vertexAttribPointer(quadPosLoc, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(quadPosLoc);
+    gl.vertexAttribPointer(tcLoc, 2, gl.FLOAT, false, 16, 8);
+    gl.enableVertexAttribArray(tcLoc);
+
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.unitQuadIBO);
+    gl.drawElementsInstanced(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0, stampCount);
+
+    // Clean up divisors
+    gl.vertexAttribDivisor(posLoc, 0);
+    gl.vertexAttribDivisor(sizeLoc, 0);
+    gl.vertexAttribDivisor(rotOpLoc, 0);
+  }
+
   // --- Grain texture ---
 
   applyGrain(
@@ -1034,6 +1101,7 @@ export class WebGL2Engine implements RenderEngine {
     offsetX: number,
     offsetY: number,
     strength: number,
+    pixelAligned?: boolean,
   ): void {
     const gl = this.gl;
     const prog = this.grainProg;
@@ -1045,8 +1113,19 @@ export class WebGL2Engine implements RenderEngine {
 
     this.state.useProgram(prog.program);
     gl.uniform1f(prog.uniforms.get("u_strength")!, strength);
-    gl.uniform2f(prog.uniforms.get("u_offset")!, offsetX * 0.3, offsetY * 0.3);
-    gl.uniform2f(prog.uniforms.get("u_scale")!, 0.3, 0.3);
+
+    // pixelAligned: compute UV scale from viewport/texture for 1:1 pixel tiling.
+    // Default (grain): hardcoded 0.3 scale for large/soft grain rendering.
+    let scaleX: number, scaleY: number;
+    if (pixelAligned) {
+      scaleX = this.viewportWidth / tex.width;
+      scaleY = this.viewportHeight / tex.height;
+    } else {
+      scaleX = 0.3;
+      scaleY = 0.3;
+    }
+    gl.uniform2f(prog.uniforms.get("u_offset")!, offsetX * scaleX, offsetY * scaleY);
+    gl.uniform2f(prog.uniforms.get("u_scale")!, scaleX, scaleY);
     gl.uniform1i(prog.uniforms.get("u_texture")!, 0);
 
     this.state.bindTexture(tex.glTexture);
@@ -1258,6 +1337,7 @@ export class WebGL2Engine implements RenderEngine {
     this.textureProg = createShaderProgram(gl, TEXTURE_VERT, TEXTURE_FRAG);
     this.stampProg = createShaderProgram(gl, STAMP_VERT, STAMP_FRAG);
     this.stampDiscProg = createShaderProgram(gl, STAMP_VERT, STAMP_DISC_FRAG);
+    this.markerStampProg = createShaderProgram(gl, MARKER_STAMP_VERT, STAMP_FRAG);
     this.grainProg = createShaderProgram(gl, GRAIN_VERT, GRAIN_FRAG);
     this.circleProg = createShaderProgram(gl, CIRCLE_VERT, CIRCLE_FRAG);
     this.lineProg = createShaderProgram(gl, LINE_VERT, LINE_FRAG);
@@ -1277,6 +1357,7 @@ export class WebGL2Engine implements RenderEngine {
     this.solidVAO = gl.createVertexArray()!;
     this.textureVAO = gl.createVertexArray()!;
     this.stampVAO = gl.createVertexArray()!;
+    this.markerStampVAO = gl.createVertexArray()!;
     this.grainVAO = gl.createVertexArray()!;
     this.circleVAO = gl.createVertexArray()!;
     this.lineVAO = gl.createVertexArray()!;
@@ -1300,6 +1381,7 @@ export class WebGL2Engine implements RenderEngine {
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.disable(gl.DEPTH_TEST);
       gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+      this.viewportWidth = this.canvas.width;
       this.viewportHeight = this.canvas.height;
     });
   }

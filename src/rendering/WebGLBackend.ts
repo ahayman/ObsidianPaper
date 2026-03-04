@@ -88,6 +88,10 @@ export class WebGLBackend implements DrawingBackend {
     this.engine.drawStamps(texture as TextureHandle, data);
   }
 
+  drawMarkerStamps(texture: TextureRef, data: Float32Array): void {
+    this.engine.drawMarkerStamps(texture as TextureHandle, data);
+  }
+
   // ── Grain texture ────────────────────────────────────────
 
   applyGrain(
@@ -95,8 +99,9 @@ export class WebGLBackend implements DrawingBackend {
     offsetX: number,
     offsetY: number,
     strength: number,
+    pixelAligned?: boolean,
   ): void {
-    this.engine.applyGrain(texture as TextureHandle, offsetX, offsetY, strength);
+    this.engine.applyGrain(texture as TextureHandle, offsetX, offsetY, strength, pixelAligned);
   }
 
   // ── Masking ──────────────────────────────────────────────

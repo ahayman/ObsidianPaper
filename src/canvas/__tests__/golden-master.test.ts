@@ -48,6 +48,10 @@ function makeEngineGrainContext(pipeline: RenderPipeline): EngineGrainContext {
       pipeline === "advanced"
         ? ({ width: 256, height: 256 } as TextureHandle)
         : null,
+    fiberOverlayTexture:
+      pipeline === "advanced"
+        ? ({ width: 128, height: 128 } as TextureHandle)
+        : null,
     strengthOverrides: new Map(),
     pipeline,
     canvasWidth: 2048,
@@ -60,6 +64,8 @@ function makeEngineStampContext(): EngineStampContext {
     getStampTexture: (_grainValue: number, _color: string) =>
       ({ width: 48, height: 48 }) as TextureHandle,
     getInkStampTexture: (_presetId: string | undefined, _color: string) =>
+      ({ width: 64, height: 64 }) as TextureHandle,
+    getMarkerStampTexture: (_color: string) =>
       ({ width: 64, height: 64 }) as TextureHandle,
   };
 }

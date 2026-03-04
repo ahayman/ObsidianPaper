@@ -1,6 +1,7 @@
-import { packStampsToFloat32, packInkStampsToFloat32 } from "./StampPacking";
+import { packStampsToFloat32, packInkStampsToFloat32, packMarkerStampsToFloat32 } from "./StampPacking";
 import type { StampParams } from "./StampRenderer";
 import type { InkStampParams } from "./InkStampRenderer";
+import type { MarkerStampParams } from "./MarkerStampRenderer";
 
 describe("StampPacking", () => {
   describe("packStampsToFloat32", () => {
@@ -59,6 +60,46 @@ describe("StampPacking", () => {
       expect(result[1]).toBe(15);
       expect(result[2]).toBe(8);
       expect(result[3]).toBeCloseTo(0.9);
+    });
+  });
+
+  describe("packMarkerStampsToFloat32", () => {
+    it("should return empty Float32Array for empty input", () => {
+      const result = packMarkerStampsToFloat32([]);
+      expect(result).toBeInstanceOf(Float32Array);
+      expect(result.length).toBe(0);
+    });
+
+    it("should pack marker stamps into [x, y, width, height, rotation, opacity] layout", () => {
+      const stamps: MarkerStampParams[] = [
+        { x: 10, y: 20, width: 6, height: 2, rotation: 0.5, opacity: 0.8 },
+        { x: 30, y: 40, width: 9, height: 3, rotation: 1.2, opacity: 0.6 },
+      ];
+      const result = packMarkerStampsToFloat32(stamps);
+      expect(result.length).toBe(12); // 2 stamps × 6 floats
+      // First stamp
+      expect(result[0]).toBe(10);
+      expect(result[1]).toBe(20);
+      expect(result[2]).toBe(6);
+      expect(result[3]).toBe(2);
+      expect(result[4]).toBeCloseTo(0.5);
+      expect(result[5]).toBeCloseTo(0.8);
+      // Second stamp
+      expect(result[6]).toBe(30);
+      expect(result[7]).toBe(40);
+      expect(result[8]).toBe(9);
+      expect(result[9]).toBe(3);
+      expect(result[10]).toBeCloseTo(1.2);
+      expect(result[11]).toBeCloseTo(0.6);
+    });
+
+    it("should filter stamps with low opacity", () => {
+      const stamps: MarkerStampParams[] = [
+        { x: 10, y: 20, width: 6, height: 2, rotation: 0, opacity: 0.8 },
+        { x: 30, y: 40, width: 6, height: 2, rotation: 0, opacity: 0.01 }, // below threshold
+      ];
+      const result = packMarkerStampsToFloat32(stamps);
+      expect(result.length).toBe(6); // Only first stamp packed
     });
   });
 });
