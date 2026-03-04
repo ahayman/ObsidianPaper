@@ -38,6 +38,8 @@ function makeResources(overrides: Partial<ExecutorResources> = {}): ExecutorReso
   return {
     grainTexture: null,
     inkStampTexture: null,
+    markerStampTexture: null,
+    fiberOverlayTexture: null,
     canvasWidth: 2048,
     canvasHeight: 2048,
     ...overrides,

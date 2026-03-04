@@ -28,6 +28,7 @@ function makeState(overrides: Partial<ToolbarState> = {}): ToolbarState {
     useBarrelRotation: false,
     grain: DEFAULT_GRAIN_VALUE,
     inkPreset: "standard",
+    inkDepletion: 0,
     ...overrides,
   };
 }

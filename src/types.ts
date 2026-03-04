@@ -26,6 +26,7 @@ export interface PenStyle {
   grain?: number; // Grain slider value 0-1 (pencil only). Controls stamp texture character.
   inkPreset?: string; // Ink preset ID (fountain pen only). Controls ink shading/texture.
   useBarrelRotation?: boolean; // Use Apple Pencil Pro twist for dynamic nib angle
+  inkDepletion?: number; // Ink depletion rate 0-1 (felt-tip only). 0 = no depletion, 1 = max.
 }
 
 // --- Stroke Data ---
@@ -213,6 +214,7 @@ export interface SerializedPenStyle {
   grain?: number;
   inkPreset?: string;
   useBarrelRotation?: boolean;
+  inkDepletion?: number;
 }
 
 export interface SerializedStroke {

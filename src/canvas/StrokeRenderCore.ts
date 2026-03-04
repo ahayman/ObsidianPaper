@@ -19,6 +19,7 @@ import { detectInkPools, renderInkPools } from "../stroke/InkPooling";
 import type { StampCache } from "../stamp/StampCache";
 import { computeAllStamps, drawStamps } from "../stamp/StampRenderer";
 import { computeAllInkStamps, drawInkShadingStamps } from "../stamp/InkStampRenderer";
+import { computeAllMarkerStamps } from "../stamp/MarkerStampRenderer";
 import { getInkPreset } from "../stamp/InkPresets";
 import type { InkPresetConfig } from "../stamp/InkPresets";
 import type { PenConfig } from "../stroke/PenConfigs";
@@ -58,6 +59,7 @@ export interface GrainRenderContext {
 export interface StampRenderContext {
   getCache(grainValue: number): StampCache;
   getInkCache(presetId?: string): StampCache;
+  getMarkerCache?(): StampCache;
 }
 
 type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -146,6 +148,27 @@ export function renderStrokeToContext(
     const points = decodePoints(stroke.pts);
     const stamps = computeAllStamps(points, style, penConfig, penConfig.stamp);
     drawStamps(ctx, stamps, color, ctx.getTransform(), style.opacity);
+    return;
+  }
+
+  // Marker stamp rendering for felt-tip at LOD 0
+  if (stampCtx?.getMarkerCache && grainCtx.pipeline === "advanced" && penConfig.markerStamp && lod === 0) {
+    const color = resolveColor(style.color, useDarkColors);
+    const points = decodePoints(stroke.pts);
+    const stamps = computeAllMarkerStamps(points, style, penConfig, penConfig.markerStamp);
+    const markerCache = stampCtx.getMarkerCache();
+    const coloredTexture = markerCache.getColored(color);
+
+    // Generate outline path for masking (uses italic triangle path for clean edges)
+    const cacheKey = lodCacheKey(stroke.id, lod);
+    let outlinePath = pathCache.getPath(cacheKey);
+    if (!outlinePath) {
+      outlinePath = generateStrokePath(points, style) ?? undefined;
+      if (outlinePath) pathCache.set(cacheKey, outlinePath);
+    }
+
+    const fiberAnchor: [number, number] = [stroke.bbox[0], stroke.bbox[1]];
+    drawMarkerStampsToContext(ctx, stamps, coloredTexture, style.opacity, grainCtx, penConfig.markerStamp.fiberDensity, fiberAnchor, outlinePath);
     return;
   }
 
@@ -453,6 +476,114 @@ function renderStrokeWithGrain(
   targetCtx.restore();
 }
 
+// ─── Marker Stamp Canvas2D Drawing ────────────────────────────
+
+import type { MarkerStampParams } from "../stamp/MarkerStampRenderer";
+import { generateFiberOverlayCanvas } from "../stamp/MarkerStampTexture";
+
+// Lazy-init fiber overlay (generated once, reused across all strokes)
+let _fiberOverlay: OffscreenCanvas | null = null;
+export function getFiberOverlay(): OffscreenCanvas {
+  if (!_fiberOverlay) _fiberOverlay = generateFiberOverlayCanvas();
+  return _fiberOverlay;
+}
+
+/**
+ * Draw marker stamps to a Canvas2D context using isolation to prevent
+ * within-stroke alpha accumulation, with optional outline mask for clean edges.
+ */
+function drawMarkerStampsToContext(
+  ctx: Ctx2D,
+  stamps: MarkerStampParams[],
+  texture: OffscreenCanvas,
+  strokeOpacity: number,
+  grainCtx: GrainRenderContext,
+  fiberDensity: number,
+  fiberAnchor: [number, number],
+  outlineMask?: Path2D,
+): void {
+  if (stamps.length === 0) return;
+
+  // Compute world-space bounding box of all stamps
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of stamps) {
+    const r = Math.max(s.width, s.height) * 0.5;
+    if (s.x - r < minX) minX = s.x - r;
+    if (s.y - r < minY) minY = s.y - r;
+    if (s.x + r > maxX) maxX = s.x + r;
+    if (s.y + r > maxY) maxY = s.y + r;
+  }
+
+  const m = ctx.getTransform();
+  const region = computeScreenBBox(
+    [minX, minY, maxX, maxY], m, grainCtx.canvasWidth, grainCtx.canvasHeight,
+  );
+  if (!region) return;
+
+  // Create offscreen for isolation
+  const offW = Math.ceil(region.sw);
+  const offH = Math.ceil(region.sh);
+  if (offW <= 0 || offH <= 0) return;
+
+  const offCanvas = new OffscreenCanvas(offW, offH);
+  const offCtx = offCanvas.getContext("2d");
+  if (!offCtx) return;
+
+  // Set transform offset so world coordinates map to offscreen
+  offCtx.setTransform(m.a, m.b, m.c, m.d, m.e - region.sx, m.f - region.sy);
+
+  // Draw each stamp with rotation
+  for (const s of stamps) {
+    if (s.opacity < 0.05) continue;
+    offCtx.save();
+    offCtx.globalAlpha = s.opacity;
+    offCtx.translate(s.x, s.y);
+    offCtx.rotate(s.rotation);
+    offCtx.drawImage(texture, -s.width / 2, -s.height / 2, s.width, s.height);
+    offCtx.restore();
+  }
+
+  // Apply fiber texture: tiled anisotropic noise via destination-out to add
+  // visible fiber streaks. Per-stamp fiber detail gets washed out by dense
+  // overlap, so this post-processing step restores the felt-tip character.
+  // Uses drawImage tiling instead of createPattern for maximum compatibility
+  // across Electron/OffscreenCanvas environments.
+  // Per-stroke fiberAnchor (bbox origin) provides unique offsets so overlapping
+  // strokes layer visibly instead of producing identical patterns.
+  if (fiberDensity > 0) {
+    offCtx.save();
+    offCtx.setTransform(1, 0, 0, 1, 0, 0);
+    offCtx.globalCompositeOperation = "destination-out";
+    offCtx.globalAlpha = 0.7 * fiberDensity;
+    const fiber = getFiberOverlay();
+    const fiberSize = fiber.width;
+    // Per-stroke offset from world-space anchor ensures unique patterns per stroke
+    const offsetX = ((fiberAnchor[0] % fiberSize) + fiberSize) % fiberSize;
+    const offsetY = ((fiberAnchor[1] % fiberSize) + fiberSize) % fiberSize;
+    for (let fy = -offsetY; fy < offH; fy += fiberSize) {
+      for (let fx = -offsetX; fx < offW; fx += fiberSize) {
+        offCtx.drawImage(fiber, fx, fy);
+      }
+    }
+    offCtx.restore();
+  }
+
+  // Apply outline mask: keep stamp pixels only within the outline path
+  if (outlineMask) {
+    offCtx.globalCompositeOperation = "destination-in";
+    offCtx.globalAlpha = 1;
+    offCtx.fill(outlineMask);
+    offCtx.globalCompositeOperation = "source-over";
+  }
+
+  // Composite isolated result back at stroke opacity
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = strokeOpacity;
+  ctx.drawImage(offCanvas, 0, 0, offW, offH, region.sx, region.sy, region.sw, region.sh);
+  ctx.restore();
+}
+
 // ══════════════════════════════════════════════════════════════
 // RenderEngine-based stroke rendering
 // ══════════════════════════════════════════════════════════════
@@ -463,6 +594,7 @@ function renderStrokeWithGrain(
  */
 export interface EngineGrainContext {
   grainTexture: TextureHandle | null;
+  fiberOverlayTexture: TextureHandle | null;
   strengthOverrides: Map<PenType, number>;
   pipeline: RenderPipeline;
   canvasWidth: number;
@@ -475,6 +607,7 @@ export interface EngineGrainContext {
 export interface EngineStampContext {
   getStampTexture(grainValue: number, color: string): TextureHandle;
   getInkStampTexture(presetId: string | undefined, color: string): TextureHandle;
+  getMarkerStampTexture(color: string): TextureHandle | null;
 }
 
 /**
@@ -502,7 +635,7 @@ export function renderStrokeToEngine(
   // as if pipeline is "basic" for the material resolver so it falls through
   // to fill body. This matches the old `stampCtx &&` guard conditions.
   const effectivePipeline: RenderPipeline =
-    (!stampCtx && (penConfig.inkStamp || penConfig.stamp))
+    (!stampCtx && (penConfig.inkStamp || penConfig.stamp || penConfig.markerStamp))
       ? "basic"
       : grainCtx.pipeline;
 
@@ -518,12 +651,14 @@ export function renderStrokeToEngine(
   );
 
   // Skip if no renderable data
-  if (!data.vertices && !data.stampData) return;
+  if (!data.vertices && !data.stampData && !data.markerStampData) return;
 
   // Build executor resources from engine contexts
   const resources: ExecutorResources = {
     grainTexture: grainCtx.grainTexture ?? null,
     inkStampTexture: null,
+    markerStampTexture: null,
+    fiberOverlayTexture: grainCtx.fiberOverlayTexture ?? null,
     canvasWidth: grainCtx.canvasWidth,
     canvasHeight: grainCtx.canvasHeight,
   };
@@ -531,6 +666,11 @@ export function renderStrokeToEngine(
   // Resolve ink stamp texture if needed
   if (material.body.type === "inkShading" && stampCtx && data.stampData) {
     resources.inkStampTexture = stampCtx.getInkStampTexture(style.inkPreset, data.color);
+  }
+
+  // Resolve marker stamp texture if needed
+  if (material.body.type === "markerStamps" && stampCtx && data.markerStampData) {
+    resources.markerStampTexture = stampCtx.getMarkerStampTexture(data.color);
   }
 
   // Execute

@@ -29,7 +29,11 @@ export interface InkShadingBody {
   readonly type: "inkShading";
 }
 
-export type StrokeBody = FillBody | StampDiscsBody | InkShadingBody;
+export interface MarkerStampsBody {
+  readonly type: "markerStamps";
+}
+
+export type StrokeBody = FillBody | StampDiscsBody | InkShadingBody | MarkerStampsBody;
 
 // ─── Effect Types ───────────────────────────────────────────
 
@@ -45,7 +49,13 @@ export interface InkPoolingEffect {
   readonly type: "inkPooling";
 }
 
-export type MaterialEffect = GrainEffect | OutlineMaskEffect | InkPoolingEffect;
+export interface FiberOverlayEffect {
+  readonly type: "fiberOverlay";
+  /** Fiber erasure strength (0-1). Computed from penConfig.markerStamp.fiberDensity. */
+  readonly strength: number;
+}
+
+export type MaterialEffect = GrainEffect | OutlineMaskEffect | InkPoolingEffect | FiberOverlayEffect;
 
 // ─── Material ───────────────────────────────────────────────
 
@@ -125,6 +135,25 @@ export function resolveMaterial(
       bodyOpacity: style.opacity,
       isolation: false,
       effects: [],
+    };
+  }
+
+  // Marker stamp rendering (felt-tip chisel stamps with outline mask)
+  // Same approach as fountain pen ink shading: stamps provide texture,
+  // outline mask clips to the stroke path to hide individual stamp edges.
+  // Fiber overlay is applied BEFORE the mask to add visible felt-tip streaks.
+  if (isAdvancedLod0 && penConfig.markerStamp) {
+    const effects: MaterialEffect[] = [];
+    if (penConfig.markerStamp.fiberDensity > 0) {
+      effects.push({ type: "fiberOverlay", strength: 0.7 * penConfig.markerStamp.fiberDensity });
+    }
+    effects.push({ type: "outlineMask" });
+    return {
+      body: { type: "markerStamps" },
+      blending: "source-over",
+      bodyOpacity: style.opacity,
+      isolation: true,
+      effects,
     };
   }
 

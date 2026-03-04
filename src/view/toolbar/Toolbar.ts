@@ -189,6 +189,7 @@ export class Toolbar {
       smoothing: preset.smoothing,
       grain: preset.grain ?? DEFAULT_GRAIN_VALUE,
       inkPreset: preset.inkPreset ?? "standard",
+      inkDepletion: preset.inkDepletion ?? 0,
       nibAngle: preset.nibAngle ?? this.state.nibAngle,
       nibThickness: preset.nibThickness ?? this.state.nibThickness,
       nibPressure: preset.nibPressure ?? this.state.nibPressure,

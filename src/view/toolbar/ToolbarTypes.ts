@@ -13,6 +13,7 @@ export interface PenPreset {
   useBarrelRotation?: boolean; // Use barrel rotation, fountain only
   grain?: number;          // 0-1, pencil only (grain slider value)
   inkPreset?: string;      // Ink preset ID, fountain only
+  inkDepletion?: number;   // 0-1, felt-tip only (ink depletion rate)
 }
 
 export type ToolbarPosition = "top" | "bottom" | "left" | "right";
@@ -31,6 +32,7 @@ export interface ToolbarState {
   useBarrelRotation: boolean;
   grain: number;
   inkPreset: string;
+  inkDepletion: number;
 }
 
 export interface ToolbarCallbacks {

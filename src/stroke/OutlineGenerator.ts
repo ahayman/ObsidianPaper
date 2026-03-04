@@ -264,15 +264,25 @@ export function buildItalicConfig(style: PenStyle): ItalicNibConfig {
   const penConfig = getPenConfig(style.pen);
   const nibAngle = style.nibAngle ?? penConfig.nibAngle!;
   const nibThickness = style.nibThickness ?? penConfig.nibThickness!;
-  const nibPressure = style.nibPressure ?? 0.5;
-  const pressureMin = 1.0 - nibPressure * 0.7;
+
+  // Use nibPressure-derived range for pens with explicit nibPressure (fountain pen),
+  // otherwise use the pen config's pressure width range directly.
+  let pressureWidthRange: [number, number];
+  if (style.nibPressure !== undefined || penConfig.type === "fountain") {
+    const nibPressure = style.nibPressure ?? 0.5;
+    const pressureMin = 1.0 - nibPressure * 0.7;
+    pressureWidthRange = [pressureMin, 1.0];
+  } else {
+    pressureWidthRange = penConfig.pressureWidthRange;
+  }
+
   return {
     nibWidth: style.width,
     nibHeight: style.width * nibThickness,
     nibAngle: nibAngle,
     useBarrelRotation: style.useBarrelRotation ?? penConfig.useBarrelRotation,
     pressureCurve: penConfig.pressureCurve,
-    pressureWidthRange: [pressureMin, 1.0],
+    pressureWidthRange,
     widthSmoothing: 0.4,
     taperStart: penConfig.taperStart,
     taperEnd: penConfig.taperEnd,
