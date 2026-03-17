@@ -113,7 +113,12 @@
       "WebFetch(domain:help.obsidian.md)",
       "WebFetch(domain:patrickhlauke.github.io)",
       "WebFetch(domain:www.mail-archive.com)",
-      "Bash(head:*)"
+      "Bash(head:*)",
+      "Bash(for plugin:*)",
+      "Bash(do)",
+      "Bash(if grep:*)",
+      "Bash(then)",
+      "Bash(dirname \"$plugin\")"
     ]
   }
 }

@@ -261,21 +261,32 @@ export default class PaperPlugin extends Plugin {
     });
   }
 
-  private tryRegisterNotebookNavigatorMenu(): void {
+  private tryRegisterNotebookNavigatorMenu(attempt = 0): void {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const plugins = (this.app as any).plugins?.plugins as Record<string, any> | undefined;
     const registerFolderMenu = plugins?.["notebook-navigator"]?.api?.menus?.registerFolderMenu as
-      | ((cb: (menu: { addItem: (cb: (item: { setTitle: (t: string) => any; setIcon: (i: string) => any; onClick: (cb: () => void) => any }) => void) => void }, folder: TFolder) => void) => void)
+      | ((cb: (ctx: { addItem: (cb: (item: { setTitle: (t: string) => any; setIcon: (i: string) => any; onClick: (cb: () => void) => any }) => void) => void; folder: TFolder }) => void) => () => void)
       | undefined;
     if (!registerFolderMenu) return;
 
-    registerFolderMenu((menu, folder) => {
-      menu.addItem((item) => {
-        item.setTitle("New Paper Document")
-          .setIcon("pen-tool")
-          .onClick(() => void this.createNewPaper(folder));
+    try {
+      const dispose = registerFolderMenu(({ addItem, folder }) => {
+        addItem((item) => {
+          item.setTitle("New Paper Document")
+            .setIcon("pen-tool")
+            .onClick(() => void this.createNewPaper(folder));
+        });
       });
-    });
+      this.register(dispose);
+    } catch (e) {
+      // Notebook Navigator may expose its API before internal state
+      // (folderMenuExtensions) is initialized. Retry with backoff.
+      if (attempt < 5) {
+        window.setTimeout(() => this.tryRegisterNotebookNavigatorMenu(attempt + 1), 500 * (attempt + 1));
+      } else {
+        console.error("[Paper] Failed to register Notebook Navigator menu after retries:", e);
+      }
+    }
   }
 
   private async resolveNewNoteFolder(): Promise<TFolder> {
