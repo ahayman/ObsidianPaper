@@ -424,6 +424,10 @@ export class MenuItem {
   }
 }
 
+export function setIcon(parent: HTMLElement, iconId: string): void {
+  parent.innerHTML = `<svg class="svg-icon lucide-${iconId}"></svg>`;
+}
+
 export function normalizePath(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/+/g, "/");
 }

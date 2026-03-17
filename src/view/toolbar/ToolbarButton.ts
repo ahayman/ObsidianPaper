@@ -1,3 +1,5 @@
+import { setIcon } from "obsidian";
+
 /**
  * Generic toolbar button with 44x44 touch targets.
  */
@@ -8,13 +10,18 @@ export class ToolbarButton {
     parent: HTMLElement,
     label: string,
     cls: string,
-    onClick: () => void
+    onClick: () => void,
+    icon?: string
   ) {
     this.el = parent.createEl("button", {
       cls: `paper-toolbar__btn ${cls}`,
       attr: { "aria-label": label },
     });
-    this.el.textContent = label;
+    if (icon) {
+      setIcon(this.el, icon);
+    } else {
+      this.el.textContent = label;
+    }
     this.el.addEventListener("click", onClick);
   }
 

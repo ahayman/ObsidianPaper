@@ -86,13 +86,13 @@ export class Toolbar {
     this.undoBtn = new ToolbarButton(this.el, "Undo", "paper-toolbar__btn--undo", () => {
       this.callbacks.onUndo();
       this.refreshUndoRedo();
-    });
+    }, "undo-2");
 
     // Redo
     this.redoBtn = new ToolbarButton(this.el, "Redo", "paper-toolbar__btn--redo", () => {
       this.callbacks.onRedo();
       this.refreshUndoRedo();
-    });
+    }, "redo-2");
 
     // Separator
     this.el.createEl("div", { cls: "paper-toolbar__separator" });
@@ -117,24 +117,24 @@ export class Toolbar {
       this.state.activeTool = newTool;
       this.eraserBtn?.setActive(newTool === "eraser");
       this.callbacks.onToolChange(newTool);
-    });
+    }, "eraser");
     this.eraserBtn.setActive(this.state.activeTool === "eraser");
 
     // Separator
     this.el.createEl("div", { cls: "paper-toolbar__separator" });
 
     // Add page
-    this.addPageBtn = new ToolbarButton(this.el, "+ Page", "paper-toolbar__btn--add-page", () => {
+    this.addPageBtn = new ToolbarButton(this.el, "Add page", "paper-toolbar__btn--add-page", () => {
       this.callbacks.onAddPage();
-    });
+    }, "file-plus");
 
     // Separator
     this.el.createEl("div", { cls: "paper-toolbar__separator" });
 
     // Document settings (gear)
-    this.docSettingsBtn = new ToolbarButton(this.el, "\u2699", "paper-toolbar__btn--doc-settings", () => {
+    this.docSettingsBtn = new ToolbarButton(this.el, "Document settings", "paper-toolbar__btn--doc-settings", () => {
       this.callbacks.onOpenDocumentSettings();
-    });
+    }, "settings");
 
     // Minimized handle (hidden when not minimized)
     const handle = this.el.createEl("button", {
