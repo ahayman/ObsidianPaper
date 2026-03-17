@@ -71,17 +71,6 @@ export class Toolbar {
   }
 
   private build(): void {
-    // Current pen button
-    this.currentPenBtn = new CurrentPenButton(
-      this.el,
-      this.state.colorId,
-      this.state.penType,
-      () => this.togglePopover()
-    );
-
-    // Separator
-    this.el.createEl("div", { cls: "paper-toolbar__separator" });
-
     // Undo
     this.undoBtn = new ToolbarButton(this.el, "Undo", "paper-toolbar__btn--undo", () => {
       this.callbacks.onUndo();
@@ -93,6 +82,17 @@ export class Toolbar {
       this.callbacks.onRedo();
       this.refreshUndoRedo();
     }, "redo-2");
+
+    // Separator
+    this.el.createEl("div", { cls: "paper-toolbar__separator" });
+
+    // Current pen button
+    this.currentPenBtn = new CurrentPenButton(
+      this.el,
+      this.state.colorId,
+      this.state.penType,
+      () => this.togglePopover()
+    );
 
     // Separator
     this.el.createEl("div", { cls: "paper-toolbar__separator" });
