@@ -1,4 +1,4 @@
-import { cloneStroke, translateStroke, scaleStroke } from "./SelectionTransform";
+import { cloneStroke, translateStroke, scaleStroke, rotateStroke, snapAngle } from "./SelectionTransform";
 import { encodePoints, decodePoints } from "../document/PointEncoder";
 import type { Stroke, StrokePoint } from "../types";
 
@@ -295,5 +295,76 @@ describe("scaleStroke bbox regression", () => {
     expect(result.bbox[2] - maxX).toBeGreaterThanOrEqual(8);
     expect(minY - result.bbox[1]).toBeGreaterThanOrEqual(8);
     expect(result.bbox[3] - maxY).toBeGreaterThanOrEqual(8);
+  });
+});
+
+describe("rotateStroke", () => {
+  it("should rotate points 90 degrees around origin", () => {
+    const stroke = makeStroke([makePoint(10, 0), makePoint(20, 0)]);
+    const result = rotateStroke(stroke, 0, 0, Math.PI / 2);
+
+    const points = decodePoints(result.pts);
+    // (10,0) rotated 90° → (0,10)
+    expect(points[0].x).toBeCloseTo(0, 0);
+    expect(points[0].y).toBeCloseTo(10, 0);
+    // (20,0) rotated 90° → (0,20)
+    expect(points[1].x).toBeCloseTo(0, 0);
+    expect(points[1].y).toBeCloseTo(20, 0);
+  });
+
+  it("should rotate around a non-origin center", () => {
+    const stroke = makeStroke([makePoint(20, 10), makePoint(30, 10)]);
+    // Rotate 90° around (15, 10): (20,10) is 5 right of center → becomes (15,15)
+    const result = rotateStroke(stroke, 15, 10, Math.PI / 2);
+
+    const points = decodePoints(result.pts);
+    expect(points[0].x).toBeCloseTo(15, 0);
+    expect(points[0].y).toBeCloseTo(15, 0);
+  });
+
+  it("should recompute bbox from rotated points", () => {
+    const stroke = makeStroke([makePoint(0, 0), makePoint(100, 0)]);
+    // Rotate 45° around origin — bbox should encompass the diagonal
+    const result = rotateStroke(stroke, 0, 0, Math.PI / 4);
+
+    const points = decodePoints(result.pts);
+    for (const pt of points) {
+      expect(pt.x).toBeGreaterThanOrEqual(result.bbox[0]);
+      expect(pt.y).toBeGreaterThanOrEqual(result.bbox[1]);
+      expect(pt.x).toBeLessThanOrEqual(result.bbox[2]);
+      expect(pt.y).toBeLessThanOrEqual(result.bbox[3]);
+    }
+  });
+
+  it("should rotate grainAnchor", () => {
+    const stroke = makeStroke([makePoint(10, 0), makePoint(20, 0)]);
+    // grainAnchor is at (10, 0), rotate 90° around origin → (0, 10)
+    const result = rotateStroke(stroke, 0, 0, Math.PI / 2);
+    expect(result.grainAnchor![0]).toBeCloseTo(0, 0);
+    expect(result.grainAnchor![1]).toBeCloseTo(10, 0);
+  });
+});
+
+describe("snapAngle", () => {
+  it("should snap to 0 when within tolerance", () => {
+    expect(snapAngle(0.01)).toBeCloseTo(0);
+    expect(snapAngle(-0.01)).toBeCloseTo(0);
+  });
+
+  it("should snap to 90 degrees", () => {
+    expect(snapAngle(Math.PI / 2 + 0.02)).toBeCloseTo(Math.PI / 2);
+  });
+
+  it("should snap to 45 degrees", () => {
+    expect(snapAngle(Math.PI / 4 - 0.01)).toBeCloseTo(Math.PI / 4);
+  });
+
+  it("should not snap when outside tolerance", () => {
+    const angle = 0.5; // ~28.6°, not near any snap angle
+    expect(snapAngle(angle)).toBeCloseTo(angle);
+  });
+
+  it("should snap to negative angles", () => {
+    expect(snapAngle(-Math.PI / 2 + 0.02)).toBeCloseTo(-Math.PI / 2);
   });
 });

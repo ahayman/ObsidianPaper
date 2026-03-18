@@ -59,8 +59,12 @@ export type HandleCorner = "top-left" | "top-right" | "bottom-left" | "bottom-ri
 /** Result of hit-testing the selection UI */
 export type SelectionHitResult =
   | { type: "handle"; corner: HandleCorner }
-  | { type: "inside" }  // Inside bbox but not on handle → move
-  | { type: "outside" }; // Outside bbox → deselect
+  | { type: "rotation" }  // Rotation handle above top-center
+  | { type: "inside" }    // Inside bbox but not on handle → move
+  | { type: "outside" };  // Outside bbox → deselect
+
+/** Screen-space offset of the rotation handle above the bbox top edge */
+export const ROTATION_HANDLE_OFFSET = 30;
 
 /**
  * Get the world-space positions of the 4 corner handles.
@@ -90,7 +94,18 @@ export function hitTestSelection(
   camera: { worldToScreen: (wx: number, wy: number) => { x: number; y: number }; zoom: number },
   handleRadiusScreen = 22
 ): SelectionHitResult {
-  // Test handles first (they extend beyond the bbox)
+  // Test rotation handle first (above top-center)
+  const topCenterWorld = { x: bbox.x + bbox.width / 2, y: bbox.y };
+  const topCenterScreen = camera.worldToScreen(topCenterWorld.x, topCenterWorld.y);
+  const rotHandleX = topCenterScreen.x;
+  const rotHandleY = topCenterScreen.y - ROTATION_HANDLE_OFFSET;
+  const rdx = screenX - rotHandleX;
+  const rdy = screenY - rotHandleY;
+  if (rdx * rdx + rdy * rdy <= handleRadiusScreen * handleRadiusScreen) {
+    return { type: "rotation" };
+  }
+
+  // Test corner handles (they extend beyond the bbox)
   const handles = getHandlePositions(bbox);
   const corners: HandleCorner[] = ["top-left", "top-right", "bottom-left", "bottom-right"];
 

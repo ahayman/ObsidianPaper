@@ -33,7 +33,8 @@ import type { Point2D } from "../selection/PointInPolygon";
 import { SelectionOverlay } from "../selection/SelectionOverlay";
 import { computeSelectionBBox, hitTestSelection } from "../selection/SelectionState";
 import type { SelectionState, SelectionBBox, HandleCorner } from "../selection/SelectionState";
-import { cloneStroke, translateStroke, scaleStroke } from "../selection/SelectionTransform";
+import { cloneStroke, translateStroke, scaleStroke, rotateStroke, snapAngle } from "../selection/SelectionTransform";
+import { findNearestStroke } from "../selection/StrokeHitTester";
 import { SelectionActionBar } from "../selection/SelectionActionBar";
 import type { ClipboardQueue } from "../selection/Clipboard";
 import { getEffectiveDPR } from "../canvas/HighDPI";
@@ -42,6 +43,10 @@ export const VIEW_TYPE_PAPER = "paper-view";
 export const PAPER_EXTENSION = "paper";
 
 const DEFAULT_ERASER_RADIUS = 10;
+/** Max screen-space movement (squared) for a pen gesture to count as a tap */
+const TAP_DISTANCE_SQ = 15 * 15;
+/** World-space radius for tap-to-select hit testing */
+const TAP_HIT_RADIUS = 20;
 
 export class PaperView extends TextFileView {
   private document: PaperDocument = createEmptyDocument();
@@ -79,11 +84,14 @@ export class PaperView extends TextFileView {
   // Lasso / selection state
   private lassoPoints: Point2D[] = [];
   private lassoPageIndex = -1;
+  private lassoStartScreen: { x: number; y: number } | null = null;
   private selectionState: SelectionState | null = null;
   private selectionOverlay: SelectionOverlay | null = null;
-  private selectionDragType: "move" | "resize" | null = null;
+  private selectionDragType: "move" | "resize" | "rotate" | null = null;
   private selectionDragHandle: HandleCorner | null = null;
   private selectionDragStart: { x: number; y: number } | null = null;
+  /** Initial angle from selection center to pointer at rotation start */
+  private selectionRotateBaseAngle = 0;
   private selectionActionBar: SelectionActionBar | null = null;
   /** Shared clipboard queue — set by the plugin, shared across all views */
   clipboard: ClipboardQueue | null = null;
@@ -1241,15 +1249,29 @@ export class PaperView extends TextFileView {
             );
 
             if (hit.type === "handle") {
-              // Phase 3: start resize from this handle
               this.selectionDragType = "resize";
               this.selectionDragHandle = hit.corner;
               this.selectionDragStart = { x: point.x, y: point.y };
               return;
             }
 
+            if (hit.type === "rotation") {
+              this.selectionDragType = "rotate";
+              this.selectionDragStart = { x: point.x, y: point.y };
+              // Compute initial angle from bbox center to pointer
+              const bbox = this.selectionState.boundingBox;
+              const center = this.camera.worldToScreen(
+                bbox.x + bbox.width / 2,
+                bbox.y + bbox.height / 2,
+              );
+              this.selectionRotateBaseAngle = Math.atan2(
+                point.y - center.y,
+                point.x - center.x,
+              );
+              return;
+            }
+
             if (hit.type === "inside") {
-              // Phase 3: start move
               this.selectionDragType = "move";
               this.selectionDragStart = { x: point.x, y: point.y };
               return;
@@ -1260,6 +1282,7 @@ export class PaperView extends TextFileView {
           }
 
           this.lassoPoints = [{ x: world.x, y: world.y }];
+          this.lassoStartScreen = { x: point.x, y: point.y };
           this.lassoPageIndex = pageIndex;
           return;
         }
@@ -1344,6 +1367,16 @@ export class PaperView extends TextFileView {
             return;
           }
 
+          // Detect tap: minimal screen movement from start
+          if (this.lassoStartScreen) {
+            const dx = point.x - this.lassoStartScreen.x;
+            const dy = point.y - this.lassoStartScreen.y;
+            if (dx * dx + dy * dy < TAP_DISTANCE_SQ) {
+              this.handleLassoTap(point);
+              return;
+            }
+          }
+
           const world = this.camera.screenToWorld(point.x, point.y);
           this.lassoPoints.push({ x: world.x, y: world.y });
           this.finalizeLassoSelection();
@@ -1411,6 +1444,7 @@ export class PaperView extends TextFileView {
             this.cancelSelectionDrag();
           }
           this.lassoPoints = [];
+          this.lassoStartScreen = null;
           this.lassoPageIndex = -1;
           this.renderer?.clearActiveLayer();
           return;
@@ -1542,6 +1576,74 @@ export class PaperView extends TextFileView {
 
   // ─── Lasso Selection ────────────────────────────────────────────
 
+  private handleLassoTap(point: StrokePoint): void {
+    this.renderer?.clearActiveLayer();
+    this.lassoPoints = [];
+    this.lassoStartScreen = null;
+
+    const world = this.camera.screenToWorld(point.x, point.y);
+    const pageIndex = findPageAtPoint(world.x, world.y, this.pageLayout);
+    const radius = TAP_HIT_RADIUS / this.camera.zoom;
+
+    const hitId = findNearestStroke(
+      world.x, world.y, radius,
+      this.document.strokes, this.spatialIndex,
+      pageIndex,
+    );
+
+    if (!hitId) {
+      // Tap on empty space → deselect
+      this.clearSelection();
+      return;
+    }
+
+    // If a selection exists, toggle the tapped stroke (Phase 7)
+    if (this.selectionState) {
+      if (this.selectionState.strokeIds.has(hitId)) {
+        // Remove from selection
+        this.selectionState.strokeIds.delete(hitId);
+        if (this.selectionState.strokeIds.size === 0) {
+          this.clearSelection();
+          return;
+        }
+      } else {
+        // Add to selection (must be on same page)
+        if (pageIndex === this.selectionState.pageIndex) {
+          this.selectionState.strokeIds.add(hitId);
+        }
+      }
+      // Update bbox and re-render
+      this.selectionState.boundingBox = computeSelectionBBox(
+        this.selectionState.strokeIds, this.document.strokes,
+      );
+      if (this.renderer) {
+        this.renderer.excludeStrokeIds = this.selectionState.strokeIds;
+        this.renderer.invalidateCache();
+      }
+      this.renderStaticWithIcons();
+      this.renderSelectionUI();
+      return;
+    }
+
+    // No existing selection → select the single tapped stroke
+    const strokeIds = new Set([hitId]);
+    const stroke = this.document.strokes.find(s => s.id === hitId);
+    if (!stroke) return;
+
+    const boundingBox = computeSelectionBBox(strokeIds, this.document.strokes);
+    this.selectionState = { strokeIds, boundingBox, pageIndex: stroke.pageIndex };
+
+    if (this.renderer) {
+      this.renderer.excludeStrokeIds = strokeIds;
+      for (const id of strokeIds) {
+        this.renderer.invalidateCache(id);
+      }
+    }
+    this.renderStaticWithIcons();
+    this.renderSelectionUI();
+    this.selectionActionBar?.show();
+  }
+
   private finalizeLassoSelection(): void {
     this.renderer?.clearActiveLayer();
 
@@ -1561,6 +1663,7 @@ export class PaperView extends TextFileView {
 
     const pageIndex = this.lassoPageIndex;
     this.lassoPoints = [];
+    this.lassoStartScreen = null;
     this.lassoPageIndex = -1;
 
     if (selectedIds.length === 0) return;
@@ -1658,6 +1761,17 @@ export class PaperView extends TextFileView {
       const ty = anchorScreen.y * (1 - scale);
 
       this.selectionOverlay?.setTransform(tx, ty, scale);
+    } else if (this.selectionDragType === "rotate") {
+      const bbox = this.selectionState.boundingBox;
+      const center = this.camera.worldToScreen(
+        bbox.x + bbox.width / 2,
+        bbox.y + bbox.height / 2,
+      );
+      const currentAngle = Math.atan2(screenY - center.y, screenX - center.x);
+      const angle = snapAngle(currentAngle - this.selectionRotateBaseAngle);
+
+      // CSS rotate around the bbox center
+      this.selectionOverlay?.setRotateTransform(center.x, center.y, angle);
     }
   }
 
@@ -1712,6 +1826,36 @@ export class PaperView extends TextFileView {
 
           const before = cloneStroke(stroke);
           const after = scaleStroke(stroke, anchorWorld.x, anchorWorld.y, scale, true, this.document.styles);
+
+          Object.assign(stroke, after);
+          clearCompressedCache(stroke);
+          this.spatialIndex.remove(stroke.id);
+          this.spatialIndex.insert(stroke, this.document.strokes.indexOf(stroke));
+
+          undoEntries.push({ strokeId: stroke.id, before, after: cloneStroke(stroke) });
+        }
+      }
+    } else if (this.selectionDragType === "rotate") {
+      const bbox = this.selectionState.boundingBox;
+      const centerScreen = this.camera.worldToScreen(
+        bbox.x + bbox.width / 2,
+        bbox.y + bbox.height / 2,
+      );
+      const currentAngle = Math.atan2(
+        screenY - centerScreen.y,
+        screenX - centerScreen.x,
+      );
+      const angle = snapAngle(currentAngle - this.selectionRotateBaseAngle);
+
+      if (Math.abs(angle) > 0.001) {
+        const centerWorldX = bbox.x + bbox.width / 2;
+        const centerWorldY = bbox.y + bbox.height / 2;
+
+        for (const stroke of this.document.strokes) {
+          if (!this.selectionState.strokeIds.has(stroke.id)) continue;
+
+          const before = cloneStroke(stroke);
+          const after = rotateStroke(stroke, centerWorldX, centerWorldY, angle, this.document.styles);
 
           Object.assign(stroke, after);
           clearCompressedCache(stroke);

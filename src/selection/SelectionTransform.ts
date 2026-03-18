@@ -92,6 +92,60 @@ export function scaleStroke(
 }
 
 /**
+ * Rotate all points in a stroke around a center point.
+ * The bbox is recomputed from the rotated points.
+ */
+export function rotateStroke(
+  stroke: Stroke,
+  centerX: number,
+  centerY: number,
+  angle: number,
+  styles?: Record<string, PenStyle>
+): Stroke {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const points = decodePoints(stroke.pts);
+
+  for (const pt of points) {
+    const dx = pt.x - centerX;
+    const dy = pt.y - centerY;
+    pt.x = centerX + dx * cos - dy * sin;
+    pt.y = centerY + dx * sin + dy * cos;
+  }
+
+  const result: Stroke = {
+    ...stroke,
+    pts: encodePoints(points),
+    grainAnchor: stroke.grainAnchor
+      ? [
+          centerX + (stroke.grainAnchor[0] - centerX) * cos - (stroke.grainAnchor[1] - centerY) * sin,
+          centerY + (stroke.grainAnchor[0] - centerX) * sin + (stroke.grainAnchor[1] - centerY) * cos,
+        ]
+      : undefined,
+  };
+
+  result.bbox = computeStrokeBBox(points, result, styles);
+  return result;
+}
+
+/** Snap angles: every 45 degrees */
+const SNAP_ANGLES = [0, Math.PI / 4, Math.PI / 2, 3 * Math.PI / 4, Math.PI,
+  -3 * Math.PI / 4, -Math.PI / 2, -Math.PI / 4];
+const SNAP_TOLERANCE = 5 * Math.PI / 180; // 5 degrees
+
+/**
+ * Snap an angle to the nearest 45-degree increment if within tolerance.
+ */
+export function snapAngle(angle: number): number {
+  // Normalize to [-PI, PI]
+  angle = Math.atan2(Math.sin(angle), Math.cos(angle));
+  for (const snap of SNAP_ANGLES) {
+    if (Math.abs(angle - snap) < SNAP_TOLERANCE) return snap;
+  }
+  return angle;
+}
+
+/**
  * Compute a bbox from points with appropriate rendering margins.
  * Mirrors the margin logic in PaperView's stroke finalization.
  */

@@ -8,7 +8,7 @@
 
 import type { Camera } from "../canvas/Camera";
 import type { SelectionBBox, HandleCorner } from "./SelectionState";
-import { getHandlePositions } from "./SelectionState";
+import { getHandlePositions, ROTATION_HANDLE_OFFSET } from "./SelectionState";
 
 /** Handle radius in screen pixels */
 const HANDLE_RADIUS = 6;
@@ -102,6 +102,18 @@ export class SelectionOverlay {
       this.drawHandle(ctx, screen.x, screen.y);
     }
 
+    // Draw rotation handle (above top-center, connected by a line)
+    const topCenter = camera.worldToScreen(bbox.x + bbox.width / 2, bbox.y);
+    const rotY = topCenter.y - ROTATION_HANDLE_OFFSET;
+
+    ctx.beginPath();
+    ctx.moveTo(topCenter.x, topCenter.y);
+    ctx.lineTo(topCenter.x, rotY);
+    ctx.strokeStyle = HANDLE_STROKE_COLOR;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    this.drawHandle(ctx, topCenter.x, rotY);
+
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
@@ -117,8 +129,18 @@ export class SelectionOverlay {
     this.canvas.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
   }
 
+  /**
+   * Apply a CSS rotation around a screen-space center point.
+   */
+  setRotateTransform(centerX: number, centerY: number, angle: number): void {
+    const deg = angle * (180 / Math.PI);
+    this.canvas.style.transformOrigin = `${centerX}px ${centerY}px`;
+    this.canvas.style.transform = `rotate(${deg}deg)`;
+  }
+
   clearTransform(): void {
     this.canvas.style.transform = "";
+    this.canvas.style.transformOrigin = "0 0";
   }
 
   destroy(): void {
