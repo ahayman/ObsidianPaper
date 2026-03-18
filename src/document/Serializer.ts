@@ -46,6 +46,14 @@ export function precompressStroke(stroke: Stroke): void {
 }
 
 /**
+ * Clear the cached compressed pts for a stroke.
+ * Must be called after mutating a stroke's pts in-place (e.g., transforms).
+ */
+export function clearCompressedCache(stroke: Stroke): void {
+  compressedPtsCache.delete(stroke);
+}
+
+/**
  * Serialize a PaperDocument to a JSON string for storage.
  * Uses v3 format with pages and optional compression.
  */

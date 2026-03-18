@@ -118,7 +118,18 @@
       "Bash(do)",
       "Bash(if grep:*)",
       "Bash(then)",
-      "Bash(dirname \"$plugin\")"
+      "Bash(dirname \"$plugin\")",
+      "WebFetch(domain:flylib.com)",
+      "WebFetch(domain:www.inkandswitch.com)",
+      "WebFetch(domain:joshuatz.com)",
+      "WebFetch(domain:concepts.app)",
+      "WebFetch(domain:www.research.autodesk.com)",
+      "WebFetch(domain:konvajs.org)",
+      "WebFetch(domain:fabricjs.com)",
+      "WebFetch(domain:alexharri.com)",
+      "WebFetch(domain:techcommunity.microsoft.com)",
+      "WebFetch(domain:support.microsoft.com)",
+      "WebFetch(domain:bora.uib.no)"
     ]
   }
 }

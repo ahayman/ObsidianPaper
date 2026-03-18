@@ -8,7 +8,7 @@ import type { InputCallbacks } from "../input/InputManager";
 import { StrokeBuilder } from "../stroke/StrokeBuilder";
 import { UndoManager } from "../document/UndoManager";
 import { createEmptyDocument, generatePageId } from "../document/Document";
-import { serializeDocument, deserializeDocument, precompressStroke } from "../document/Serializer";
+import { serializeDocument, deserializeDocument, precompressStroke, clearCompressedCache } from "../document/Serializer";
 import { getPenConfig } from "../stroke/PenConfigs";
 import { findHitStrokes } from "../eraser/StrokeEraser";
 import { ThemeDetector } from "../color/ThemeDetector";
@@ -28,6 +28,14 @@ import { DocumentSettingsPopover } from "./toolbar/DocumentSettingsPopover";
 import { decodePoints, encodePoints } from "../document/PointEncoder";
 import { resolvePageBackground } from "../color/ColorUtils";
 import { DEFAULT_GRAIN_VALUE } from "../stamp/GrainMapping";
+import { selectStrokesInLasso } from "../selection/LassoSelector";
+import type { Point2D } from "../selection/PointInPolygon";
+import { SelectionOverlay } from "../selection/SelectionOverlay";
+import { computeSelectionBBox, hitTestSelection } from "../selection/SelectionState";
+import type { SelectionState, SelectionBBox, HandleCorner } from "../selection/SelectionState";
+import { cloneStroke, translateStroke, scaleStroke } from "../selection/SelectionTransform";
+import { SelectionActionBar } from "../selection/SelectionActionBar";
+import { getEffectiveDPR } from "../canvas/HighDPI";
 
 export const VIEW_TYPE_PAPER = "paper-view";
 export const PAPER_EXTENSION = "paper";
@@ -66,6 +74,16 @@ export class PaperView extends TextFileView {
   // Page layout
   private pageLayout: PageRect[] = [];
   private activeStrokePageIndex = -1;
+
+  // Lasso / selection state
+  private lassoPoints: Point2D[] = [];
+  private lassoPageIndex = -1;
+  private selectionState: SelectionState | null = null;
+  private selectionOverlay: SelectionOverlay | null = null;
+  private selectionDragType: "move" | "resize" | null = null;
+  private selectionDragHandle: HandleCorner | null = null;
+  private selectionDragStart: { x: number; y: number } | null = null;
+  private selectionActionBar: SelectionActionBar | null = null;
 
   // Active tool state
   private activeTool: ActiveTool = "pen";
@@ -136,12 +154,29 @@ export class PaperView extends TextFileView {
     // Enable tile-based rendering for better zoom/pan performance
     this.renderer.enableTiling();
 
+    // Selection overlay (on top of all drawing canvases)
+    this.selectionOverlay = new SelectionOverlay(container);
+
+    // Selection action bar (hidden until strokes are selected)
+    this.selectionActionBar = new SelectionActionBar(
+      container,
+      {
+        onColorChange: (colorId) => this.applySelectionColor(colorId),
+        onPenTypeChange: (penType) => this.applySelectionPenType(penType),
+        onWidthChange: (width) => this.applySelectionWidth(width),
+        onDelete: () => this.deleteSelection(),
+      },
+      this.themeDetector?.isDarkMode ?? false,
+    );
+    this.selectionActionBar.hide();
+
     // Initial resize
     const rect = container.getBoundingClientRect();
     if (rect.width > 0 && rect.height > 0) {
       this.cssWidth = rect.width;
       this.cssHeight = rect.height;
       this.renderer.resize(rect.width, rect.height);
+      this.selectionOverlay.resize(rect.width, rect.height, getEffectiveDPR(Platform.isMobile));
     }
 
     // Setup input handling
@@ -217,6 +252,11 @@ export class PaperView extends TextFileView {
     this.pageMenuButton = null;
     this.hoverCursor?.destroy();
     this.hoverCursor = null;
+    this.selectionActionBar?.destroy();
+    this.selectionActionBar = null;
+    this.selectionOverlay?.destroy();
+    this.selectionOverlay = null;
+    this.selectionState = null;
     this.renderer?.destroy();
     this.renderer = null;
     this.strokeBuilder = null;
@@ -327,6 +367,7 @@ export class PaperView extends TextFileView {
   }
 
   undo(): void {
+    this.clearSelection();
     this.renderer?.flushFinalizations();
     const action = this.undoManager.undo();
     if (!action) return;
@@ -364,6 +405,21 @@ export class PaperView extends TextFileView {
         }
         break;
       }
+      case "transform-strokes":
+      case "modify-strokes": {
+        // Undo: restore "before" versions
+        for (const entry of action.entries) {
+          const idx = this.document.strokes.findIndex(s => s.id === entry.strokeId);
+          if (idx !== -1) {
+            this.document.strokes[idx] = entry.before;
+            this.spatialIndex.remove(entry.strokeId);
+            this.spatialIndex.insert(entry.before, idx);
+          }
+        }
+        // Strokes may have moved — invalidate all tiles
+        this.renderer?.invalidateCache();
+        break;
+      }
     }
 
     this.renderStaticWithIcons();
@@ -372,6 +428,7 @@ export class PaperView extends TextFileView {
   }
 
   redo(): void {
+    this.clearSelection();
     this.renderer?.flushFinalizations();
     const action = this.undoManager.redo();
     if (!action) return;
@@ -404,6 +461,21 @@ export class PaperView extends TextFileView {
             this.renderer?.invalidateCache(entry.stroke.id);
           }
         }
+        break;
+      }
+      case "transform-strokes":
+      case "modify-strokes": {
+        // Redo: restore "after" versions
+        for (const entry of action.entries) {
+          const idx = this.document.strokes.findIndex(s => s.id === entry.strokeId);
+          if (idx !== -1) {
+            this.document.strokes[idx] = entry.after;
+            this.spatialIndex.remove(entry.strokeId);
+            this.spatialIndex.insert(entry.after, idx);
+          }
+        }
+        // Strokes may have moved — invalidate all tiles
+        this.renderer?.invalidateCache();
         break;
       }
     }
@@ -866,9 +938,11 @@ export class PaperView extends TextFileView {
     }
 
     this.renderer?.resize(width, height);
+    this.selectionOverlay?.resize(width, height, getEffectiveDPR(Platform.isMobile));
     this.updateZoomLimits();
     this.camera.clampPan(width, height);
     this.renderStaticWithIcons();
+    this.renderSelectionUI();
   }
 
   // ─── Precompression ─────────────────────────────────────────────
@@ -912,6 +986,7 @@ export class PaperView extends TextFileView {
     const tx = (base.x - cam.x) * cam.zoom;
     const ty = (base.y - cam.y) * cam.zoom;
     this.renderer.setGestureTransform(tx, ty, scale);
+    this.selectionOverlay?.setTransform(tx, ty, scale);
 
     // If the CSS-transformed overscan canvas no longer covers the viewport,
     // trigger a throttled re-render to recenter the buffer.
@@ -977,9 +1052,11 @@ export class PaperView extends TextFileView {
 
     // Clear CSS transform (base = current, so delta is zero)
     this.renderer.clearGestureTransform();
+    this.selectionOverlay?.clearTransform();
 
     // Re-render centered on new viewport (synchronous)
     this.renderStaticWithIcons();
+    this.renderSelectionUI();
   }
 
   // ─── Style Helpers ──────────────────────────────────────────────
@@ -1026,6 +1103,9 @@ export class PaperView extends TextFileView {
   private createToolbarCallbacks(): ToolbarCallbacks {
     return {
       onToolChange: (tool: ActiveTool) => {
+        if (this.activeTool === "lasso" && tool !== "lasso") {
+          this.clearSelection();
+        }
         this.activeTool = tool;
       },
       onPenSettingsChange: (state: ToolbarState) => {
@@ -1119,6 +1199,39 @@ export class PaperView extends TextFileView {
           return;
         }
 
+        if (this.activeTool === "lasso") {
+          // If there's an active selection, test if the tap is on it
+          if (this.selectionState) {
+            const hit = hitTestSelection(
+              point.x, point.y,
+              this.selectionState.boundingBox,
+              this.camera,
+            );
+
+            if (hit.type === "handle") {
+              // Phase 3: start resize from this handle
+              this.selectionDragType = "resize";
+              this.selectionDragHandle = hit.corner;
+              this.selectionDragStart = { x: point.x, y: point.y };
+              return;
+            }
+
+            if (hit.type === "inside") {
+              // Phase 3: start move
+              this.selectionDragType = "move";
+              this.selectionDragStart = { x: point.x, y: point.y };
+              return;
+            }
+
+            // Outside: deselect and start a new lasso
+            this.clearSelection();
+          }
+
+          this.lassoPoints = [{ x: world.x, y: world.y }];
+          this.lassoPageIndex = pageIndex;
+          return;
+        }
+
         this.activeStrokePageIndex = pageIndex;
         const style = this.getCurrentStyle();
         const styleName = this.getCurrentStyleName();
@@ -1138,6 +1251,21 @@ export class PaperView extends TextFileView {
           for (const point of points) {
             this.handleEraserPoint(point);
           }
+          return;
+        }
+
+        if (this.activeTool === "lasso") {
+          if (this.selectionDragType && this.selectionDragStart) {
+            const last = points[points.length - 1];
+            this.handleSelectionDrag(last.x, last.y);
+            return;
+          }
+
+          for (const point of points) {
+            const world = this.camera.screenToWorld(point.x, point.y);
+            this.lassoPoints.push({ x: world.x, y: world.y });
+          }
+          this.renderer?.renderLassoPath(this.lassoPoints);
           return;
         }
 
@@ -1177,6 +1305,19 @@ export class PaperView extends TextFileView {
       onStrokeEnd: (point: StrokePoint) => {
         this.toolbar?.notifyStrokeEnd();
         this.pageMenuButton?.setDrawingActive(false);
+
+        if (this.activeTool === "lasso") {
+          if (this.selectionDragType) {
+            this.commitSelectionDrag(point.x, point.y);
+            return;
+          }
+
+          const world = this.camera.screenToWorld(point.x, point.y);
+          this.lassoPoints.push({ x: world.x, y: world.y });
+          this.finalizeLassoSelection();
+          return;
+        }
+
         if (!this.strokeBuilder) return;
 
         const world = this.camera.screenToWorld(point.x, point.y);
@@ -1233,6 +1374,15 @@ export class PaperView extends TextFileView {
 
       onStrokeCancel: () => {
         this.pageMenuButton?.setDrawingActive(false);
+        if (this.activeTool === "lasso") {
+          if (this.selectionDragType) {
+            this.cancelSelectionDrag();
+          }
+          this.lassoPoints = [];
+          this.lassoPageIndex = -1;
+          this.renderer?.clearActiveLayer();
+          return;
+        }
         this.strokeBuilder?.discard();
         this.strokeBuilder = null;
         this.activeStrokePageIndex = -1;
@@ -1257,7 +1407,9 @@ export class PaperView extends TextFileView {
         this.midGestureRenderPending = false;
         this.gestureBaseCamera = null;
         this.renderer?.clearGestureTransform();
+        this.selectionOverlay?.clearTransform();
         this.requestStaticRender();
+        this.renderSelectionUI();
       },
 
       onPinchMove: (centerX: number, centerY: number, scale: number, panDx: number, panDy: number) => {
@@ -1281,7 +1433,9 @@ export class PaperView extends TextFileView {
         this.pinchBaseZoom = null;
         this.gestureBaseCamera = null;
         this.renderer?.clearGestureTransform();
+        this.selectionOverlay?.clearTransform();
         this.requestStaticRender();
+        this.renderSelectionUI();
       },
 
       onTwoFingerTap: () => {
@@ -1347,9 +1501,331 @@ export class PaperView extends TextFileView {
         this.midGestureRenderPending = false;
         this.gestureBaseCamera = null;
         this.renderer?.clearGestureTransform();
+        this.selectionOverlay?.clearTransform();
         this.requestStaticRender();
+        this.renderSelectionUI();
       },
     };
+  }
+
+  // ─── Lasso Selection ────────────────────────────────────────────
+
+  private finalizeLassoSelection(): void {
+    this.renderer?.clearActiveLayer();
+
+    if (this.lassoPoints.length < 3) {
+      this.lassoPoints = [];
+      this.lassoPageIndex = -1;
+      return;
+    }
+
+    const selectedIds = selectStrokesInLasso(
+      this.lassoPoints,
+      this.document.strokes,
+      this.spatialIndex,
+      0.75,
+      this.lassoPageIndex,
+    );
+
+    const pageIndex = this.lassoPageIndex;
+    this.lassoPoints = [];
+    this.lassoPageIndex = -1;
+
+    if (selectedIds.length === 0) return;
+
+    const strokeIds = new Set(selectedIds);
+    const boundingBox = computeSelectionBBox(strokeIds, this.document.strokes);
+
+    this.selectionState = { strokeIds, boundingBox, pageIndex };
+
+    // Exclude selected strokes from the static layer and re-render
+    if (this.renderer) {
+      this.renderer.excludeStrokeIds = strokeIds;
+      for (const id of strokeIds) {
+        this.renderer.invalidateCache(id);
+      }
+    }
+    this.renderStaticWithIcons();
+    this.renderSelectionUI();
+    this.selectionActionBar?.show();
+  }
+
+  private clearSelection(): void {
+    if (!this.selectionState) return;
+    const oldIds = this.selectionState.strokeIds;
+    this.selectionState = null;
+    this.selectionOverlay?.clear();
+    this.selectionActionBar?.hide();
+
+    // Re-include strokes in the static layer
+    if (this.renderer) {
+      this.renderer.excludeStrokeIds = null;
+      for (const id of oldIds) {
+        this.renderer.invalidateCache(id);
+      }
+    }
+    this.renderStaticWithIcons();
+  }
+
+  private renderSelectionUI(): void {
+    if (!this.selectionState || !this.selectionOverlay) return;
+
+    // Get the selected strokes for rendering on the overlay
+    const selectedStrokes = this.document.strokes.filter(
+      s => this.selectionState!.strokeIds.has(s.id)
+    );
+
+    this.selectionOverlay.render(
+      this.selectionState.boundingBox,
+      this.camera,
+      (ctx) => {
+        this.renderer?.renderStrokesToExternalCanvas(
+          ctx, selectedStrokes, this.document, this.pageLayout,
+        );
+      },
+    );
+  }
+
+  /**
+   * During a move/resize drag, apply a CSS transform to the selection overlay
+   * for GPU-accelerated preview. The actual stroke data is modified on commit.
+   */
+  private handleSelectionDrag(screenX: number, screenY: number): void {
+    if (!this.selectionDragStart || !this.selectionState) return;
+
+    const dx = screenX - this.selectionDragStart.x;
+    const dy = screenY - this.selectionDragStart.y;
+
+    if (this.selectionDragType === "move") {
+      this.selectionOverlay?.setTransform(dx, dy, 1);
+    } else if (this.selectionDragType === "resize" && this.selectionDragHandle) {
+      // Compute scale from the anchor corner (opposite of the dragged handle)
+      const bbox = this.selectionState.boundingBox;
+      const anchorWorld = this.getResizeAnchor(this.selectionDragHandle, bbox);
+      const anchorScreen = this.camera.worldToScreen(anchorWorld.x, anchorWorld.y);
+      const handleWorld = this.getDraggedHandlePos(this.selectionDragHandle, bbox);
+      const handleScreen = this.camera.worldToScreen(handleWorld.x, handleWorld.y);
+
+      // Original distance from anchor to handle
+      const origDx = handleScreen.x - anchorScreen.x;
+      const origDy = handleScreen.y - anchorScreen.y;
+      const origDist = Math.sqrt(origDx * origDx + origDy * origDy);
+
+      if (origDist < 1) return;
+
+      // New distance (handle moved by dx, dy)
+      const newDx = handleScreen.x + dx - anchorScreen.x;
+      const newDy = handleScreen.y + dy - anchorScreen.y;
+      const newDist = Math.sqrt(newDx * newDx + newDy * newDy);
+
+      const scale = Math.max(0.1, newDist / origDist);
+
+      // CSS transform: translate(tx,ty) scale(s) maps point (px,py) → (s*px+tx, s*py+ty).
+      // To keep the anchor at (ax,ay) fixed: s*ax+tx = ax → tx = ax*(1-s).
+      const tx = anchorScreen.x * (1 - scale);
+      const ty = anchorScreen.y * (1 - scale);
+
+      this.selectionOverlay?.setTransform(tx, ty, scale);
+    }
+  }
+
+  private commitSelectionDrag(screenX: number, screenY: number): void {
+    if (!this.selectionState || !this.selectionDragStart) {
+      this.cancelSelectionDrag();
+      return;
+    }
+
+    const dx = screenX - this.selectionDragStart.x;
+    const dy = screenY - this.selectionDragStart.y;
+    const undoEntries: { strokeId: string; before: Stroke; after: Stroke }[] = [];
+
+    if (this.selectionDragType === "move") {
+      // Convert screen delta to world delta
+      const worldDx = dx / this.camera.zoom;
+      const worldDy = dy / this.camera.zoom;
+
+      for (const stroke of this.document.strokes) {
+        if (!this.selectionState.strokeIds.has(stroke.id)) continue;
+
+        const before = cloneStroke(stroke);
+        const after = translateStroke(stroke, worldDx, worldDy);
+
+        // Apply in-place
+        Object.assign(stroke, after);
+        clearCompressedCache(stroke);
+        this.spatialIndex.remove(stroke.id);
+        this.spatialIndex.insert(stroke, this.document.strokes.indexOf(stroke));
+
+        undoEntries.push({ strokeId: stroke.id, before, after: cloneStroke(stroke) });
+      }
+    } else if (this.selectionDragType === "resize" && this.selectionDragHandle) {
+      const bbox = this.selectionState.boundingBox;
+      const anchorWorld = this.getResizeAnchor(this.selectionDragHandle, bbox);
+      const anchorScreen = this.camera.worldToScreen(anchorWorld.x, anchorWorld.y);
+      const handleWorld = this.getDraggedHandlePos(this.selectionDragHandle, bbox);
+      const handleScreen = this.camera.worldToScreen(handleWorld.x, handleWorld.y);
+
+      const origDx = handleScreen.x - anchorScreen.x;
+      const origDy = handleScreen.y - anchorScreen.y;
+      const origDist = Math.sqrt(origDx * origDx + origDy * origDy);
+
+      if (origDist >= 1) {
+        const newDx = handleScreen.x + dx - anchorScreen.x;
+        const newDy = handleScreen.y + dy - anchorScreen.y;
+        const newDist = Math.sqrt(newDx * newDx + newDy * newDy);
+        const scale = Math.max(0.1, newDist / origDist);
+
+        for (const stroke of this.document.strokes) {
+          if (!this.selectionState.strokeIds.has(stroke.id)) continue;
+
+          const before = cloneStroke(stroke);
+          const after = scaleStroke(stroke, anchorWorld.x, anchorWorld.y, scale, true, this.document.styles);
+
+          Object.assign(stroke, after);
+          clearCompressedCache(stroke);
+          this.spatialIndex.remove(stroke.id);
+          this.spatialIndex.insert(stroke, this.document.strokes.indexOf(stroke));
+
+          undoEntries.push({ strokeId: stroke.id, before, after: cloneStroke(stroke) });
+        }
+      }
+    }
+
+    if (undoEntries.length > 0) {
+      // Invalidate all tiles — strokes moved, so both old and new position tiles need re-render
+      this.renderer?.invalidateCache();
+      this.undoManager.pushTransformStrokes(undoEntries);
+      this.toolbar?.refreshUndoRedo();
+      this.requestSave();
+    }
+
+    // Update selection bounding box to reflect new positions
+    this.selectionState.boundingBox = computeSelectionBBox(
+      this.selectionState.strokeIds,
+      this.document.strokes,
+    );
+
+    this.selectionOverlay?.clearTransform();
+    this.selectionDragType = null;
+    this.selectionDragHandle = null;
+    this.selectionDragStart = null;
+    this.renderStaticWithIcons();
+    this.renderSelectionUI();
+  }
+
+  private cancelSelectionDrag(): void {
+    this.selectionOverlay?.clearTransform();
+    this.selectionDragType = null;
+    this.selectionDragHandle = null;
+    this.selectionDragStart = null;
+    this.renderSelectionUI();
+  }
+
+  private getResizeAnchor(handle: HandleCorner, bbox: SelectionBBox): { x: number; y: number } {
+    switch (handle) {
+      case "top-left": return { x: bbox.x + bbox.width, y: bbox.y + bbox.height };
+      case "top-right": return { x: bbox.x, y: bbox.y + bbox.height };
+      case "bottom-left": return { x: bbox.x + bbox.width, y: bbox.y };
+      case "bottom-right": return { x: bbox.x, y: bbox.y };
+    }
+  }
+
+  private getDraggedHandlePos(handle: HandleCorner, bbox: SelectionBBox): { x: number; y: number } {
+    switch (handle) {
+      case "top-left": return { x: bbox.x, y: bbox.y };
+      case "top-right": return { x: bbox.x + bbox.width, y: bbox.y };
+      case "bottom-left": return { x: bbox.x, y: bbox.y + bbox.height };
+      case "bottom-right": return { x: bbox.x + bbox.width, y: bbox.y + bbox.height };
+    }
+  }
+
+  // ─── Selection Property Changes ────────────────────────────────
+
+  private applySelectionColor(colorId: string): void {
+    if (!this.selectionState) return;
+    this.applySelectionModification((stroke) => {
+      const modified = cloneStroke(stroke);
+      modified.styleOverrides = { ...modified.styleOverrides, color: colorId };
+      return modified;
+    });
+  }
+
+  private applySelectionPenType(penType: PenType): void {
+    if (!this.selectionState) return;
+    this.applySelectionModification((stroke) => {
+      const modified = cloneStroke(stroke);
+      modified.styleOverrides = { ...modified.styleOverrides, pen: penType };
+      return modified;
+    });
+  }
+
+  private applySelectionWidth(width: number): void {
+    if (!this.selectionState) return;
+    this.applySelectionModification((stroke) => {
+      const modified = cloneStroke(stroke);
+      modified.styleOverrides = { ...modified.styleOverrides, width };
+      return modified;
+    });
+  }
+
+  /**
+   * Apply a modification function to all selected strokes.
+   * Records undo entries and re-renders.
+   */
+  private applySelectionModification(modify: (stroke: Stroke) => Stroke): void {
+    if (!this.selectionState) return;
+
+    const undoEntries: { strokeId: string; before: Stroke; after: Stroke }[] = [];
+
+    for (const stroke of this.document.strokes) {
+      if (!this.selectionState.strokeIds.has(stroke.id)) continue;
+
+      const before = cloneStroke(stroke);
+      const after = modify(stroke);
+
+      Object.assign(stroke, after);
+      this.renderer?.invalidateCache(stroke.id);
+
+      undoEntries.push({ strokeId: stroke.id, before, after: cloneStroke(stroke) });
+    }
+
+    if (undoEntries.length > 0) {
+      this.undoManager.pushModifyStrokes(undoEntries);
+      this.toolbar?.refreshUndoRedo();
+      this.renderStaticWithIcons();
+      this.requestSave();
+    }
+  }
+
+  private deleteSelection(): void {
+    if (!this.selectionState) return;
+
+    const removedEntries: { stroke: Stroke; index: number }[] = [];
+    const sortedIndices: number[] = [];
+
+    for (let i = 0; i < this.document.strokes.length; i++) {
+      if (this.selectionState.strokeIds.has(this.document.strokes[i].id)) {
+        sortedIndices.push(i);
+      }
+    }
+
+    // Remove in reverse order to maintain indices
+    for (let i = sortedIndices.length - 1; i >= 0; i--) {
+      const idx = sortedIndices[i];
+      const removed = this.document.strokes.splice(idx, 1)[0];
+      this.spatialIndex.remove(removed.id);
+      this.renderer?.invalidateCache(removed.id);
+      removedEntries.push({ stroke: removed, index: idx });
+    }
+
+    if (removedEntries.length > 0) {
+      this.undoManager.pushRemoveStrokes(removedEntries);
+      this.toolbar?.refreshUndoRedo();
+      this.requestSave();
+    }
+
+    this.clearSelection();
+    this.renderStaticWithIcons();
   }
 
   private handleEraserPoint(point: StrokePoint): void {

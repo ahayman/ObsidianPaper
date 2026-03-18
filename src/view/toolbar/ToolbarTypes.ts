@@ -17,7 +17,7 @@ export interface PenPreset {
 }
 
 export type ToolbarPosition = "top" | "bottom" | "left" | "right";
-export type ActiveTool = "pen" | "eraser";
+export type ActiveTool = "pen" | "eraser" | "lasso";
 
 export interface ToolbarState {
   activeTool: ActiveTool;

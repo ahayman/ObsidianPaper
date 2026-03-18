@@ -93,6 +93,9 @@ export class Renderer {
   private overscanCssHeight = 0;
   private overscanOffsetX = 0;  // Negative CSS offset (e.g., -512)
   private overscanOffsetY = 0;  // Negative CSS offset (e.g., -384)
+  /** Stroke IDs to exclude from the static render (used during selection transforms) */
+  excludeStrokeIds: Set<string> | null = null;
+
   private grainGenerator: GrainTextureGenerator | null = null;
   private grainStrengthOverrides = new Map<PenType, number>();
   private grainOffscreen: HTMLCanvasElement | null = null;
@@ -369,6 +372,9 @@ export class Renderer {
 
     if (this.tiledLayer && spatialIndex) {
       // ─── Tile-based path ─────────────────────────────────
+      // Sync stroke exclusions for selection transforms
+      this.tiledLayer.tileRenderer.excludeStrokeIds = this.excludeStrokeIds;
+
       // Background is rendered into tiles — hide the background canvas
       this.backgroundCanvas.style.display = "none";
 
@@ -474,6 +480,7 @@ export class Renderer {
 
       for (const stroke of doc.strokes) {
         if (stroke.pageIndex !== pageRect.pageIndex) continue;
+        if (this.excludeStrokeIds?.has(stroke.id)) continue;
 
         if (visibleIds) {
           if (visibleIds.has(stroke.id)) {
@@ -773,6 +780,82 @@ export class Renderer {
     this.activeStampCount = 0;
     this.activeVertices = null;
     this.activeVerticesPointCount = 0;
+  }
+
+  /**
+   * Render a lasso selection path on the active canvas.
+   * Draws a dashed line following the world-space points.
+   */
+  renderLassoPath(points: readonly { x: number; y: number }[]): void {
+    if (points.length < 2) return;
+
+    this.pendingActiveRender = () => {
+      this.clearCanvas(this.activeCtx);
+      this.activeCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this.activeCtx.scale(this.dpr, this.dpr);
+      this.camera.applyToContext(this.activeCtx);
+
+      const dashLen = 4 / this.camera.zoom;
+      const gapLen = 3 / this.camera.zoom;
+      const lineWidth = 1.5 / this.camera.zoom;
+
+      this.activeCtx.save();
+      this.activeCtx.setLineDash([dashLen, gapLen]);
+      this.activeCtx.strokeStyle = "rgba(100, 130, 200, 0.7)";
+      this.activeCtx.lineWidth = lineWidth;
+      this.activeCtx.lineCap = "round";
+      this.activeCtx.lineJoin = "round";
+
+      this.activeCtx.beginPath();
+      this.activeCtx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) {
+        this.activeCtx.lineTo(points[i].x, points[i].y);
+      }
+      this.activeCtx.stroke();
+      this.activeCtx.restore();
+
+      this.camera.resetContext(this.activeCtx);
+    };
+
+    this.scheduleFrame();
+  }
+
+  /**
+   * Render specific strokes to an external canvas context.
+   * Used by the selection overlay to draw selected strokes on its own canvas.
+   */
+  renderStrokesToExternalCanvas(
+    ctx: CanvasRenderingContext2D,
+    strokes: readonly Stroke[],
+    doc: PaperDocument,
+    pageLayout: PageRect[],
+  ): void {
+    const lod = selectLodLevel(this.camera.zoom);
+
+    for (const pageRect of pageLayout) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(pageRect.x, pageRect.y, pageRect.width, pageRect.height);
+      ctx.clip();
+
+      const page = doc.pages[pageRect.pageIndex];
+      let pageDark = this.isDarkMode;
+      if (page) {
+        const { patternTheme } = resolvePageBackground(
+          page.backgroundColor,
+          page.backgroundColorTheme,
+          this.isDarkMode,
+        );
+        pageDark = patternTheme === "dark";
+      }
+
+      for (const stroke of strokes) {
+        if (stroke.pageIndex !== pageRect.pageIndex) continue;
+        this.renderStrokeToContext(ctx, stroke, doc.styles, lod, pageDark);
+      }
+
+      ctx.restore();
+    }
   }
 
   /**

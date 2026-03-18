@@ -1,6 +1,6 @@
 import type { Stroke } from "../types";
 
-export type UndoActionType = "add-stroke" | "remove-stroke" | "remove-strokes";
+export type UndoActionType = "add-stroke" | "remove-stroke" | "remove-strokes" | "transform-strokes" | "modify-strokes";
 
 export interface AddStrokeAction {
   type: "add-stroke";
@@ -18,10 +18,22 @@ export interface RemoveStrokesAction {
   strokes: { stroke: Stroke; index: number }[];
 }
 
+export interface TransformStrokesAction {
+  type: "transform-strokes";
+  entries: { strokeId: string; before: Stroke; after: Stroke }[];
+}
+
+export interface ModifyStrokesAction {
+  type: "modify-strokes";
+  entries: { strokeId: string; before: Stroke; after: Stroke }[];
+}
+
 export type UndoAction =
   | AddStrokeAction
   | RemoveStrokeAction
-  | RemoveStrokesAction;
+  | RemoveStrokesAction
+  | TransformStrokesAction
+  | ModifyStrokesAction;
 
 export class UndoManager {
   private undoStack: UndoAction[] = [];
@@ -48,6 +60,24 @@ export class UndoManager {
    */
   pushRemoveStrokes(strokes: { stroke: Stroke; index: number }[]): void {
     this.undoStack.push({ type: "remove-strokes", strokes });
+    this.redoStack = [];
+  }
+
+  /**
+   * Record a spatial transform (move/resize) of strokes.
+   * Stores full before/after data for precise undo.
+   */
+  pushTransformStrokes(entries: { strokeId: string; before: Stroke; after: Stroke }[]): void {
+    this.undoStack.push({ type: "transform-strokes", entries });
+    this.redoStack = [];
+  }
+
+  /**
+   * Record a property modification (color/pen/width) of strokes.
+   * Stores full before/after data for precise undo.
+   */
+  pushModifyStrokes(entries: { strokeId: string; before: Stroke; after: Stroke }[]): void {
+    this.undoStack.push({ type: "modify-strokes", entries });
     this.redoStack = [];
   }
 

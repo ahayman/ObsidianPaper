@@ -38,6 +38,9 @@ export class TileRenderer {
   /** Shared rendering resources (grain, stamps, pipeline). */
   private resources: RenderResources;
 
+  /** Stroke IDs to exclude from tile rendering (used during selection transforms). */
+  excludeStrokeIds: Set<string> | null = null;
+
   /** When true, tile rendering uses the RenderEngine abstraction. */
   private useEngine: boolean;
   private engine: RenderEngine | null = null;
@@ -170,6 +173,7 @@ export class TileRenderer {
       for (const stroke of doc.strokes) {
         if (stroke.pageIndex !== pageRect.pageIndex) continue;
         if (!strokeIdSet.has(stroke.id)) continue;
+        if (this.excludeStrokeIds?.has(stroke.id)) continue;
 
         renderStrokeToContext(
           ctx, stroke, doc.styles, lod, pageDark,
@@ -268,6 +272,7 @@ export class TileRenderer {
       for (const stroke of doc.strokes) {
         if (stroke.pageIndex !== pageRect.pageIndex) continue;
         if (!strokeIdSet.has(stroke.id)) continue;
+        if (this.excludeStrokeIds?.has(stroke.id)) continue;
 
         renderStrokeToEngine(
           engine, stroke, doc.styles, lod, pageDark,

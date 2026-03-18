@@ -38,6 +38,7 @@ export class Toolbar {
   private undoBtn: ToolbarButton | null = null;
   private redoBtn: ToolbarButton | null = null;
   private eraserBtn: ToolbarButton | null = null;
+  private lassoBtn: ToolbarButton | null = null;
   private addPageBtn: ToolbarButton | null = null;
   private docSettingsBtn: ToolbarButton | null = null;
   private currentPenBtn: CurrentPenButton | null = null;
@@ -116,9 +117,20 @@ export class Toolbar {
       const newTool: ActiveTool = this.state.activeTool === "eraser" ? "pen" : "eraser";
       this.state.activeTool = newTool;
       this.eraserBtn?.setActive(newTool === "eraser");
+      this.lassoBtn?.setActive(false);
       this.callbacks.onToolChange(newTool);
     }, "eraser");
     this.eraserBtn.setActive(this.state.activeTool === "eraser");
+
+    // Lasso toggle
+    this.lassoBtn = new ToolbarButton(this.el, "Lasso select", "paper-toolbar__btn--lasso", () => {
+      const newTool: ActiveTool = this.state.activeTool === "lasso" ? "pen" : "lasso";
+      this.state.activeTool = newTool;
+      this.lassoBtn?.setActive(newTool === "lasso");
+      this.eraserBtn?.setActive(false);
+      this.callbacks.onToolChange(newTool);
+    }, "lasso");
+    this.lassoBtn.setActive(this.state.activeTool === "lasso");
 
     // Separator
     this.el.createEl("div", { cls: "paper-toolbar__separator" });
@@ -216,6 +228,7 @@ export class Toolbar {
     if (this.state.activeTool !== "pen") {
       this.state.activeTool = "pen";
       this.eraserBtn?.setActive(false);
+      this.lassoBtn?.setActive(false);
       this.callbacks.onToolChange("pen");
     }
   }
@@ -330,6 +343,7 @@ export class Toolbar {
 
     if (partial.activeTool !== undefined) {
       this.eraserBtn?.setActive(this.state.activeTool === "eraser");
+      this.lassoBtn?.setActive(this.state.activeTool === "lasso");
     }
 
     if (partial.activePresetId !== undefined) {
@@ -391,6 +405,7 @@ export class Toolbar {
     this.undoBtn?.destroy();
     this.redoBtn?.destroy();
     this.eraserBtn?.destroy();
+    this.lassoBtn?.destroy();
     this.addPageBtn?.destroy();
     this.docSettingsBtn?.destroy();
     this.currentPenBtn?.destroy();
