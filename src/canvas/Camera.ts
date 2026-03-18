@@ -2,7 +2,7 @@ import type { CameraState } from "../types";
 import type { RenderEngine } from "./engine/RenderEngine";
 
 export const MIN_ZOOM = 0.1;
-export const MAX_ZOOM = 5.0;
+export const MAX_ZOOM = 10.0;
 
 const PAN_MARGIN = 20; // world units that must remain visible
 

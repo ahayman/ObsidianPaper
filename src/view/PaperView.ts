@@ -169,7 +169,9 @@ export class PaperView extends TextFileView {
     this.renderer.setGrainStrength("pencil", this.settings.pencilGrainStrength);
 
     // Enable tile-based rendering for better zoom/pan performance
-    this.renderer.enableTiling();
+    this.renderer.enableTiling({
+      maxMemoryBytes: (this.deviceSettings.tileMemoryBudgetMB ?? 200) * 1024 * 1024,
+    });
 
     // Selection overlay (on top of all drawing canvases)
     this.selectionOverlay = new SelectionOverlay(container);
@@ -385,6 +387,7 @@ export class PaperView extends TextFileView {
     this.deviceSettings = ds;
     this.renderer?.setPipeline(this.getResolvedPipeline());
     this.toolbar?.setPosition(ds.toolbarPosition);
+    this.updateZoomLimits();
   }
 
   onResize(): void {
@@ -925,12 +928,15 @@ export class PaperView extends TextFileView {
 
     if (largestPageSize === 0 || smallestPageSize === 0) return;
 
+    const maxZoomLevel = this.deviceSettings.maxZoomLevel ?? 5;
+    // Higher max zoom needs a larger multiplier so standard pages can reach it
+    const zoomMultiplier = maxZoomLevel <= 5 ? 3 : 6;
     const minZoom = screenSize / (3 * largestPageSize);
-    const maxZoom = (3 * screenSize) / smallestPageSize;
+    const maxZoom = (zoomMultiplier * screenSize) / smallestPageSize;
 
     this.camera.setZoomLimits(
       Math.max(0.05, minZoom),
-      Math.min(10, maxZoom)
+      Math.min(maxZoomLevel, maxZoom)
     );
   }
 

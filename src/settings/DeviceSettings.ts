@@ -2,12 +2,17 @@ import type { App } from "obsidian";
 import type { RenderPipeline, RenderEngineType } from "../types";
 import type { ToolbarPosition } from "../view/toolbar/ToolbarTypes";
 
+export type MaxZoomLevel = 5 | 10;
+export type TileMemoryBudgetMB = 200 | 400 | 600 | 1000;
+
 export interface DeviceSettings {
   defaultRenderPipeline: RenderPipeline;
   defaultRenderEngine: RenderEngineType;
   palmRejection: boolean;
   fingerAction: "pan" | "draw";
   toolbarPosition: ToolbarPosition;
+  maxZoomLevel: MaxZoomLevel;
+  tileMemoryBudgetMB: TileMemoryBudgetMB;
 }
 
 export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = {
@@ -16,6 +21,8 @@ export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = {
   palmRejection: true,
   fingerAction: "pan",
   toolbarPosition: "top",
+  maxZoomLevel: 5,
+  tileMemoryBudgetMB: 200,
 };
 
 export const DEVICE_SETTINGS_KEY = "paper-device-settings";
@@ -35,6 +42,11 @@ export function loadDeviceSettings(app: App): DeviceSettings {
     const rp = settings.defaultRenderPipeline as string;
     if (rp === "textures" || rp === "stamps") {
       settings.defaultRenderPipeline = "advanced";
+    }
+
+    // Enforce minimum memory budget for 10x zoom
+    if (settings.maxZoomLevel === 10 && settings.tileMemoryBudgetMB < 400) {
+      settings.tileMemoryBudgetMB = 400;
     }
 
     return settings;

@@ -131,7 +131,9 @@ export class EmbeddedPaperModal extends Modal {
     this.renderer.initInkStamps();
     this.renderer.initMarkerStamps();
     this.renderer.setGrainStrength("pencil", this.settings.pencilGrainStrength);
-    this.renderer.enableTiling();
+    this.renderer.enableTiling({
+      maxMemoryBytes: (this.deviceSettings.tileMemoryBudgetMB ?? 200) * 1024 * 1024,
+    });
 
     // Initial resize
     const rect = container.getBoundingClientRect();
@@ -580,9 +582,11 @@ export class EmbeddedPaperModal extends Modal {
     }
     if (largestPageSize === 0 || smallestPageSize === 0) return;
 
+    const maxZoomLevel = this.deviceSettings.maxZoomLevel ?? 5;
+    const zoomMultiplier = maxZoomLevel <= 5 ? 3 : 6;
     const minZoom = screenSize / (3 * largestPageSize);
-    const maxZoom = (3 * screenSize) / smallestPageSize;
-    this.camera.setZoomLimits(Math.max(0.05, minZoom), Math.min(10, maxZoom));
+    const maxZoom = (zoomMultiplier * screenSize) / smallestPageSize;
+    this.camera.setZoomLimits(Math.max(0.05, minZoom), Math.min(maxZoomLevel, maxZoom));
   }
 
   // ─── Rendering ──────────────────────────────────────────────

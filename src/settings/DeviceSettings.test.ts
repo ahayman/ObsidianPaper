@@ -43,6 +43,8 @@ describe("DeviceSettings", () => {
         palmRejection: false,
         fingerAction: "draw",
         toolbarPosition: "bottom",
+        maxZoomLevel: 10,
+        tileMemoryBudgetMB: 600,
       };
       app.saveLocalStorage(DEVICE_SETTINGS_KEY, JSON.stringify(saved));
       const result = loadDeviceSettings(app);
@@ -82,6 +84,8 @@ describe("DeviceSettings", () => {
         palmRejection: false,
         fingerAction: "draw",
         toolbarPosition: "bottom",
+        maxZoomLevel: 10,
+        tileMemoryBudgetMB: 400,
       };
       saveDeviceSettings(app, settings);
       const result = loadDeviceSettings(app);

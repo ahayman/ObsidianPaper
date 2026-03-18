@@ -3,7 +3,7 @@ import type { Plugin } from "obsidian";
 import type { PaperSettings, PaperFormat, NewNoteLocation } from "./PaperSettings";
 import { formatSpacingDisplay, displayToWorldUnits } from "./PaperSettings";
 import type { PenType, PaperType, PageSizePreset, PageOrientation, LayoutDirection, PageUnit, SpacingUnit, RenderPipeline, RenderEngineType } from "../types";
-import type { DeviceSettings } from "./DeviceSettings";
+import type { DeviceSettings, MaxZoomLevel, TileMemoryBudgetMB } from "./DeviceSettings";
 import type { ToolbarPosition } from "../view/toolbar/ToolbarTypes";
 import { isWebGL2Available } from "../canvas/engine/EngineFactory";
 
@@ -514,6 +514,45 @@ export class PaperSettingsTab extends PluginSettingTab {
           const updated = { ...this.deviceAccess.getDeviceSettings(), defaultRenderEngine: value as RenderEngineType };
           this.deviceAccess.onDeviceSettingsChange(updated);
         });
+      });
+
+    // eslint-disable-next-line prefer-const -- assigned inside callback
+    let memoryDropdownRef: { setValue(v: string): unknown } | null = null;
+
+    new Setting(container)
+      .setName("Max zoom level")
+      .setDesc("Higher zoom allows more detail but uses more memory. Requires reopening the note.")
+      .addDropdown((dropdown) => {
+        dropdown.addOption("5", "5× (default)");
+        dropdown.addOption("10", "10× (high detail)");
+        dropdown.setValue(String(ds.maxZoomLevel ?? 5));
+        dropdown.onChange((value: string) => {
+          const zoom = Number(value) as MaxZoomLevel;
+          const current = { ...this.deviceAccess.getDeviceSettings(), maxZoomLevel: zoom };
+          // Enforce minimum memory for 10x zoom
+          if (zoom === 10 && current.tileMemoryBudgetMB < 400) {
+            current.tileMemoryBudgetMB = 400;
+            memoryDropdownRef?.setValue("400");
+          }
+          this.deviceAccess.onDeviceSettingsChange(current);
+        });
+      });
+
+    new Setting(container)
+      .setName("Tile memory budget")
+      .setDesc("GPU memory for cached tiles. Higher values improve pan/zoom smoothness. Requires reopening the note.")
+      .addDropdown((dropdown) => {
+        dropdown.addOption("200", "200 MB (default)");
+        dropdown.addOption("400", "400 MB");
+        dropdown.addOption("600", "600 MB");
+        dropdown.addOption("1000", "1 GB");
+        dropdown.setValue(String(ds.tileMemoryBudgetMB ?? 200));
+        dropdown.onChange((value: string) => {
+          const mb = Number(value) as TileMemoryBudgetMB;
+          const updated = { ...this.deviceAccess.getDeviceSettings(), tileMemoryBudgetMB: mb };
+          this.deviceAccess.onDeviceSettingsChange(updated);
+        });
+        memoryDropdownRef = dropdown;
       });
 
     // --- Toolbar ---
