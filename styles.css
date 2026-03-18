@@ -1308,3 +1308,102 @@
   border-radius: 6px;
   margin-bottom: 12px;
 }
+
+/* New Paper Document modal */
+.paper-new-document-modal.modal {
+  width: min(500px, 90vw);
+  /* Pin near the top so the on-screen keyboard on iOS doesn't cover it */
+  position: fixed;
+  top: 10vh;
+  transform: translateX(-50%);
+  left: 50%;
+  margin: 0;
+}
+
+.paper-new-document-modal .modal-close-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+
+.paper-new-document-modal .modal-content {
+  padding: 16px 20px;
+}
+
+.paper-new-document-modal h2 {
+  margin: 0 0 16px 0;
+}
+
+.paper-modal-field {
+  margin-bottom: 12px;
+}
+
+.paper-modal-field label {
+  display: block;
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+  margin-bottom: 4px;
+}
+
+.paper-modal-input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: var(--font-ui-medium);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.paper-modal-input:focus {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+}
+
+.paper-modal-input-error {
+  border-color: var(--text-error) !important;
+}
+
+.paper-modal-folder-wrapper {
+  position: relative;
+  margin-bottom: 200px;
+}
+
+.paper-modal-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-top: none;
+  border-radius: 0 0 var(--radius-s) var(--radius-s);
+  z-index: 10;
+}
+
+.paper-modal-suggestion-item {
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+}
+
+.paper-modal-suggestion-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+.paper-modal-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}

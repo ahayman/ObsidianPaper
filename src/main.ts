@@ -12,6 +12,7 @@ import { createEmbedPostProcessor } from "./embed/EmbedPostProcessor";
 import type { EmbedEntry } from "./embed/EmbedPostProcessor";
 import { EmbeddedPaperModal } from "./embed/EmbeddedPaperModal";
 import { exportToSvg } from "./export/SvgExporter";
+import { NewPaperModal } from "./modal/NewPaperModal";
 
 export default class PaperPlugin extends Plugin {
   settings: PaperSettings = DEFAULT_SETTINGS;
@@ -378,10 +379,17 @@ export default class PaperPlugin extends Plugin {
   }
 
   private async createNewPaper(folderOverride?: TFolder): Promise<void> {
-    const folder = folderOverride ?? await this.resolveNewNoteFolder();
+    const defaultFolder = folderOverride ?? await this.resolveNewNoteFolder();
+    const defaultName = this.generateDefaultName();
 
-    const baseName = this.generateFileName(folder);
-    const path = normalizePath(`${folder.path}/${baseName}.${PAPER_EXTENSION}`);
+    new NewPaperModal(this.app, defaultName, defaultFolder, (result) => {
+      void this.doCreatePaper(result.name, result.folder);
+    }).open();
+  }
+
+  private async doCreatePaper(baseName: string, folder: TFolder): Promise<void> {
+    const uniqueName = this.ensureUniqueName(baseName, folder);
+    const path = normalizePath(`${folder.path}/${uniqueName}.${PAPER_EXTENSION}`);
 
     const doc = createEmptyDocument(
       this.manifest.version,
@@ -438,8 +446,16 @@ export default class PaperPlugin extends Plugin {
     }
   }
 
-  private generateFileName(folder: TFolder): string {
-    const base = this.settings.fileNameTemplate || "Untitled Paper";
+  private generateDefaultName(): string {
+    const now = new Date();
+    const pad = (n: number): string => String(n).padStart(2, "0");
+    const hours = now.getHours();
+    const h = hours % 12 || 12;
+    const ampm = hours < 12 ? "AM" : "PM";
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${h}.${pad(now.getMinutes())} ${ampm}`;
+  }
+
+  private ensureUniqueName(base: string, folder: TFolder): string {
     const existingNames = new Set(
       folder.children
         .filter((f): f is TFile => f instanceof TFile)
