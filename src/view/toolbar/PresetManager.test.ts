@@ -29,6 +29,7 @@ function makeState(overrides: Partial<ToolbarState> = {}): ToolbarState {
     grain: DEFAULT_GRAIN_VALUE,
     inkPreset: "standard",
     inkDepletion: 0,
+    strokeScaling: "fixed",
     ...overrides,
   };
 }

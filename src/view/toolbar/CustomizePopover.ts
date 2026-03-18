@@ -1,4 +1,4 @@
-import type { PenType } from "../../types";
+import type { PenType, StrokeScaling } from "../../types";
 import type { PenPreset, ToolbarPosition, ToolbarState } from "./ToolbarTypes";
 import { getPenConfig } from "../../stroke/PenConfigs";
 import { ColorPickerPanel } from "./ColorPickerPanel";
@@ -64,6 +64,7 @@ export class CustomizePopover {
   private nibPressureValue: HTMLElement | null = null;
   private barrelRotationToggle: HTMLInputElement | null = null;
   private colorPicker: ColorPickerPanel | null = null;
+  private strokeScalingBtns: Map<StrokeScaling, HTMLElement> = new Map();
   private penTypeBtns: Map<PenType, HTMLElement> = new Map();
   private positionBtns: Map<ToolbarPosition, HTMLElement> = new Map();
 
@@ -120,6 +121,9 @@ export class CustomizePopover {
       this.callbacks.onStateChange({ width: v });
     }, (el, valEl) => { this.widthSlider = el; this.widthValue = valEl; },
     this.state.width.toFixed(1));
+
+    // 3b. Stroke Scaling
+    this.buildStrokeScalingSection(content);
 
     // 4. Smoothing
     this.buildSliderSection(content, "Smoothing", 0, 1, 0.05, this.state.smoothing, (v) => {
@@ -293,6 +297,36 @@ export class CustomizePopover {
         this.callbacks.onStateChange({ colorId });
       },
     });
+  }
+
+  // ─── Stroke Scaling Section ───────────────────────────────
+
+  private buildStrokeScalingSection(parent: HTMLElement): void {
+    const section = parent.createEl("div", { cls: "paper-popover__section" });
+    const row = section.createEl("div", { cls: "paper-popover__slider-row" });
+    row.createEl("span", { cls: "paper-popover__slider-label", text: "Stroke size" });
+    const btnGroup = row.createEl("div", { cls: "paper-popover__toggle-group" });
+
+    const options: { value: StrokeScaling; label: string }[] = [
+      { value: "fixed", label: "Fixed" },
+      { value: "scaled", label: "Scaled" },
+    ];
+
+    for (const opt of options) {
+      const btn = btnGroup.createEl("button", {
+        cls: "paper-popover__toggle-btn",
+        text: opt.label,
+      });
+      if (opt.value === this.state.strokeScaling) btn.addClass("is-active");
+      this.strokeScalingBtns.set(opt.value, btn);
+
+      btn.addEventListener("click", () => {
+        for (const [, b] of this.strokeScalingBtns) b.removeClass("is-active");
+        btn.addClass("is-active");
+        this.state.strokeScaling = opt.value;
+        this.callbacks.onStateChange({ strokeScaling: opt.value });
+      });
+    }
   }
 
   // ─── Slider Helpers ────────────────────────────────────────

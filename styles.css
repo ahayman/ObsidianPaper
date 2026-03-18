@@ -649,6 +649,41 @@
   border-color: var(--interactive-accent);
 }
 
+/* Toggle button group (e.g., Fixed/Scaled) */
+.paper-popover__toggle-group {
+  display: flex;
+  gap: 0;
+}
+
+.paper-popover__toggle-btn {
+  padding: 3px 10px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.paper-popover__toggle-btn:first-child {
+  border-radius: 4px 0 0 4px;
+}
+
+.paper-popover__toggle-btn:last-child {
+  border-radius: 0 4px 4px 0;
+  border-left: none;
+}
+
+.paper-popover__toggle-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
+.paper-popover__toggle-btn.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
 /* Color swatches */
 .paper-popover__colors {
   display: flex;

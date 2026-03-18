@@ -1,6 +1,6 @@
 import { Modal, Platform } from "obsidian";
 import type { App, TFile } from "obsidian";
-import type { PaperDocument, PenStyle, PenType, Stroke, StrokePoint, Page, PageSize, PageDefaults, PaperType, PageOrientation, PageBackgroundColor, PageBackgroundTheme, PageMargins, RenderPipeline } from "../types";
+import type { PaperDocument, PenStyle, PenType, StrokeScaling, Stroke, StrokePoint, Page, PageSize, PageDefaults, PaperType, PageOrientation, PageBackgroundColor, PageBackgroundTheme, PageMargins, RenderPipeline } from "../types";
 import { PAGE_SIZE_PRESETS, PPI, CM_PER_INCH } from "../types";
 import { Camera } from "../canvas/Camera";
 import { Renderer } from "../canvas/Renderer";
@@ -84,6 +84,7 @@ export class EmbeddedPaperModal extends Modal {
   private currentInkPreset = "standard";
   private currentInkDepletion = 0;
   private currentUseBarrelRotation = false;
+  private currentStrokeScaling: StrokeScaling = "fixed";
 
   constructor(
     app: App,
@@ -162,6 +163,7 @@ export class EmbeddedPaperModal extends Modal {
         grain: this.currentGrain,
         inkPreset: this.currentInkPreset,
         inkDepletion: this.currentInkDepletion,
+        strokeScaling: this.currentStrokeScaling,
       },
       this.settings.penPresets,
       this.deviceSettings.toolbarPosition,
@@ -285,6 +287,7 @@ export class EmbeddedPaperModal extends Modal {
         this.currentInkPreset = preset.inkPreset ?? "standard";
         this.currentInkDepletion = preset.inkDepletion ?? 0;
         this.currentUseBarrelRotation = preset.useBarrelRotation ?? false;
+        this.currentStrokeScaling = preset.strokeScaling ?? "fixed";
         if (preset.nibAngle !== undefined) this.currentNibAngle = preset.nibAngle;
         if (preset.nibThickness !== undefined) this.currentNibThickness = preset.nibThickness;
         if (preset.nibPressure !== undefined) this.currentNibPressure = preset.nibPressure;
@@ -839,6 +842,7 @@ export class EmbeddedPaperModal extends Modal {
         this.currentGrain = state.grain;
         this.currentInkPreset = state.inkPreset;
         this.currentInkDepletion = state.inkDepletion;
+        this.currentStrokeScaling = state.strokeScaling;
         this.renderer?.setCurrentInkPreset(state.inkPreset);
       },
       onUndo: () => this.undo(),
@@ -908,6 +912,9 @@ export class EmbeddedPaperModal extends Modal {
 
         this.activeStrokePageIndex = pageIndex;
         const style = this.getCurrentStyle();
+        if (this.currentStrokeScaling === "scaled") {
+          style.width = style.width / this.camera.zoom;
+        }
         const styleName = this.getCurrentStyleName();
         const baseStyle = this.document.styles[styleName];
         const overrides = baseStyle ? computeStyleOverrides(baseStyle, style) : undefined;
@@ -930,6 +937,9 @@ export class EmbeddedPaperModal extends Modal {
 
         if (!this.strokeBuilder) return;
         const style = this.getCurrentStyle();
+        if (this.currentStrokeScaling === "scaled") {
+          style.width = style.width / this.camera.zoom;
+        }
         const pageRect = this.getActivePageRect();
         const pageDark = this.getActivePageDarkColors();
 
@@ -971,6 +981,9 @@ export class EmbeddedPaperModal extends Modal {
         if (this.strokeBuilder.pointCount >= 2) {
           const builder = this.strokeBuilder;
           const style = this.getCurrentStyle();
+          if (this.currentStrokeScaling === "scaled") {
+            style.width = style.width / this.camera.zoom;
+          }
           const styleName = this.getCurrentStyleName();
           const docStyles = this.document.styles;
           const pageRect = this.getActivePageRect();
@@ -1071,9 +1084,12 @@ export class EmbeddedPaperModal extends Modal {
         if (hasNib && this.currentUseBarrelRotation && twist !== 0) {
           nibAngle = twist * Math.PI / 180;
         }
+        const hoverWidth = this.currentStrokeScaling === "scaled"
+          ? this.currentWidth / this.camera.zoom
+          : this.currentWidth;
         this.hoverCursor?.show(x, y, {
           colorId: this.currentColorId,
-          width: this.currentWidth,
+          width: hoverWidth,
           isDarkMode: this.themeDetector?.isDarkMode ?? false,
           isEraser: this.activeTool === "eraser",
           zoom: this.camera.zoom,

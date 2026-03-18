@@ -1,4 +1,4 @@
-import type { PenType } from "../../types";
+import type { PenType, StrokeScaling } from "../../types";
 
 export interface PenPreset {
   id: string;
@@ -14,6 +14,7 @@ export interface PenPreset {
   grain?: number;          // 0-1, pencil only (grain slider value)
   inkPreset?: string;      // Ink preset ID, fountain only
   inkDepletion?: number;   // 0-1, felt-tip only (ink depletion rate)
+  strokeScaling?: StrokeScaling; // "fixed" (default) or "scaled" (width scales with zoom)
 }
 
 export type ToolbarPosition = "top" | "bottom" | "left" | "right";
@@ -33,6 +34,7 @@ export interface ToolbarState {
   grain: number;
   inkPreset: string;
   inkDepletion: number;
+  strokeScaling: StrokeScaling;
 }
 
 export interface ToolbarCallbacks {

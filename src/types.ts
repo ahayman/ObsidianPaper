@@ -11,6 +11,8 @@ export type PenType =
   | "fountain"
   | "highlighter";
 
+export type StrokeScaling = "fixed" | "scaled";
+
 export interface PenStyle {
   pen: PenType;
   color: string; // Semantic color ID or hex

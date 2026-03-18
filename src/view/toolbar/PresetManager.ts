@@ -118,6 +118,10 @@ export class PresetManager {
     if (penConfig.nibAngle !== null) {
       preset.useBarrelRotation = state.useBarrelRotation;
     }
+    // Include stroke scaling if non-default
+    if (state.strokeScaling === "scaled") {
+      preset.strokeScaling = state.strokeScaling;
+    }
     return preset;
   }
 
@@ -138,7 +142,8 @@ export class PresetManager {
         (p.grain ?? DEFAULT_GRAIN_VALUE) === state.grain &&
         (p.inkPreset ?? "standard") === state.inkPreset &&
         (p.inkDepletion ?? 0) === state.inkDepletion &&
-        (p.useBarrelRotation ?? false) === state.useBarrelRotation
+        (p.useBarrelRotation ?? false) === state.useBarrelRotation &&
+        (p.strokeScaling ?? "fixed") === state.strokeScaling
       ) {
         return p.id;
       }
