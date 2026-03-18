@@ -56,9 +56,13 @@ export function computeSelectionBBox(
 /** Corner handle identifiers */
 export type HandleCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 
+/** Midpoint handle identifiers */
+export type HandleMidpoint = "top" | "bottom" | "left" | "right";
+
 /** Result of hit-testing the selection UI */
 export type SelectionHitResult =
   | { type: "handle"; corner: HandleCorner }
+  | { type: "midpoint"; edge: HandleMidpoint }
   | { type: "rotation" }  // Rotation handle above top-center
   | { type: "inside" }    // Inside bbox but not on handle → move
   | { type: "outside" };  // Outside bbox → deselect
@@ -75,6 +79,18 @@ export function getHandlePositions(bbox: SelectionBBox): Record<HandleCorner, { 
     "top-right": { x: bbox.x + bbox.width, y: bbox.y },
     "bottom-left": { x: bbox.x, y: bbox.y + bbox.height },
     "bottom-right": { x: bbox.x + bbox.width, y: bbox.y + bbox.height },
+  };
+}
+
+/**
+ * Get the world-space positions of the 4 midpoint handles.
+ */
+export function getMidpointPositions(bbox: SelectionBBox): Record<HandleMidpoint, { x: number; y: number }> {
+  return {
+    "top": { x: bbox.x + bbox.width / 2, y: bbox.y },
+    "bottom": { x: bbox.x + bbox.width / 2, y: bbox.y + bbox.height },
+    "left": { x: bbox.x, y: bbox.y + bbox.height / 2 },
+    "right": { x: bbox.x + bbox.width, y: bbox.y + bbox.height / 2 },
   };
 }
 
@@ -116,6 +132,20 @@ export function hitTestSelection(
     const dy = screenY - screen.y;
     if (dx * dx + dy * dy <= handleRadiusScreen * handleRadiusScreen) {
       return { type: "handle", corner };
+    }
+  }
+
+  // Test midpoint handles
+  const midpoints = getMidpointPositions(bbox);
+  const edges: HandleMidpoint[] = ["top", "bottom", "left", "right"];
+
+  for (const edge of edges) {
+    const pos = midpoints[edge];
+    const screen = camera.worldToScreen(pos.x, pos.y);
+    const dx = screenX - screen.x;
+    const dy = screenY - screen.y;
+    if (dx * dx + dy * dy <= handleRadiusScreen * handleRadiusScreen) {
+      return { type: "midpoint", edge };
     }
   }
 

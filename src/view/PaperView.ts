@@ -32,8 +32,8 @@ import { selectStrokesInLasso, previewLassoSelection } from "../selection/LassoS
 import type { Point2D } from "../selection/PointInPolygon";
 import { SelectionOverlay } from "../selection/SelectionOverlay";
 import { computeSelectionBBox, hitTestSelection } from "../selection/SelectionState";
-import type { SelectionState, SelectionBBox, HandleCorner } from "../selection/SelectionState";
-import { cloneStroke, translateStroke, scaleStroke, rotateStroke, snapAngle } from "../selection/SelectionTransform";
+import type { SelectionState, SelectionBBox, HandleCorner, HandleMidpoint } from "../selection/SelectionState";
+import { cloneStroke, translateStroke, scaleStroke, stretchStroke, rotateStroke, snapAngle } from "../selection/SelectionTransform";
 import { findNearestStroke } from "../selection/StrokeHitTester";
 import { SelectionActionBar } from "../selection/SelectionActionBar";
 import type { ClipboardQueue } from "../selection/Clipboard";
@@ -91,8 +91,9 @@ export class PaperView extends TextFileView {
   private lassoPreviewAt = 0;
   private selectionState: SelectionState | null = null;
   private selectionOverlay: SelectionOverlay | null = null;
-  private selectionDragType: "move" | "resize" | "rotate" | null = null;
+  private selectionDragType: "move" | "resize" | "stretch" | "rotate" | null = null;
   private selectionDragHandle: HandleCorner | null = null;
+  private selectionDragMidpoint: HandleMidpoint | null = null;
   private selectionDragStart: { x: number; y: number } | null = null;
   /** Initial angle from selection center to pointer at rotation start */
   private selectionRotateBaseAngle = 0;
@@ -1259,6 +1260,13 @@ export class PaperView extends TextFileView {
               return;
             }
 
+            if (hit.type === "midpoint") {
+              this.selectionDragType = "stretch";
+              this.selectionDragMidpoint = hit.edge;
+              this.selectionDragStart = { x: point.x, y: point.y };
+              return;
+            }
+
             if (hit.type === "rotation") {
               this.selectionDragType = "rotate";
               this.selectionDragStart = { x: point.x, y: point.y };
@@ -1785,6 +1793,37 @@ export class PaperView extends TextFileView {
       const ty = anchorScreen.y * (1 - scale);
 
       this.selectionOverlay?.setTransform(tx, ty, scale);
+    } else if (this.selectionDragType === "stretch" && this.selectionDragMidpoint) {
+      const bbox = this.selectionState.boundingBox;
+      const edge = this.selectionDragMidpoint;
+
+      const tl = this.camera.worldToScreen(bbox.x, bbox.y);
+      const br = this.camera.worldToScreen(bbox.x + bbox.width, bbox.y + bbox.height);
+
+      let sx = 1;
+      let sy = 1;
+      let anchorScreenX: number;
+      let anchorScreenY: number;
+
+      if (edge === "left" || edge === "right") {
+        const origW = br.x - tl.x;
+        if (origW < 1) return;
+        anchorScreenX = edge === "right" ? tl.x : br.x;
+        anchorScreenY = tl.y;
+        const edgeScreenX = edge === "right" ? br.x : tl.x;
+        sx = Math.max(0.1, (edgeScreenX + dx - anchorScreenX) / (edgeScreenX - anchorScreenX));
+      } else {
+        const origH = br.y - tl.y;
+        if (origH < 1) return;
+        anchorScreenX = tl.x;
+        anchorScreenY = edge === "bottom" ? tl.y : br.y;
+        const edgeScreenY = edge === "bottom" ? br.y : tl.y;
+        sy = Math.max(0.1, (edgeScreenY + dy - anchorScreenY) / (edgeScreenY - anchorScreenY));
+      }
+
+      const tx = anchorScreenX * (1 - sx);
+      const ty = anchorScreenY * (1 - sy);
+      this.selectionOverlay?.setStretchTransform(tx, ty, sx, sy);
     } else if (this.selectionDragType === "rotate") {
       const bbox = this.selectionState.boundingBox;
       const center = this.camera.worldToScreen(
@@ -1814,11 +1853,21 @@ export class PaperView extends TextFileView {
       const worldDx = dx / this.camera.zoom;
       const worldDy = dy / this.camera.zoom;
 
+      // Detect cross-page move: check what page the new center lands on
+      const oldBBox = this.selectionState.boundingBox;
+      const newCenterX = oldBBox.x + oldBBox.width / 2 + worldDx;
+      const newCenterY = oldBBox.y + oldBBox.height / 2 + worldDy;
+      const targetPageIndex = findPageAtPoint(newCenterX, newCenterY, this.pageLayout);
+      const crossPage = targetPageIndex >= 0 && targetPageIndex !== this.selectionState.pageIndex;
+
       for (const stroke of this.document.strokes) {
         if (!this.selectionState.strokeIds.has(stroke.id)) continue;
 
         const before = cloneStroke(stroke);
         const after = translateStroke(stroke, worldDx, worldDy);
+        if (crossPage) {
+          after.pageIndex = targetPageIndex;
+        }
 
         // Apply in-place
         Object.assign(stroke, after);
@@ -1827,6 +1876,10 @@ export class PaperView extends TextFileView {
         this.spatialIndex.insert(stroke, this.document.strokes.indexOf(stroke));
 
         undoEntries.push({ strokeId: stroke.id, before, after: cloneStroke(stroke) });
+      }
+
+      if (crossPage) {
+        this.selectionState.pageIndex = targetPageIndex;
       }
     } else if (this.selectionDragType === "resize" && this.selectionDragHandle) {
       const bbox = this.selectionState.boundingBox;
@@ -1850,6 +1903,55 @@ export class PaperView extends TextFileView {
 
           const before = cloneStroke(stroke);
           const after = scaleStroke(stroke, anchorWorld.x, anchorWorld.y, scale, true, this.document.styles);
+
+          Object.assign(stroke, after);
+          clearCompressedCache(stroke);
+          this.spatialIndex.remove(stroke.id);
+          this.spatialIndex.insert(stroke, this.document.strokes.indexOf(stroke));
+
+          undoEntries.push({ strokeId: stroke.id, before, after: cloneStroke(stroke) });
+        }
+      }
+    } else if (this.selectionDragType === "stretch" && this.selectionDragMidpoint) {
+      const bbox = this.selectionState.boundingBox;
+      const edge = this.selectionDragMidpoint;
+
+      // Compute anchor and scale in world space
+      let anchorWorldX: number;
+      let anchorWorldY: number;
+      let sx = 1;
+      let sy = 1;
+
+      if (edge === "left" || edge === "right") {
+        anchorWorldX = edge === "right" ? bbox.x : bbox.x + bbox.width;
+        anchorWorldY = bbox.y;
+        const edgeWorldX = edge === "right" ? bbox.x + bbox.width : bbox.x;
+        const anchorScreen = this.camera.worldToScreen(anchorWorldX, anchorWorldY);
+        const edgeScreen = this.camera.worldToScreen(edgeWorldX, anchorWorldY);
+        const origW = edgeScreen.x - anchorScreen.x;
+        if (Math.abs(origW) >= 1) {
+          sx = (edgeScreen.x + dx - anchorScreen.x) / origW;
+          sx = Math.max(0.1, sx);
+        }
+      } else {
+        anchorWorldX = bbox.x;
+        anchorWorldY = edge === "bottom" ? bbox.y : bbox.y + bbox.height;
+        const edgeWorldY = edge === "bottom" ? bbox.y + bbox.height : bbox.y;
+        const anchorScreen = this.camera.worldToScreen(anchorWorldX, anchorWorldY);
+        const edgeScreen = this.camera.worldToScreen(anchorWorldX, edgeWorldY);
+        const origH = edgeScreen.y - anchorScreen.y;
+        if (Math.abs(origH) >= 1) {
+          sy = (edgeScreen.y + dy - anchorScreen.y) / origH;
+          sy = Math.max(0.1, sy);
+        }
+      }
+
+      if (Math.abs(sx - 1) > 0.001 || Math.abs(sy - 1) > 0.001) {
+        for (const stroke of this.document.strokes) {
+          if (!this.selectionState.strokeIds.has(stroke.id)) continue;
+
+          const before = cloneStroke(stroke);
+          const after = stretchStroke(stroke, anchorWorldX, anchorWorldY, sx, sy, this.document.styles);
 
           Object.assign(stroke, after);
           clearCompressedCache(stroke);
@@ -1908,6 +2010,7 @@ export class PaperView extends TextFileView {
     this.selectionOverlay?.clearTransform();
     this.selectionDragType = null;
     this.selectionDragHandle = null;
+    this.selectionDragMidpoint = null;
     this.selectionDragStart = null;
     this.renderStaticWithIcons();
     this.renderSelectionUI();
@@ -1917,6 +2020,7 @@ export class PaperView extends TextFileView {
     this.selectionOverlay?.clearTransform();
     this.selectionDragType = null;
     this.selectionDragHandle = null;
+    this.selectionDragMidpoint = null;
     this.selectionDragStart = null;
     this.renderSelectionUI();
   }

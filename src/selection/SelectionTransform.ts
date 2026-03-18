@@ -92,6 +92,47 @@ export function scaleStroke(
 }
 
 /**
+ * Non-proportionally scale (stretch) a stroke along one or both axes.
+ * The bbox is recomputed from the stretched points.
+ */
+export function stretchStroke(
+  stroke: Stroke,
+  anchorX: number,
+  anchorY: number,
+  scaleX: number,
+  scaleY: number,
+  styles?: Record<string, PenStyle>
+): Stroke {
+  const points = decodePoints(stroke.pts);
+  for (const pt of points) {
+    pt.x = anchorX + (pt.x - anchorX) * scaleX;
+    pt.y = anchorY + (pt.y - anchorY) * scaleY;
+  }
+
+  const result: Stroke = {
+    ...stroke,
+    pts: encodePoints(points),
+    grainAnchor: stroke.grainAnchor
+      ? [
+          anchorX + (stroke.grainAnchor[0] - anchorX) * scaleX,
+          anchorY + (stroke.grainAnchor[1] - anchorY) * scaleY,
+        ]
+      : undefined,
+  };
+
+  // Scale width by geometric mean of the two axes
+  if (stroke.styleOverrides?.width !== undefined) {
+    result.styleOverrides = {
+      ...result.styleOverrides,
+      width: stroke.styleOverrides.width * Math.sqrt(Math.abs(scaleX * scaleY)),
+    };
+  }
+
+  result.bbox = computeStrokeBBox(points, result, styles);
+  return result;
+}
+
+/**
  * Rotate all points in a stroke around a center point.
  * The bbox is recomputed from the rotated points.
  */

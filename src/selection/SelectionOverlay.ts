@@ -7,11 +7,13 @@
  */
 
 import type { Camera } from "../canvas/Camera";
-import type { SelectionBBox, HandleCorner } from "./SelectionState";
-import { getHandlePositions, ROTATION_HANDLE_OFFSET } from "./SelectionState";
+import type { SelectionBBox, HandleCorner, HandleMidpoint } from "./SelectionState";
+import { getHandlePositions, getMidpointPositions, ROTATION_HANDLE_OFFSET } from "./SelectionState";
 
 /** Handle radius in screen pixels */
 const HANDLE_RADIUS = 6;
+/** Midpoint handle radius (smaller to distinguish from corners) */
+const MIDPOINT_RADIUS = 4;
 /** Handle border width in screen pixels */
 const HANDLE_BORDER = 1.5;
 
@@ -102,6 +104,16 @@ export class SelectionOverlay {
       this.drawHandle(ctx, screen.x, screen.y);
     }
 
+    // Draw midpoint handles (smaller)
+    const midpoints = getMidpointPositions(bbox);
+    const edges: HandleMidpoint[] = ["top", "bottom", "left", "right"];
+
+    for (const edge of edges) {
+      const pos = midpoints[edge];
+      const screen = camera.worldToScreen(pos.x, pos.y);
+      this.drawHandle(ctx, screen.x, screen.y, MIDPOINT_RADIUS);
+    }
+
     // Draw rotation handle (above top-center, connected by a line)
     const topCenter = camera.worldToScreen(bbox.x + bbox.width / 2, bbox.y);
     const rotY = topCenter.y - ROTATION_HANDLE_OFFSET;
@@ -130,6 +142,13 @@ export class SelectionOverlay {
   }
 
   /**
+   * Apply a non-uniform CSS scale (for midpoint stretch).
+   */
+  setStretchTransform(tx: number, ty: number, sx: number, sy: number): void {
+    this.canvas.style.transform = `translate(${tx}px, ${ty}px) scale(${sx}, ${sy})`;
+  }
+
+  /**
    * Apply a CSS rotation around a screen-space center point.
    */
   setRotateTransform(centerX: number, centerY: number, angle: number): void {
@@ -147,9 +166,9 @@ export class SelectionOverlay {
     this.canvas.remove();
   }
 
-  private drawHandle(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+  private drawHandle(ctx: CanvasRenderingContext2D, x: number, y: number, radius = HANDLE_RADIUS): void {
     ctx.beginPath();
-    ctx.arc(x, y, HANDLE_RADIUS, 0, Math.PI * 2);
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.fillStyle = HANDLE_FILL_COLOR;
     ctx.fill();
     ctx.strokeStyle = HANDLE_STROKE_COLOR;
