@@ -786,7 +786,16 @@ export class Renderer {
    * Render a lasso selection path on the active canvas.
    * Draws a dashed line following the world-space points.
    */
-  renderLassoPath(points: readonly { x: number; y: number }[]): void {
+  /**
+   * Render the lasso selection path and optional stroke highlights on the active canvas.
+   *
+   * @param points - World-space lasso polygon vertices
+   * @param highlightBBoxes - Bounding boxes of strokes that would be selected (for feedback)
+   */
+  renderLassoPath(
+    points: readonly { x: number; y: number }[],
+    highlightBBoxes?: readonly [number, number, number, number][],
+  ): void {
     if (points.length < 2) return;
 
     this.pendingActiveRender = () => {
@@ -795,6 +804,19 @@ export class Renderer {
       this.activeCtx.scale(this.dpr, this.dpr);
       this.camera.applyToContext(this.activeCtx);
 
+      // Draw stroke highlights first (behind the lasso path)
+      if (highlightBBoxes && highlightBBoxes.length > 0) {
+        this.activeCtx.fillStyle = "rgba(66, 133, 244, 0.12)";
+        const pad = 2 / this.camera.zoom;
+        for (const bb of highlightBBoxes) {
+          this.activeCtx.fillRect(
+            bb[0] - pad, bb[1] - pad,
+            bb[2] - bb[0] + pad * 2, bb[3] - bb[1] + pad * 2,
+          );
+        }
+      }
+
+      // Draw lasso path
       const dashLen = 4 / this.camera.zoom;
       const gapLen = 3 / this.camera.zoom;
       const lineWidth = 1.5 / this.camera.zoom;

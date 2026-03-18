@@ -82,6 +82,57 @@ function computeContainmentFraction(
 }
 
 /**
+ * Fast preview of which strokes would be selected by the current lasso polygon.
+ * Uses point sampling (every 3rd point) for speed. Returns stroke bboxes for highlight rendering.
+ *
+ * @returns Array of bounding boxes for strokes that would be selected
+ */
+export function previewLassoSelection(
+  lassoPoints: readonly Point2D[],
+  strokes: readonly Stroke[],
+  spatialIndex: SpatialIndex,
+  threshold: number = DEFAULT_THRESHOLD,
+  pageIndex: number = -1,
+): [number, number, number, number][] {
+  if (lassoPoints.length < 3) return [];
+
+  const lassoBBox = polygonBBox(lassoPoints);
+  const candidateIds = new Set(
+    spatialIndex.queryRect(lassoBBox[0], lassoBBox[1], lassoBBox[2], lassoBBox[3])
+  );
+
+  if (candidateIds.size === 0) return [];
+
+  const result: [number, number, number, number][] = [];
+
+  for (const stroke of strokes) {
+    if (!candidateIds.has(stroke.id)) continue;
+    if (pageIndex >= 0 && stroke.pageIndex !== pageIndex) continue;
+    if (!bboxIntersects(stroke.bbox, lassoBBox)) continue;
+
+    const points = decodePoints(stroke.pts);
+    if (points.length === 0) continue;
+
+    // Sample every 3rd point for speed (still accurate enough for preview)
+    const step = points.length > 30 ? 3 : 1;
+    let inside = 0;
+    let tested = 0;
+    for (let i = 0; i < points.length; i += step) {
+      if (isPointInPolygon(points[i].x, points[i].y, lassoPoints)) {
+        inside++;
+      }
+      tested++;
+    }
+
+    if (tested > 0 && inside / tested >= threshold) {
+      result.push(stroke.bbox);
+    }
+  }
+
+  return result;
+}
+
+/**
  * Test if two axis-aligned bounding boxes intersect.
  */
 function bboxIntersects(

@@ -28,7 +28,7 @@ import { DocumentSettingsPopover } from "./toolbar/DocumentSettingsPopover";
 import { decodePoints, encodePoints } from "../document/PointEncoder";
 import { resolvePageBackground } from "../color/ColorUtils";
 import { DEFAULT_GRAIN_VALUE } from "../stamp/GrainMapping";
-import { selectStrokesInLasso } from "../selection/LassoSelector";
+import { selectStrokesInLasso, previewLassoSelection } from "../selection/LassoSelector";
 import type { Point2D } from "../selection/PointInPolygon";
 import { SelectionOverlay } from "../selection/SelectionOverlay";
 import { computeSelectionBBox, hitTestSelection } from "../selection/SelectionState";
@@ -85,6 +85,10 @@ export class PaperView extends TextFileView {
   private lassoPoints: Point2D[] = [];
   private lassoPageIndex = -1;
   private lassoStartScreen: { x: number; y: number } | null = null;
+  /** Cached highlight bboxes for incremental lasso feedback */
+  private lassoHighlights: [number, number, number, number][] = [];
+  /** Lasso point count at last preview computation */
+  private lassoPreviewAt = 0;
   private selectionState: SelectionState | null = null;
   private selectionOverlay: SelectionOverlay | null = null;
   private selectionDragType: "move" | "resize" | "rotate" | null = null;
@@ -1320,7 +1324,21 @@ export class PaperView extends TextFileView {
             const world = this.camera.screenToWorld(point.x, point.y);
             this.lassoPoints.push({ x: world.x, y: world.y });
           }
-          this.renderer?.renderLassoPath(this.lassoPoints);
+
+          // Update incremental preview every ~10 points
+          if (this.lassoPoints.length >= 3 &&
+              this.lassoPoints.length - this.lassoPreviewAt >= 10) {
+            this.lassoPreviewAt = this.lassoPoints.length;
+            this.lassoHighlights = previewLassoSelection(
+              this.lassoPoints,
+              this.document.strokes,
+              this.spatialIndex,
+              0.75,
+              this.lassoPageIndex,
+            );
+          }
+
+          this.renderer?.renderLassoPath(this.lassoPoints, this.lassoHighlights);
           return;
         }
 
@@ -1445,6 +1463,8 @@ export class PaperView extends TextFileView {
           }
           this.lassoPoints = [];
           this.lassoStartScreen = null;
+          this.lassoHighlights = [];
+          this.lassoPreviewAt = 0;
           this.lassoPageIndex = -1;
           this.renderer?.clearActiveLayer();
           return;
@@ -1580,6 +1600,8 @@ export class PaperView extends TextFileView {
     this.renderer?.clearActiveLayer();
     this.lassoPoints = [];
     this.lassoStartScreen = null;
+    this.lassoHighlights = [];
+    this.lassoPreviewAt = 0;
 
     const world = this.camera.screenToWorld(point.x, point.y);
     const pageIndex = findPageAtPoint(world.x, world.y, this.pageLayout);
@@ -1664,6 +1686,8 @@ export class PaperView extends TextFileView {
     const pageIndex = this.lassoPageIndex;
     this.lassoPoints = [];
     this.lassoStartScreen = null;
+    this.lassoHighlights = [];
+    this.lassoPreviewAt = 0;
     this.lassoPageIndex = -1;
 
     if (selectedIds.length === 0) return;
