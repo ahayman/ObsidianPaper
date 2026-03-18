@@ -7,7 +7,7 @@ import { InputManager } from "../input/InputManager";
 import type { InputCallbacks } from "../input/InputManager";
 import { StrokeBuilder } from "../stroke/StrokeBuilder";
 import { UndoManager } from "../document/UndoManager";
-import { createEmptyDocument, generatePageId } from "../document/Document";
+import { createEmptyDocument, generatePageId, generateStrokeId } from "../document/Document";
 import { serializeDocument, deserializeDocument, precompressStroke, clearCompressedCache } from "../document/Serializer";
 import { getPenConfig } from "../stroke/PenConfigs";
 import { findHitStrokes } from "../eraser/StrokeEraser";
@@ -35,6 +35,7 @@ import { computeSelectionBBox, hitTestSelection } from "../selection/SelectionSt
 import type { SelectionState, SelectionBBox, HandleCorner } from "../selection/SelectionState";
 import { cloneStroke, translateStroke, scaleStroke } from "../selection/SelectionTransform";
 import { SelectionActionBar } from "../selection/SelectionActionBar";
+import type { ClipboardQueue } from "../selection/Clipboard";
 import { getEffectiveDPR } from "../canvas/HighDPI";
 
 export const VIEW_TYPE_PAPER = "paper-view";
@@ -84,6 +85,8 @@ export class PaperView extends TextFileView {
   private selectionDragHandle: HandleCorner | null = null;
   private selectionDragStart: { x: number; y: number } | null = null;
   private selectionActionBar: SelectionActionBar | null = null;
+  /** Shared clipboard queue — set by the plugin, shared across all views */
+  clipboard: ClipboardQueue | null = null;
 
   // Active tool state
   private activeTool: ActiveTool = "pen";
@@ -164,9 +167,12 @@ export class PaperView extends TextFileView {
         onColorChange: (colorId) => this.applySelectionColor(colorId),
         onPenTypeChange: (penType) => this.applySelectionPenType(penType),
         onWidthChange: (width) => this.applySelectionWidth(width),
+        onCopy: () => this.copySelection(),
+        onCut: () => this.cutSelection(),
+        onPaste: () => this.pasteClipboard(),
+        onDuplicate: () => this.duplicateSelection(),
         onDelete: () => this.deleteSelection(),
       },
-      this.themeDetector?.isDarkMode ?? false,
     );
     this.selectionActionBar.hide();
 
@@ -206,6 +212,11 @@ export class PaperView extends TextFileView {
       this.deviceSettings.toolbarPosition,
       this.themeDetector.isDarkMode
     );
+
+    // Show paste button if clipboard already has content (shared across views)
+    if (this.clipboard && !this.clipboard.isEmpty) {
+      this.toolbar.showPasteButton(true, this.clipboard?.size ?? 0);
+    }
 
     // Page menu button (per-page settings icon + hit areas)
     this.pageMenuButton = new PageMenuButton(container, this.camera, {
@@ -384,6 +395,17 @@ export class PaperView extends TextFileView {
         }
         break;
       }
+      case "add-strokes": {
+        for (const stroke of action.strokes) {
+          const idx = this.document.strokes.findIndex(s => s.id === stroke.id);
+          if (idx !== -1) {
+            this.document.strokes.splice(idx, 1);
+            this.spatialIndex.remove(stroke.id);
+            this.renderer?.invalidateCache(stroke.id);
+          }
+        }
+        break;
+      }
       case "remove-stroke": {
         const insertIdx = Math.min(
           action.index,
@@ -437,6 +459,13 @@ export class PaperView extends TextFileView {
       case "add-stroke": {
         this.document.strokes.push(action.stroke);
         this.spatialIndex.insert(action.stroke, this.document.strokes.length - 1);
+        break;
+      }
+      case "add-strokes": {
+        for (const stroke of action.strokes) {
+          this.document.strokes.push(stroke);
+          this.spatialIndex.insert(stroke, this.document.strokes.length - 1);
+        }
         break;
       }
       case "remove-stroke": {
@@ -1128,6 +1157,9 @@ export class PaperView extends TextFileView {
       onRedo: () => {
         this.redo();
       },
+      onPaste: () => {
+        this.pasteClipboard();
+      },
       onAddPage: () => {
         this.addPage();
       },
@@ -1793,6 +1825,7 @@ export class PaperView extends TextFileView {
       this.undoManager.pushModifyStrokes(undoEntries);
       this.toolbar?.refreshUndoRedo();
       this.renderStaticWithIcons();
+      this.renderSelectionUI();
       this.requestSave();
     }
   }
@@ -1826,6 +1859,138 @@ export class PaperView extends TextFileView {
 
     this.clearSelection();
     this.renderStaticWithIcons();
+  }
+
+  // ─── Clipboard Operations ───────────────────────────────────────
+
+  copySelection(): void {
+    if (!this.selectionState || !this.clipboard) return;
+    this.clipboard.push(
+      this.selectionState.strokeIds,
+      this.document.strokes,
+      this.document.styles,
+      this.selectionState.pageIndex,
+    );
+    this.toolbar?.showPasteButton(true, this.clipboard?.size ?? 0);
+  }
+
+  cutSelection(): void {
+    if (!this.selectionState) return;
+    this.copySelection();
+    this.deleteSelection();
+  }
+
+  pasteClipboard(): void {
+    if (!this.clipboard || this.clipboard.isEmpty) return;
+
+    const result = this.clipboard.paste(
+      this.camera,
+      this.cssWidth,
+      this.cssHeight,
+      this.pageLayout,
+      this.document.styles,
+    );
+    if (!result) return;
+
+    // Add pasted strokes to document
+    for (const stroke of result.strokes) {
+      this.document.strokes.push(stroke);
+      this.spatialIndex.insert(stroke, this.document.strokes.length - 1);
+    }
+
+    this.undoManager.pushAddStrokes(result.strokes);
+    this.toolbar?.refreshUndoRedo();
+    this.renderer?.invalidateCache();
+    this.renderStaticWithIcons();
+    this.requestSave();
+
+    // Select the pasted strokes
+    this.clearSelection();
+    const strokeIds = new Set(result.strokes.map(s => s.id));
+    const boundingBox = computeSelectionBBox(strokeIds, this.document.strokes);
+    this.selectionState = { strokeIds, boundingBox, pageIndex: result.pageIndex };
+
+    if (this.renderer) {
+      this.renderer.excludeStrokeIds = strokeIds;
+      for (const id of strokeIds) {
+        this.renderer.invalidateCache(id);
+      }
+    }
+    this.renderStaticWithIcons();
+    this.renderSelectionUI();
+    this.selectionActionBar?.show();
+
+    // Update paste button badge (queue shrunk by 1)
+    if (this.clipboard?.isEmpty) {
+      this.toolbar?.showPasteButton(false);
+    } else {
+      this.toolbar?.showPasteButton(true, this.clipboard?.size ?? 0);
+    }
+
+    // Switch to lasso tool if not already
+    if (this.activeTool !== "lasso") {
+      this.activeTool = "lasso";
+      this.toolbar?.setState({ activeTool: "lasso" });
+    }
+  }
+
+  duplicateSelection(): void {
+    if (!this.selectionState) return;
+
+    // Deep clone selected strokes with new IDs and offset
+    const newStrokes: Stroke[] = [];
+    for (const stroke of this.document.strokes) {
+      if (!this.selectionState.strokeIds.has(stroke.id)) continue;
+      const moved = translateStroke(stroke, 20, 20);
+      newStrokes.push({
+        ...moved,
+        id: generateStrokeId(),
+      });
+    }
+
+    if (newStrokes.length === 0) return;
+
+    // Add to document
+    for (const stroke of newStrokes) {
+      this.document.strokes.push(stroke);
+      this.spatialIndex.insert(stroke, this.document.strokes.length - 1);
+    }
+
+    this.undoManager.pushAddStrokes(newStrokes);
+    this.toolbar?.refreshUndoRedo();
+    this.renderer?.invalidateCache();
+    this.renderStaticWithIcons();
+    this.requestSave();
+
+    // Select the duplicates (not the originals)
+    this.clearSelection();
+    const strokeIds = new Set(newStrokes.map(s => s.id));
+    const boundingBox = computeSelectionBBox(strokeIds, this.document.strokes);
+    this.selectionState = {
+      strokeIds,
+      boundingBox,
+      pageIndex: newStrokes[0].pageIndex,
+    };
+
+    if (this.renderer) {
+      this.renderer.excludeStrokeIds = strokeIds;
+      for (const id of strokeIds) {
+        this.renderer.invalidateCache(id);
+      }
+    }
+    this.renderStaticWithIcons();
+    this.renderSelectionUI();
+    this.selectionActionBar?.show();
+  }
+
+  /** Whether there is an active selection (for command checks) */
+  hasSelection(): boolean {
+    return this.selectionState !== null && this.selectionState.strokeIds.size > 0;
+  }
+
+  /** Whether the clipboard has content (for paste command check) */
+  hasClipboardContent(): boolean {
+    return this.clipboard !== null && !this.clipboard.isEmpty;
   }
 
   private handleEraserPoint(point: StrokePoint): void {

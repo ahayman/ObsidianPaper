@@ -270,8 +270,45 @@ export class Setting {
     return this;
   }
 
+  addSlider(cb: (slider: SliderComponent) => void): this {
+    cb(new SliderComponent(this.controlEl));
+    return this;
+  }
+
   addButton(cb: (button: ButtonComponent) => void): this {
     cb(new ButtonComponent(this.controlEl));
+    return this;
+  }
+}
+
+export class SliderComponent {
+  sliderEl: HTMLInputElement;
+  private _onChange: ((value: number) => void) | null = null;
+
+  constructor(containerEl: HTMLElement) {
+    this.sliderEl = document.createElement("input");
+    this.sliderEl.type = "range";
+    containerEl.appendChild(this.sliderEl);
+  }
+
+  setLimits(min: number, max: number, step: number): this {
+    this.sliderEl.min = String(min);
+    this.sliderEl.max = String(max);
+    this.sliderEl.step = String(step);
+    return this;
+  }
+
+  setValue(value: number): this {
+    this.sliderEl.value = String(value);
+    return this;
+  }
+
+  setDynamicTooltip(): this {
+    return this;
+  }
+
+  onChange(callback: (value: number) => void): this {
+    this._onChange = callback;
     return this;
   }
 }

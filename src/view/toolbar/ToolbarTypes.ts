@@ -40,6 +40,7 @@ export interface ToolbarCallbacks {
   onPenSettingsChange: (state: ToolbarState) => void;
   onUndo: () => void;
   onRedo: () => void;
+  onPaste: () => void;
   onAddPage: () => void;
   onOpenDocumentSettings: () => void;
   onPresetSave: (presets: PenPreset[], activePresetId: string | null) => void;

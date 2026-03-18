@@ -92,6 +92,7 @@ describe("PaperSettings", () => {
         defaultFormat: "paper.md",
         penPresets: [],
         activePresetId: null,
+        clipboardQueueSize: 5,
         embedMaxWidth: 800,
         embedMaxHeight: 300,
       };

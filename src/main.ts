@@ -4,6 +4,7 @@ import { createEmptyDocument } from "./document/Document";
 import { serializeDocument, deserializeDocument } from "./document/Serializer";
 import { DEFAULT_SETTINGS, mergeSettings, resolvePageSize, resolveMargins } from "./settings/PaperSettings";
 import type { PaperSettings } from "./settings/PaperSettings";
+import { ClipboardQueue } from "./selection/Clipboard";
 import { PaperSettingsTab } from "./settings/PaperSettingsTab";
 import type { DeviceSettings } from "./settings/DeviceSettings";
 import { DEFAULT_DEVICE_SETTINGS, loadDeviceSettings, saveDeviceSettings } from "./settings/DeviceSettings";
@@ -18,12 +19,14 @@ export default class PaperPlugin extends Plugin {
   private settingsListeners: Set<(settings: PaperSettings) => void> = new Set();
   private deviceSettingsListeners: Set<(ds: DeviceSettings) => void> = new Set();
   private embedRegistry: EmbedEntry[] = [];
+  private clipboard = new ClipboardQueue(DEFAULT_SETTINGS.clipboardQueueSize);
 
   async onload(): Promise<void> {
     await this.loadSettings();
 
     this.registerView(VIEW_TYPE_PAPER, (leaf) => {
       const view = new PaperView(leaf);
+      view.clipboard = this.clipboard;
       view.setDeviceSettings(this.deviceSettings);
       view.setSettings(this.settings);
       view.onSettingsChange = (changes) => {
@@ -118,6 +121,54 @@ export default class PaperPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "copy-selection",
+      name: "Copy selection",
+      checkCallback: (checking) => {
+        const view = this.getActivePaperView();
+        if (!view?.hasSelection()) return false;
+        if (checking) return true;
+        view.copySelection();
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "cut-selection",
+      name: "Cut selection",
+      checkCallback: (checking) => {
+        const view = this.getActivePaperView();
+        if (!view?.hasSelection()) return false;
+        if (checking) return true;
+        view.cutSelection();
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "paste-selection",
+      name: "Paste strokes",
+      checkCallback: (checking) => {
+        const view = this.getActivePaperView();
+        if (!view?.hasClipboardContent()) return false;
+        if (checking) return true;
+        view.pasteClipboard();
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "duplicate-selection",
+      name: "Duplicate selection",
+      checkCallback: (checking) => {
+        const view = this.getActivePaperView();
+        if (!view?.hasSelection()) return false;
+        if (checking) return true;
+        view.duplicateSelection();
+        return true;
+      },
+    });
+
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu, file) => {
         if (!(file instanceof TFolder)) return;
@@ -167,6 +218,7 @@ export default class PaperPlugin extends Plugin {
   private async loadSettings(): Promise<void> {
     const data = await this.loadData() as Record<string, unknown> | null;
     this.settings = mergeSettings(data as Partial<PaperSettings> | null);
+    this.clipboard.maxSize = this.settings.clipboardQueueSize;
 
     // Load device settings from localStorage
     this.deviceSettings = loadDeviceSettings(this.app);
@@ -210,6 +262,7 @@ export default class PaperPlugin extends Plugin {
   }
 
   private async saveSettings(): Promise<void> {
+    this.clipboard.maxSize = this.settings.clipboardQueueSize;
     await this.saveData(this.settings);
   }
 

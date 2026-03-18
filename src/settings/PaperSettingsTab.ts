@@ -607,6 +607,23 @@ export class PaperSettingsTab extends PluginSettingTab {
         });
       });
 
+    // --- Clipboard ---
+    new Setting(container).setName("Clipboard").setHeading();
+
+    new Setting(container)
+      .setName("Copy queue size")
+      .setDesc("Number of items in the paste queue (LIFO). Paste pops the most recent copy.")
+      .addSlider((slider) => {
+        slider
+          .setLimits(1, 10, 1)
+          .setValue(this.settings.clipboardQueueSize)
+          .setDynamicTooltip()
+          .onChange((value) => {
+            this.settings.clipboardQueueSize = value;
+            this.notifyChange();
+          });
+      });
+
     // --- Embeds ---
     new Setting(container).setName("Embeds").setHeading();
 

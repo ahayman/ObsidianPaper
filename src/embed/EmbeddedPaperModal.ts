@@ -843,6 +843,7 @@ export class EmbeddedPaperModal extends Modal {
       },
       onUndo: () => this.undo(),
       onRedo: () => this.redo(),
+      onPaste: () => { /* no-op in embed modal */ },
       onAddPage: () => this.addPage(),
       onOpenDocumentSettings: () => this.openDocumentSettings(),
       onPresetSave: (presets, activePresetId) => {

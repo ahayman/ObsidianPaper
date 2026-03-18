@@ -6,8 +6,7 @@
 
 import { setIcon } from "obsidian";
 import type { PenType } from "../types";
-import { EXTENDED_PALETTE_CONTRAST } from "../color/ExtendedPalette";
-import { resolveColor } from "../color/ColorPalette";
+import { ColorPickerPanel } from "../view/toolbar/ColorPickerPanel";
 
 const PEN_TYPES: { type: PenType; label: string; icon: string }[] = [
   { type: "ballpoint", label: "Ballpoint", icon: "pen-line" },
@@ -23,6 +22,10 @@ export interface SelectionActionCallbacks {
   onColorChange: (colorId: string) => void;
   onPenTypeChange: (penType: PenType) => void;
   onWidthChange: (width: number) => void;
+  onCopy: () => void;
+  onCut: () => void;
+  onPaste: () => void;
+  onDuplicate: () => void;
   onDelete: () => void;
 }
 
@@ -30,15 +33,12 @@ export class SelectionActionBar {
   private el: HTMLElement;
   private subPanel: HTMLElement | null = null;
   private callbacks: SelectionActionCallbacks;
-  private isDark: boolean;
 
   constructor(
     container: HTMLElement,
     callbacks: SelectionActionCallbacks,
-    isDark: boolean
   ) {
     this.callbacks = callbacks;
-    this.isDark = isDark;
 
     this.el = container.createEl("div", { cls: "paper-selection-bar" });
     this.build();
@@ -48,6 +48,13 @@ export class SelectionActionBar {
     this.addButton("palette", "Color", () => this.toggleSubPanel("color"));
     this.addButton("pen-line", "Pen type", () => this.toggleSubPanel("pen"));
     this.addButton("move-horizontal", "Thickness", () => this.toggleSubPanel("width"));
+
+    this.el.createEl("div", { cls: "paper-selection-bar__separator" });
+
+    this.addButton("copy", "Copy", () => this.callbacks.onCopy());
+    this.addButton("scissors", "Cut", () => this.callbacks.onCut());
+    this.addButton("clipboard-paste", "Paste", () => this.callbacks.onPaste());
+    this.addButton("copy-plus", "Duplicate", () => this.callbacks.onDuplicate());
 
     this.el.createEl("div", { cls: "paper-selection-bar__separator" });
 
@@ -100,20 +107,12 @@ export class SelectionActionBar {
   }
 
   private buildColorPanel(container: HTMLElement): void {
-    const grid = container.createEl("div", { cls: "paper-selection-bar__color-grid" });
-
-    for (const entry of EXTENDED_PALETTE_CONTRAST) {
-      const swatch = grid.createEl("button", {
-        cls: "paper-selection-bar__color-swatch",
-        attr: { "aria-label": entry.id },
-      });
-      const resolved = resolveColor(entry.id, this.isDark);
-      swatch.style.backgroundColor = resolved;
-      swatch.addEventListener("click", () => {
-        this.callbacks.onColorChange(entry.id);
+    new ColorPickerPanel(container, "", {
+      onColorSelect: (colorId) => {
+        this.callbacks.onColorChange(colorId);
         this.closeSubPanel();
-      });
-    }
+      },
+    });
   }
 
   private buildPenPanel(container: HTMLElement): void {
@@ -150,10 +149,6 @@ export class SelectionActionBar {
         this.closeSubPanel();
       });
     }
-  }
-
-  setDarkMode(isDark: boolean): void {
-    this.isDark = isDark;
   }
 
   show(): void {

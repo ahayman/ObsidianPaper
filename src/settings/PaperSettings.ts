@@ -68,6 +68,9 @@ export interface PaperSettings {
   penPresets: PenPreset[];
   activePresetId: string | null;
 
+  // Clipboard
+  clipboardQueueSize: number; // 1-10, number of copy entries in the LIFO paste queue
+
   // Embeds
   embedMaxWidth: number;   // Max width in px for embedded previews (0 = fill container)
   embedMaxHeight: number;  // Max height in px for embedded previews (0 = no limit)
@@ -158,6 +161,8 @@ export const DEFAULT_SETTINGS: PaperSettings = {
 
   penPresets: DEFAULT_PRESETS,
   activePresetId: "preset-ballpoint-black",
+
+  clipboardQueueSize: 5,
 
   embedMaxWidth: 0,
   embedMaxHeight: 400,

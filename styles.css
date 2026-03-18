@@ -80,6 +80,13 @@
   background: transparent;
   color: var(--text-normal);
   cursor: pointer;
+  overflow: hidden;
+}
+
+.paper-selection-bar__btn svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
 }
 
 .paper-selection-bar__btn:hover {
@@ -107,26 +114,6 @@
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
-  max-width: 280px;
-}
-
-.paper-selection-bar__color-grid {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 4px;
-}
-
-.paper-selection-bar__color-swatch {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  cursor: pointer;
-  transition: border-color 0.1s;
-}
-
-.paper-selection-bar__color-swatch:hover {
-  border-color: var(--text-muted);
 }
 
 .paper-selection-bar__pen-list {
@@ -398,6 +385,7 @@
 
 /* Toolbar Buttons */
 .paper-toolbar__btn {
+  position: relative;
   min-width: 44px;
   min-height: 44px;
   padding: 6px 10px;
@@ -424,6 +412,23 @@
 .paper-toolbar__btn.is-disabled {
   opacity: 0.35;
   cursor: default;
+  pointer-events: none;
+}
+
+.paper-toolbar__badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
   pointer-events: none;
 }
 

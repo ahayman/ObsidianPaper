@@ -1,10 +1,15 @@
 import type { Stroke } from "../types";
 
-export type UndoActionType = "add-stroke" | "remove-stroke" | "remove-strokes" | "transform-strokes" | "modify-strokes";
+export type UndoActionType = "add-stroke" | "add-strokes" | "remove-stroke" | "remove-strokes" | "transform-strokes" | "modify-strokes";
 
 export interface AddStrokeAction {
   type: "add-stroke";
   stroke: Stroke;
+}
+
+export interface AddStrokesAction {
+  type: "add-strokes";
+  strokes: Stroke[];
 }
 
 export interface RemoveStrokeAction {
@@ -30,6 +35,7 @@ export interface ModifyStrokesAction {
 
 export type UndoAction =
   | AddStrokeAction
+  | AddStrokesAction
   | RemoveStrokeAction
   | RemoveStrokesAction
   | TransformStrokesAction
@@ -44,6 +50,14 @@ export class UndoManager {
    */
   pushAddStroke(stroke: Stroke): void {
     this.undoStack.push({ type: "add-stroke", stroke });
+    this.redoStack = [];
+  }
+
+  /**
+   * Record a batch stroke addition (for undo, we'd remove them all).
+   */
+  pushAddStrokes(strokes: Stroke[]): void {
+    this.undoStack.push({ type: "add-strokes", strokes });
     this.redoStack = [];
   }
 

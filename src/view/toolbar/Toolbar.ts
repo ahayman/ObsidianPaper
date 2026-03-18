@@ -39,6 +39,7 @@ export class Toolbar {
   private redoBtn: ToolbarButton | null = null;
   private eraserBtn: ToolbarButton | null = null;
   private lassoBtn: ToolbarButton | null = null;
+  private pasteBtn: ToolbarButton | null = null;
   private addPageBtn: ToolbarButton | null = null;
   private docSettingsBtn: ToolbarButton | null = null;
   private currentPenBtn: CurrentPenButton | null = null;
@@ -131,6 +132,12 @@ export class Toolbar {
       this.callbacks.onToolChange(newTool);
     }, "lasso");
     this.lassoBtn.setActive(this.state.activeTool === "lasso");
+
+    // Paste (hidden until clipboard has content)
+    this.pasteBtn = new ToolbarButton(this.el, "Paste", "paper-toolbar__btn--paste", () => {
+      this.callbacks.onPaste();
+    }, "clipboard-paste");
+    this.pasteBtn.el.style.display = "none";
 
     // Separator
     this.el.createEl("div", { cls: "paper-toolbar__separator" });
@@ -375,6 +382,22 @@ export class Toolbar {
     this.popover?.setPosition(position);
   }
 
+  showPasteButton(visible: boolean, count = 0): void {
+    if (!this.pasteBtn) return;
+    this.pasteBtn.el.style.display = visible ? "" : "none";
+
+    // Update or create badge
+    let badge = this.pasteBtn.el.querySelector(".paper-toolbar__badge") as HTMLElement | null;
+    if (visible && count > 0) {
+      if (!badge) {
+        badge = this.pasteBtn.el.createEl("span", { cls: "paper-toolbar__badge" });
+      }
+      badge.textContent = String(count);
+    } else if (badge) {
+      badge.remove();
+    }
+  }
+
   refreshUndoRedo(): void {
     this.undoBtn?.setDisabled(!this.queries.canUndo());
     this.redoBtn?.setDisabled(!this.queries.canRedo());
@@ -406,6 +429,7 @@ export class Toolbar {
     this.redoBtn?.destroy();
     this.eraserBtn?.destroy();
     this.lassoBtn?.destroy();
+    this.pasteBtn?.destroy();
     this.addPageBtn?.destroy();
     this.docSettingsBtn?.destroy();
     this.currentPenBtn?.destroy();
