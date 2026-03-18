@@ -1,6 +1,9 @@
 import type { PaperDocument, PenStyle, Stroke } from "../types";
 import { createEmptyDocument } from "./Document";
 import { serializeDocument, deserializeDocument } from "./Serializer";
+import { encodePoints } from "./PointEncoder";
+import type { StrokePoint } from "../types";
+import { COMPRESSION_THRESHOLD, estimateStrokeDataSize } from "./Compression";
 
 describe("Serializer", () => {
   describe("round-trip serialize/deserialize", () => {
@@ -192,6 +195,57 @@ describe("Serializer", () => {
       expect(parsed.strokes[0].pg).toBe(0);
       expect(parsed.strokes[0].bb).toEqual([0, 0, 100, 100]);
       expect(parsed.strokes[0].n).toBe(1);
+    });
+  });
+
+  describe("compression round-trip", () => {
+    function makePoint(x: number, y: number): StrokePoint {
+      return { x, y, pressure: 0.5, tiltX: 0, tiltY: 0, twist: 0, timestamp: 0 };
+    }
+
+    /**
+     * Create a document with enough stroke data to just exceed the compression threshold.
+     * This is the boundary where the heuristic bug manifests.
+     */
+    function makeDocNearThreshold(): PaperDocument {
+      const doc = createEmptyDocument();
+      // Build strokes until raw pts data exceeds the compression threshold
+      let totalSize = 0;
+      let strokeIdx = 0;
+      while (totalSize < COMPRESSION_THRESHOLD + 500) {
+        const points: StrokePoint[] = [];
+        for (let j = 0; j < 15; j++) {
+          points.push(makePoint(strokeIdx * 20 + j * 5, 100 + j * 3));
+        }
+        const pts = encodePoints(points);
+        doc.strokes.push({
+          id: `s${strokeIdx}`,
+          pageIndex: 0,
+          style: "_default",
+          bbox: [strokeIdx * 20, 100, strokeIdx * 20 + 70, 142],
+          pointCount: points.length,
+          pts,
+        });
+        totalSize += pts.length;
+        strokeIdx++;
+      }
+      // Verify we're above the threshold
+      expect(estimateStrokeDataSize(doc.strokes.map(s => s.pts))).toBeGreaterThan(COMPRESSION_THRESHOLD);
+      return doc;
+    }
+
+    it("should round-trip documents at the compression boundary", () => {
+      const doc = makeDocNearThreshold();
+      const originalPts = doc.strokes.map(s => s.pts);
+
+      const json = serializeDocument(doc);
+      const restored = deserializeDocument(json);
+
+      expect(restored.strokes).toHaveLength(doc.strokes.length);
+      for (let i = 0; i < doc.strokes.length; i++) {
+        expect(restored.strokes[i].pts).toBe(originalPts[i]);
+        expect(restored.strokes[i].id).toBe(doc.strokes[i].id);
+      }
     });
   });
 });

@@ -192,6 +192,7 @@ export interface SerializedDocument {
   layout?: string;  // "vertical" | "horizontal", omit if "vertical"
   rp?: string;      // RenderPipeline, omit if undefined
   pd?: SerializedPageDefaults; // Page defaults, omit if undefined
+  compressed?: boolean; // Explicit flag: stroke pts are deflate+base64 compressed
   pages: SerializedPage[];
   viewport?: { x: number; y: number; zoom: number };
   channels: string[];

@@ -74,6 +74,10 @@ export function serializeDocument(doc: PaperDocument): string {
     strokes: doc.strokes.map((s) => serializeStroke(s, useCompression)),
   };
 
+  if (useCompression) {
+    serialized.compressed = true;
+  }
+
   // Omit layout if default (vertical)
   if (doc.layoutDirection !== "vertical") {
     serialized.layout = doc.layoutDirection;
@@ -122,9 +126,11 @@ export function deserializeDocument(data: string): PaperDocument {
     return createEmptyDocument();
   }
 
-  const useCompression = estimateStrokeDataSize(
-    (parsed.strokes ?? []).map((s) => s.pts)
-  ) >= COMPRESSION_THRESHOLD;
+  // Use explicit flag if present; fall back to size heuristic for old files without it
+  const useCompression = parsed.compressed === true
+    || (parsed.compressed === undefined && estimateStrokeDataSize(
+      (parsed.strokes ?? []).map((s) => s.pts)
+    ) >= COMPRESSION_THRESHOLD);
 
   const doc: PaperDocument = {
     version: parsed.v,
