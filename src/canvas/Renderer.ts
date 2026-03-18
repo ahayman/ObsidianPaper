@@ -1494,7 +1494,7 @@ class TiledStaticLayer {
         const webglEngine = new WebGLTileEngine(webglCanvas, config, pathCache);
         const gl = webglEngine.getGL();
         this.webglTileEngine = webglEngine;
-        this.glCache = new WebGLTileCache(gl, config, 0); // MSAA disabled for testing
+        this.glCache = new WebGLTileCache(gl, config, 4);
         this.glCompositor = new WebGLTileCompositor(gl, this.grid, config);
         this.useWebGLTiles = true;
       } catch (e) {
@@ -1545,7 +1545,7 @@ class TiledStaticLayer {
           const gl = newEngine.getGL();
           this.webglTileEngine?.destroy();
           this.webglTileEngine = newEngine;
-          this.glCache = new WebGLTileCache(gl, config, 0); // MSAA disabled for testing
+          this.glCache = new WebGLTileCache(gl, config, 4);
           this.glCompositor?.destroy();
           this.glCompositor = new WebGLTileCompositor(gl, this.grid, config);
 
