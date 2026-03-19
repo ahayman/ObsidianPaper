@@ -46,6 +46,7 @@ describe("DeviceSettings", () => {
         autoHideToolbar: true,
         maxZoomLevel: 10,
         tileMemoryBudgetMB: 600,
+        enableRotation: true,
       };
       app.saveLocalStorage(DEVICE_SETTINGS_KEY, JSON.stringify(saved));
       const result = loadDeviceSettings(app);
@@ -88,6 +89,7 @@ describe("DeviceSettings", () => {
         autoHideToolbar: true,
         maxZoomLevel: 10,
         tileMemoryBudgetMB: 400,
+        enableRotation: true,
       };
       saveDeviceSettings(app, settings);
       const result = loadDeviceSettings(app);

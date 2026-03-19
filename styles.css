@@ -1620,3 +1620,53 @@
   gap: 8px;
   margin-top: 16px;
 }
+
+/* ─── Compass Indicator ─────────────────────────────── */
+
+.paper-compass {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 20;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: auto;
+}
+
+.paper-compass--visible {
+  opacity: 1;
+}
+
+.paper-compass__ring {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 2px solid var(--text-muted);
+  background: var(--background-primary);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.paper-compass__needle {
+  position: absolute;
+  width: 4px;
+  height: 14px;
+  top: 3px;
+  left: 50%;
+  margin-left: -2px;
+  border-radius: 2px;
+  background: var(--text-error, #e03e3e);
+  transform-origin: 50% calc(50% + 4px);
+  transition: transform 0.05s ease-out;
+}
+
+.paper-compass__center {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}

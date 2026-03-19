@@ -124,6 +124,13 @@ export class WebGLTileCompositor {
     const tileScreenSize = tileWorldSize * camera.zoom * dpr;
     const visibleTiles = this.grid.getVisibleTiles(camera, screenWidth, screenHeight);
 
+    // Precompute rotation constants
+    const hasRotation = camera.rotation !== 0;
+    const cos = hasRotation ? Math.cos(camera.rotation) : 1;
+    const sin = hasRotation ? Math.sin(camera.rotation) : 0;
+    const cx = canvasW / 2;
+    const cy = canvasH / 2;
+
     const posLoc = prog.attributes.get("a_position")!;
     const tcLoc = prog.attributes.get("a_texcoord")!;
     const v = this.tileVerts;
@@ -140,21 +147,42 @@ export class WebGLTileCompositor {
       const entry = tileCache.getStale(key);
       if (!entry) continue;
 
-      const screenX = (key.col * tileWorldSize - camera.x) * camera.zoom * dpr;
-      const screenY = (key.row * tileWorldSize - camera.y) * camera.zoom * dpr;
-      const sx1 = screenX + tileScreenSize;
-      const sy1 = screenY + tileScreenSize;
+      let x0 = (key.col * tileWorldSize - camera.x) * camera.zoom * dpr;
+      let y0 = (key.row * tileWorldSize - camera.y) * camera.zoom * dpr;
+      let x1 = x0 + tileScreenSize;
+      let y1 = y0 + tileScreenSize;
 
-      // FBO-rendered tiles have Y-inverted content → flip V coords
-      const isFBO = entry.fbo !== null || entry.msaa !== null;
-      const v0 = isFBO ? 1 : 0;
-      const v1 = isFBO ? 0 : 1;
+      if (hasRotation) {
+        // Rotate all four corners around viewport center
+        const rx0 = cos * (x0 - cx) - sin * (y0 - cy) + cx;
+        const ry0 = sin * (x0 - cx) + cos * (y0 - cy) + cy;
+        const rx1 = cos * (x1 - cx) - sin * (y0 - cy) + cx;
+        const ry1 = sin * (x1 - cx) + cos * (y0 - cy) + cy;
+        const rx2 = cos * (x1 - cx) - sin * (y1 - cy) + cx;
+        const ry2 = sin * (x1 - cx) + cos * (y1 - cy) + cy;
+        const rx3 = cos * (x0 - cx) - sin * (y1 - cy) + cx;
+        const ry3 = sin * (x0 - cx) + cos * (y1 - cy) + cy;
 
-      // Fill reusable vertex buffer (position.xy, texcoord.uv)
-      v[0] = screenX; v[1] = screenY; v[2] = 0; v[3] = v0;
-      v[4] = sx1;     v[5] = screenY; v[6] = 1; v[7] = v0;
-      v[8] = sx1;     v[9] = sy1;     v[10] = 1; v[11] = v1;
-      v[12] = screenX; v[13] = sy1;   v[14] = 0; v[15] = v1;
+        // FBO-rendered tiles have Y-inverted content → flip V coords
+        const isFBO = entry.fbo !== null || entry.msaa !== null;
+        const v0t = isFBO ? 1 : 0;
+        const v1t = isFBO ? 0 : 1;
+
+        v[0] = rx0; v[1] = ry0; v[2] = 0; v[3] = v0t;
+        v[4] = rx1; v[5] = ry1; v[6] = 1; v[7] = v0t;
+        v[8] = rx2; v[9] = ry2; v[10] = 1; v[11] = v1t;
+        v[12] = rx3; v[13] = ry3; v[14] = 0; v[15] = v1t;
+      } else {
+        // FBO-rendered tiles have Y-inverted content → flip V coords
+        const isFBO = entry.fbo !== null || entry.msaa !== null;
+        const v0t = isFBO ? 1 : 0;
+        const v1t = isFBO ? 0 : 1;
+
+        v[0] = x0; v[1] = y0; v[2] = 0; v[3] = v0t;
+        v[4] = x1; v[5] = y0; v[6] = 1; v[7] = v0t;
+        v[8] = x1; v[9] = y1; v[10] = 1; v[11] = v1t;
+        v[12] = x0; v[13] = y1; v[14] = 0; v[15] = v1t;
+      }
 
       this.quadBuffer.upload(v);
 

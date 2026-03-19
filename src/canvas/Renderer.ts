@@ -1026,7 +1026,7 @@ export class Renderer {
    * Instead, tiles are re-composited at the current camera position.
    * This avoids blank edges since cached tiles already cover beyond the viewport.
    */
-  setGestureTransform(tx: number, ty: number, scale: number): void {
+  setGestureTransform(tx: number, ty: number, scale: number, rotation = 0): void {
     if (this.tiledLayer) {
       // Tiled: defer the WebGL composite to the next animation frame.
       // Trackpad pinch events fire much faster than the display refresh
@@ -1045,13 +1045,28 @@ export class Renderer {
       // Legacy: CSS-transform the overscan background + static canvases
       const oxAdj = tx + this.overscanOffsetX * (scale - 1);
       const oyAdj = ty + this.overscanOffsetY * (scale - 1);
-      const overscanValue = `translate(${oxAdj}px, ${oyAdj}px) scale(${scale})`;
+      const cx = this.cssWidth / 2;
+      const cy = this.cssHeight / 2;
+      // Apply overscan offset to the rotation origin
+      const originX = cx - this.overscanOffsetX;
+      const originY = cy - this.overscanOffsetY;
+      this.backgroundCanvas.style.transformOrigin = `${originX}px ${originY}px`;
+      this.staticCanvas.style.transformOrigin = `${originX}px ${originY}px`;
+      const overscanValue = rotation !== 0
+        ? `rotate(${rotation}rad) translate(${oxAdj}px, ${oyAdj}px) scale(${scale})`
+        : `translate(${oxAdj}px, ${oyAdj}px) scale(${scale})`;
       this.backgroundCanvas.style.transform = overscanValue;
       this.staticCanvas.style.transform = overscanValue;
     }
 
     // Active/prediction canvases: viewport-sized, simple CSS transform
-    const viewportValue = `translate(${tx}px, ${ty}px) scale(${scale})`;
+    const cx = this.cssWidth / 2;
+    const cy = this.cssHeight / 2;
+    this.activeCanvas.style.transformOrigin = `${cx}px ${cy}px`;
+    this.predictionCanvas.style.transformOrigin = `${cx}px ${cy}px`;
+    const viewportValue = rotation !== 0
+      ? `rotate(${rotation}rad) translate(${tx}px, ${ty}px) scale(${scale})`
+      : `translate(${tx}px, ${ty}px) scale(${scale})`;
     this.activeCanvas.style.transform = viewportValue;
     this.predictionCanvas.style.transform = viewportValue;
     // In WebGL tiled mode, the overlay is re-drawn at the current camera position
@@ -1074,10 +1089,14 @@ export class Renderer {
       this.tiledLayer.endGesture();
     } else {
       this.backgroundCanvas.style.transform = "";
+      this.backgroundCanvas.style.transformOrigin = "";
       this.staticCanvas.style.transform = "";
+      this.staticCanvas.style.transformOrigin = "";
     }
     this.activeCanvas.style.transform = "";
+    this.activeCanvas.style.transformOrigin = "";
     this.predictionCanvas.style.transform = "";
+    this.predictionCanvas.style.transformOrigin = "";
     // Overlay canvas: no CSS gesture transform is applied in WebGL tiled mode
     // (drawOverlay handles positioning), so nothing to clear.
   }
@@ -1356,11 +1375,34 @@ export class Renderer {
    */
   private applyOverscanCameraTransform(ctx: CanvasRenderingContext2D): void {
     ctx.save();
-    ctx.transform(
-      this.camera.zoom, 0, 0, this.camera.zoom,
-      -this.camera.x * this.camera.zoom - this.overscanOffsetX,
-      -this.camera.y * this.camera.zoom - this.overscanOffsetY,
-    );
+    if (this.camera.rotation !== 0) {
+      const cos = Math.cos(this.camera.rotation);
+      const sin = Math.sin(this.camera.rotation);
+      const z = this.camera.zoom;
+      const cx = this.cssWidth / 2;
+      const cy = this.cssHeight / 2;
+      // Zoom+pan base translation (with overscan offset compensation)
+      const tx = -this.camera.x * z - this.overscanOffsetX;
+      const ty = -this.camera.y * z - this.overscanOffsetY;
+      // Rotation center in overscan canvas space = viewport center - overscan offset
+      const rcx = cx - this.overscanOffsetX;
+      const rcy = cy - this.overscanOffsetY;
+      // Rotate around (rcx, rcy): T(rcx,rcy) * R * T(-rcx,-rcy) * [z,0,0,z,tx,ty]
+      ctx.transform(
+        cos * z,
+        sin * z,
+        -sin * z,
+        cos * z,
+        cos * (tx - rcx) - sin * (ty - rcy) + rcx,
+        sin * (tx - rcx) + cos * (ty - rcy) + rcy,
+      );
+    } else {
+      ctx.transform(
+        this.camera.zoom, 0, 0, this.camera.zoom,
+        -this.camera.x * this.camera.zoom - this.overscanOffsetX,
+        -this.camera.y * this.camera.zoom - this.overscanOffsetY,
+      );
+    }
   }
 
   private scheduleFrame(): void {
@@ -1756,22 +1798,29 @@ class TiledStaticLayer {
 
       // Sync-render visible tiles via WebGLTileEngine into FBO textures.
       // Renders both blank tiles (not in cache) and dirty/wrong-band tiles.
-      // This is the key advantage of the WebGL path: FBO rendering is fast enough
-      // to do synchronously for all visible tiles on every renderVisible() call.
+      // Cap sync renders per frame to avoid blocking the main thread when
+      // many new tiles become visible at once (e.g., after a rotation gesture
+      // expands the visible AABB). Overflow tiles are queued for async rendering.
+      const MAX_SYNC_TILES = 40;
       let renderedCount = 0;
+      const deferredTiles: TileKey[] = [];
       for (const key of visibleTiles) {
         const existing = this.glCache.getStale(key);
         if (!existing || existing.dirty || existing.renderedAtBand !== currentZoomBand) {
-          renderedCount++;
-          const worldBounds = this.grid.tileBounds(key.col, key.row);
-          const entry = this.glCache.allocate(key, worldBounds, currentZoomBand);
-          this.webglTileEngine.renderTile(entry, doc, pageLayout, spatialIndex, isDarkMode);
-          this.glCache.markClean(key);
+          if (renderedCount < MAX_SYNC_TILES) {
+            renderedCount++;
+            const worldBounds = this.grid.tileBounds(key.col, key.row);
+            const entry = this.glCache.allocate(key, worldBounds, currentZoomBand);
+            this.webglTileEngine.renderTile(entry, doc, pageLayout, spatialIndex, isDarkMode);
+            this.glCache.markClean(key);
+          } else {
+            deferredTiles.push(key);
+          }
         }
       }
 
-      // Schedule async re-renders for off-screen dirty tiles (background prefetch)
-      const toSchedule: TileKey[] = [];
+      // Schedule async re-renders for deferred visible tiles + off-screen dirty tiles
+      const toSchedule: TileKey[] = [...deferredTiles];
       const dirtyGLTiles = this.glCache.getDirtyTiles(visibleKeySet);
       for (const entry of dirtyGLTiles) {
         if (!visibleKeySet.has(tileKeyString(entry.key))) {
@@ -1991,13 +2040,10 @@ class TiledStaticLayer {
       ctx.clearRect(0, 0, this.webglOverlayCanvas.width, this.webglOverlayCanvas.height);
       ctx.save();
       ctx.setTransform(this.config.dpr, 0, 0, this.config.dpr, 0, 0);
-      ctx.transform(
-        this.camera.zoom, 0, 0, this.camera.zoom,
-        -this.camera.x * this.camera.zoom,
-        -this.camera.y * this.camera.zoom,
-      );
+      this.camera.applyToContext(ctx);
       const visibleRect = this.camera.getVisibleRect(this.currentScreenWidth, this.currentScreenHeight);
       this.overlayCallback(ctx, visibleRect);
+      this.camera.resetContext(ctx);
       ctx.restore();
       return;
     }
@@ -2007,13 +2053,10 @@ class TiledStaticLayer {
     const ctx = this.currentCtx;
     ctx.save();
     ctx.setTransform(this.config.dpr, 0, 0, this.config.dpr, 0, 0);
-    ctx.transform(
-      this.camera.zoom, 0, 0, this.camera.zoom,
-      -this.camera.x * this.camera.zoom,
-      -this.camera.y * this.camera.zoom,
-    );
+    this.camera.applyToContext(ctx);
     const visibleRect = this.camera.getVisibleRect(this.currentScreenWidth, this.currentScreenHeight);
     this.overlayCallback(ctx, visibleRect);
+    this.camera.resetContext(ctx);
     ctx.restore();
   }
 

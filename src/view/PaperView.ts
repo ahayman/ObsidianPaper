@@ -38,6 +38,7 @@ import { findNearestStroke } from "../selection/StrokeHitTester";
 import { SelectionActionBar } from "../selection/SelectionActionBar";
 import type { ClipboardQueue } from "../selection/Clipboard";
 import { getEffectiveDPR } from "../canvas/HighDPI";
+import { CompassIndicator } from "./CompassIndicator";
 
 export const VIEW_TYPE_PAPER = "paper-view";
 export const PAPER_EXTENSION = "paper";
@@ -64,7 +65,8 @@ export class PaperView extends TextFileView {
   private activePopover: { destroy: () => void } | null = null;
   private docSettingsPopover: DocumentSettingsPopover | null = null;
   private pinchBaseZoom: number | null = null;
-  private gestureBaseCamera: { x: number; y: number; zoom: number } | null = null;
+  private pinchBaseRotation: number | null = null;
+  private gestureBaseCamera: { x: number; y: number; zoom: number; rotation: number } | null = null;
   private midGestureRenderPending = false;
   private lastMidGestureRenderTime = 0;
   private static readonly MID_GESTURE_THROTTLE_MS = 250;
@@ -98,6 +100,7 @@ export class PaperView extends TextFileView {
   /** Initial angle from selection center to pointer at rotation start */
   private selectionRotateBaseAngle = 0;
   private selectionActionBar: SelectionActionBar | null = null;
+  private compassIndicator: CompassIndicator | null = null;
   /** Shared clipboard queue — set by the plugin, shared across all views */
   clipboard: ClipboardQueue | null = null;
 
@@ -197,6 +200,7 @@ export class PaperView extends TextFileView {
     if (rect.width > 0 && rect.height > 0) {
       this.cssWidth = rect.width;
       this.cssHeight = rect.height;
+      this.camera.setViewportSize(rect.width, rect.height);
       this.renderer.resize(rect.width, rect.height);
       this.selectionOverlay.resize(rect.width, rect.height, getEffectiveDPR(Platform.isMobile));
     }
@@ -248,6 +252,11 @@ export class PaperView extends TextFileView {
     // Hover cursor
     this.hoverCursor = new HoverCursor(container);
 
+    // Compass indicator for rotation
+    this.compassIndicator = new CompassIndicator(container, () => {
+      this.animateRotationReset();
+    });
+
     // Watch for container resizes
     this.resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
@@ -283,6 +292,12 @@ export class PaperView extends TextFileView {
     this.pageMenuButton = null;
     this.hoverCursor?.destroy();
     this.hoverCursor = null;
+    this.compassIndicator?.destroy();
+    this.compassIndicator = null;
+    if (this.rotationAnimId !== null) {
+      cancelAnimationFrame(this.rotationAnimId);
+      this.rotationAnimId = null;
+    }
     this.selectionActionBar?.destroy();
     this.selectionActionBar = null;
     this.selectionOverlay?.destroy();
@@ -968,6 +983,48 @@ export class PaperView extends TextFileView {
   /**
    * Coalesce multiple static layer render requests into a single RAF frame.
    */
+  private rotationAnimId: number | null = null;
+
+  /**
+   * Smoothly animate rotation back to 0° when the compass is tapped.
+   */
+  private animateRotationReset(): void {
+    if (this.camera.rotation === 0) return;
+    // Cancel any ongoing rotation animation
+    if (this.rotationAnimId !== null) {
+      cancelAnimationFrame(this.rotationAnimId);
+    }
+
+    const startRotation = this.camera.rotation;
+    // Pick shortest path to 0 (normalize to [-π, π])
+    let delta = -startRotation;
+    if (delta > Math.PI) delta -= 2 * Math.PI;
+    if (delta < -Math.PI) delta += 2 * Math.PI;
+
+    const startTime = performance.now();
+    const duration = 300; // ms
+
+    const cx = this.cssWidth / 2;
+    const cy = this.cssHeight / 2;
+
+    const animate = (now: number) => {
+      const t = Math.min(1, (now - startTime) / duration);
+      const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic
+      const newRotation = startRotation + delta * eased;
+      this.camera.rotateAt(cx, cy, t >= 1 ? 0 : newRotation);
+      this.camera.clampPan(this.cssWidth, this.cssHeight);
+      this.compassIndicator?.update(this.camera.rotation);
+      this.renderStaticWithIcons();
+      this.renderSelectionUI();
+      if (t < 1) {
+        this.rotationAnimId = requestAnimationFrame(animate);
+      } else {
+        this.rotationAnimId = null;
+      }
+    };
+    this.rotationAnimId = requestAnimationFrame(animate);
+  }
+
   private requestStaticRender(): void {
     if (this.staticRafId !== null) return;
     this.staticRafId = requestAnimationFrame(() => {
@@ -982,6 +1039,7 @@ export class PaperView extends TextFileView {
     const oldHeight = this.cssHeight;
     this.cssWidth = width;
     this.cssHeight = height;
+    this.camera.setViewportSize(width, height);
 
     if (oldWidth > 0 && oldHeight > 0) {
       // Compute world center before resize
@@ -1039,10 +1097,12 @@ export class PaperView extends TextFileView {
     const base = this.gestureBaseCamera;
     const cam = this.camera;
     const scale = cam.zoom / base.zoom;
+    const rotation = cam.rotation - base.rotation;
     const tx = (base.x - cam.x) * cam.zoom;
     const ty = (base.y - cam.y) * cam.zoom;
-    this.renderer.setGestureTransform(tx, ty, scale);
+    this.renderer.setGestureTransform(tx, ty, scale, rotation);
     this.selectionOverlay?.setTransform(tx, ty, scale);
+    this.compassIndicator?.update(cam.rotation);
 
     // If the CSS-transformed overscan canvas no longer covers the viewport,
     // trigger a throttled re-render to recenter the buffer.
@@ -1104,7 +1164,7 @@ export class PaperView extends TextFileView {
     this.lastMidGestureRenderTime = performance.now();
 
     // Reset gesture base to current camera position
-    this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom };
+    this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom, rotation: this.camera.rotation };
 
     // Clear CSS transform (base = current, so delta is zero)
     this.renderer.clearGestureTransform();
@@ -1321,9 +1381,13 @@ export class PaperView extends TextFileView {
 
         this.activeStrokePageIndex = pageIndex;
         const style = this.getCurrentStyle();
-        // Scale stroke width to zoom level if enabled
+        // Adjust stroke properties based on scaling mode and rotation
         if (this.currentStrokeScaling === "screen") {
           style.width = style.width / this.camera.zoom;
+          // Counter-rotate nib angle so it stays screen-fixed
+          if (style.nibAngle !== undefined && this.camera.rotation !== 0) {
+            style.nibAngle = style.nibAngle - this.camera.rotation;
+          }
         }
         const styleName = this.getCurrentStyleName();
         const baseStyle = this.document.styles[styleName];
@@ -1378,6 +1442,9 @@ export class PaperView extends TextFileView {
         const style = this.getCurrentStyle();
         if (this.currentStrokeScaling === "screen") {
           style.width = style.width / this.camera.zoom;
+          if (style.nibAngle !== undefined && this.camera.rotation !== 0) {
+            style.nibAngle = style.nibAngle - this.camera.rotation;
+          }
         }
         const pageRect = this.getActivePageRect();
         const pageDark = this.getActivePageDarkColors();
@@ -1446,6 +1513,9 @@ export class PaperView extends TextFileView {
           const style = this.getCurrentStyle();
           if (this.currentStrokeScaling === "screen") {
             style.width = style.width / this.camera.zoom;
+            if (style.nibAngle !== undefined && this.camera.rotation !== 0) {
+              style.nibAngle = style.nibAngle - this.camera.rotation;
+            }
           }
           const styleName = this.getCurrentStyleName();
           const docStyles = this.document.styles;
@@ -1514,7 +1584,7 @@ export class PaperView extends TextFileView {
       },
 
       onPanStart: () => {
-        this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom };
+        this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom, rotation: this.camera.rotation };
       },
 
       onPanMove: (dx: number, dy: number) => {
@@ -1522,7 +1592,7 @@ export class PaperView extends TextFileView {
         this.camera.clampPan(this.cssWidth, this.cssHeight);
         // Snapshot base on first move if not set (e.g. pinch-to-pan transition)
         if (!this.gestureBaseCamera) {
-          this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom };
+          this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom, rotation: this.camera.rotation };
         }
         this.applyGestureTransform();
       },
@@ -1532,22 +1602,28 @@ export class PaperView extends TextFileView {
         this.gestureBaseCamera = null;
         this.renderer?.clearGestureTransform();
         this.selectionOverlay?.clearTransform();
+        this.compassIndicator?.update(this.camera.rotation);
         this.requestStaticRender();
         this.renderSelectionUI();
       },
 
-      onPinchMove: (centerX: number, centerY: number, scale: number, panDx: number, panDy: number) => {
+      onPinchMove: (centerX: number, centerY: number, scale: number, panDx: number, panDy: number, rotationDelta: number) => {
         if (this.pinchBaseZoom === null) {
           this.pinchBaseZoom = this.camera.zoom;
+          this.pinchBaseRotation = this.camera.rotation;
         }
-        // Apply pan first, then zoom
+        // Apply pan first, then zoom, then rotation
         this.camera.pan(panDx, panDy);
         const newZoom = this.pinchBaseZoom * scale;
         this.camera.zoomAt(centerX, centerY, newZoom);
+        if (this.deviceSettings.enableRotation !== false && rotationDelta !== 0) {
+          const newRotation = Camera.snapRotation((this.pinchBaseRotation ?? 0) + rotationDelta);
+          this.camera.rotateAt(centerX, centerY, newRotation);
+        }
         this.camera.clampPan(this.cssWidth, this.cssHeight);
         // Snapshot base on first pinch move
         if (!this.gestureBaseCamera) {
-          this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom };
+          this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom, rotation: this.camera.rotation };
         }
         this.applyGestureTransform();
       },
@@ -1555,9 +1631,11 @@ export class PaperView extends TextFileView {
       onPinchEnd: () => {
         this.midGestureRenderPending = false;
         this.pinchBaseZoom = null;
+        this.pinchBaseRotation = null;
         this.gestureBaseCamera = null;
         this.renderer?.clearGestureTransform();
         this.selectionOverlay?.clearTransform();
+        this.compassIndicator?.update(this.camera.rotation);
         this.requestStaticRender();
         this.renderSelectionUI();
       },
@@ -1576,6 +1654,15 @@ export class PaperView extends TextFileView {
         let nibAngle = hasNib ? this.currentNibAngle : null;
         if (hasNib && this.currentUseBarrelRotation && twist !== 0) {
           nibAngle = twist * Math.PI / 180;
+        }
+        // Adjust hover nib angle for canvas rotation.
+        // Hover cursor is screen-space, so paper-mode nibs need rotation added
+        // to show how the nib will appear on the rotated page.
+        if (hasNib && nibAngle !== null && this.camera.rotation !== 0) {
+          if (this.currentStrokeScaling === "paper") {
+            nibAngle = nibAngle + this.camera.rotation;
+          }
+          // Screen mode: nib is already screen-space, no adjustment needed
         }
         const hoverWidth = this.currentStrokeScaling === "screen"
           ? this.currentWidth / this.camera.zoom
@@ -1598,7 +1685,7 @@ export class PaperView extends TextFileView {
       onWheel: (screenX: number, screenY: number, deltaX: number, deltaY: number, isPinch: boolean) => {
         // Snapshot gesture base on first wheel event of a gesture
         if (!this.gestureBaseCamera) {
-          this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom };
+          this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom, rotation: this.camera.rotation };
         }
 
         if (isPinch) {
@@ -1629,6 +1716,7 @@ export class PaperView extends TextFileView {
         this.gestureBaseCamera = null;
         this.renderer?.clearGestureTransform();
         this.selectionOverlay?.clearTransform();
+        this.compassIndicator?.update(this.camera.rotation);
         this.requestStaticRender();
         this.renderSelectionUI();
       },

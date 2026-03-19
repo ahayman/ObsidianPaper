@@ -151,6 +151,7 @@ export interface CameraState {
   x: number;
   y: number;
   zoom: number;
+  rotation?: number;
 }
 
 // --- Serialized Format (compact keys) ---

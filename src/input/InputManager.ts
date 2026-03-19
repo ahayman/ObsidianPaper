@@ -16,7 +16,7 @@ export interface InputCallbacks {
   onPanStart: () => void;
   onPanMove: (dx: number, dy: number) => void;
   onPanEnd: () => void;
-  onPinchMove: (centerX: number, centerY: number, scale: number, panDx: number, panDy: number) => void;
+  onPinchMove: (centerX: number, centerY: number, scale: number, panDx: number, panDy: number, rotationDelta: number) => void;
   onPinchEnd: () => void;
   onTwoFingerTap: () => void;
   onThreeFingerTap: () => void;
@@ -48,6 +48,7 @@ export class InputManager {
   private drawPointerId: number | null = null;
   private activeTouches = new Map<number, ActiveTouch>();
   private initialPinchDistance: number | null = null;
+  private initialPinchAngle: number | null = null;
   private lastPinchCenterX = 0;
   private lastPinchCenterY = 0;
   private isPinchActive = false;
@@ -300,6 +301,10 @@ export class InputManager {
           touches[0],
           touches[1]
         );
+        this.initialPinchAngle = Math.atan2(
+          touches[1].y - touches[0].y,
+          touches[1].x - touches[0].x,
+        );
         this.lastPinchCenterX = (touches[0].x + touches[1].x) / 2;
         this.lastPinchCenterY = (touches[0].y + touches[1].y) / 2;
         this.isPinchActive = false;
@@ -375,7 +380,17 @@ export class InputManager {
         this.lastPinchCenterX = centerX;
         this.lastPinchCenterY = centerY;
 
-        this.callbacks.onPinchMove(centerX, centerY, scale, panDx, panDy);
+        // Rotation delta from initial angle
+        let rotationDelta = 0;
+        if (this.initialPinchAngle !== null) {
+          const currentAngle = Math.atan2(
+            touches[1].y - touches[0].y,
+            touches[1].x - touches[0].x,
+          );
+          rotationDelta = currentAngle - this.initialPinchAngle;
+        }
+
+        this.callbacks.onPinchMove(centerX, centerY, scale, panDx, panDy, rotationDelta);
       }
     }
 
@@ -430,6 +445,7 @@ export class InputManager {
         }
         if (this.initialPinchDistance !== null) {
           this.initialPinchDistance = null;
+          this.initialPinchAngle = null;
           if (this.isPinchActive) {
             this.isPinchActive = false;
             this.callbacks.onPinchEnd();
@@ -439,6 +455,7 @@ export class InputManager {
       } else if (this.activeTouches.size === 1) {
         // Went from pinch back to single touch → resume panning
         this.initialPinchDistance = null;
+        this.initialPinchAngle = null;
         if (this.isPinchActive) {
           this.isPinchActive = false;
           this.callbacks.onPinchEnd();
@@ -475,6 +492,7 @@ export class InputManager {
           this.callbacks.onPinchEnd();
         }
         this.initialPinchDistance = null;
+        this.initialPinchAngle = null;
         this.touchStartCount = 0;
       }
     }

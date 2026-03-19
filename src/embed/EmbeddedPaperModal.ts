@@ -59,7 +59,8 @@ export class EmbeddedPaperModal extends Modal {
   private activePopover: { destroy: () => void } | null = null;
   private docSettingsPopover: DocumentSettingsPopover | null = null;
   private pinchBaseZoom: number | null = null;
-  private gestureBaseCamera: { x: number; y: number; zoom: number } | null = null;
+  private pinchBaseRotation: number | null = null;
+  private gestureBaseCamera: { x: number; y: number; zoom: number; rotation: number } | null = null;
   private midGestureRenderPending = false;
   private lastMidGestureRenderTime = 0;
   private static readonly MID_GESTURE_THROTTLE_MS = 250;
@@ -140,6 +141,7 @@ export class EmbeddedPaperModal extends Modal {
     if (rect.width > 0 && rect.height > 0) {
       this.cssWidth = rect.width;
       this.cssHeight = rect.height;
+      this.camera.setViewportSize(rect.width, rect.height);
       this.renderer.resize(rect.width, rect.height);
     }
 
@@ -618,6 +620,7 @@ export class EmbeddedPaperModal extends Modal {
     const oldHeight = this.cssHeight;
     this.cssWidth = width;
     this.cssHeight = height;
+    this.camera.setViewportSize(width, height);
 
     if (oldWidth > 0 && oldHeight > 0) {
       const centerWorldX = this.camera.x + oldWidth / (2 * this.camera.zoom);
@@ -667,9 +670,10 @@ export class EmbeddedPaperModal extends Modal {
     const base = this.gestureBaseCamera;
     const cam = this.camera;
     const scale = cam.zoom / base.zoom;
+    const rotation = cam.rotation - base.rotation;
     const tx = (base.x - cam.x) * cam.zoom;
     const ty = (base.y - cam.y) * cam.zoom;
-    this.renderer.setGestureTransform(tx, ty, scale);
+    this.renderer.setGestureTransform(tx, ty, scale, rotation);
 
     if (!this.isOverscanSufficient(tx, ty, scale)) {
       this.requestMidGestureRender();
@@ -711,7 +715,7 @@ export class EmbeddedPaperModal extends Modal {
   private executeMidGestureRender(): void {
     if (!this.renderer) return;
     this.lastMidGestureRenderTime = performance.now();
-    this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom };
+    this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom, rotation: this.camera.rotation };
     this.renderer.clearGestureTransform();
     this.renderStaticWithIcons();
   }
@@ -924,6 +928,9 @@ export class EmbeddedPaperModal extends Modal {
         const style = this.getCurrentStyle();
         if (this.currentStrokeScaling === "screen") {
           style.width = style.width / this.camera.zoom;
+          if (style.nibAngle !== undefined && this.camera.rotation !== 0) {
+            style.nibAngle = style.nibAngle - this.camera.rotation;
+          }
         }
         const styleName = this.getCurrentStyleName();
         const baseStyle = this.document.styles[styleName];
@@ -949,6 +956,9 @@ export class EmbeddedPaperModal extends Modal {
         const style = this.getCurrentStyle();
         if (this.currentStrokeScaling === "screen") {
           style.width = style.width / this.camera.zoom;
+          if (style.nibAngle !== undefined && this.camera.rotation !== 0) {
+            style.nibAngle = style.nibAngle - this.camera.rotation;
+          }
         }
         const pageRect = this.getActivePageRect();
         const pageDark = this.getActivePageDarkColors();
@@ -993,6 +1003,9 @@ export class EmbeddedPaperModal extends Modal {
           const style = this.getCurrentStyle();
           if (this.currentStrokeScaling === "screen") {
             style.width = style.width / this.camera.zoom;
+            if (style.nibAngle !== undefined && this.camera.rotation !== 0) {
+              style.nibAngle = style.nibAngle - this.camera.rotation;
+            }
           }
           const styleName = this.getCurrentStyleName();
           const docStyles = this.document.styles;
@@ -1041,14 +1054,14 @@ export class EmbeddedPaperModal extends Modal {
       },
 
       onPanStart: () => {
-        this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom };
+        this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom, rotation: this.camera.rotation };
       },
 
       onPanMove: (dx: number, dy: number) => {
         this.camera.pan(dx, dy);
         this.camera.clampPan(this.cssWidth, this.cssHeight);
         if (!this.gestureBaseCamera) {
-          this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom };
+          this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom, rotation: this.camera.rotation };
         }
         this.applyGestureTransform();
       },
@@ -1061,16 +1074,21 @@ export class EmbeddedPaperModal extends Modal {
         this.requestSave();
       },
 
-      onPinchMove: (centerX: number, centerY: number, scale: number, panDx: number, panDy: number) => {
+      onPinchMove: (centerX: number, centerY: number, scale: number, panDx: number, panDy: number, rotationDelta: number) => {
         if (this.pinchBaseZoom === null) {
           this.pinchBaseZoom = this.camera.zoom;
+          this.pinchBaseRotation = this.camera.rotation;
         }
         this.camera.pan(panDx, panDy);
         const newZoom = this.pinchBaseZoom * scale;
         this.camera.zoomAt(centerX, centerY, newZoom);
+        if (this.deviceSettings.enableRotation !== false && rotationDelta !== 0) {
+          const newRotation = Camera.snapRotation((this.pinchBaseRotation ?? 0) + rotationDelta);
+          this.camera.rotateAt(centerX, centerY, newRotation);
+        }
         this.camera.clampPan(this.cssWidth, this.cssHeight);
         if (!this.gestureBaseCamera) {
-          this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom };
+          this.gestureBaseCamera = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom, rotation: this.camera.rotation };
         }
         this.applyGestureTransform();
       },
@@ -1078,6 +1096,7 @@ export class EmbeddedPaperModal extends Modal {
       onPinchEnd: () => {
         this.midGestureRenderPending = false;
         this.pinchBaseZoom = null;
+        this.pinchBaseRotation = null;
         this.gestureBaseCamera = null;
         this.renderer?.clearGestureTransform();
         this.requestStaticRender();

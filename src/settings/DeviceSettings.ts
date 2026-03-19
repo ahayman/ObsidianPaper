@@ -14,6 +14,7 @@ export interface DeviceSettings {
   autoHideToolbar: boolean;
   maxZoomLevel: MaxZoomLevel;
   tileMemoryBudgetMB: TileMemoryBudgetMB;
+  enableRotation: boolean;
 }
 
 export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = {
@@ -25,6 +26,7 @@ export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = {
   autoHideToolbar: true,
   maxZoomLevel: 5,
   tileMemoryBudgetMB: 200,
+  enableRotation: true,
 };
 
 export const DEVICE_SETTINGS_KEY = "paper-device-settings";

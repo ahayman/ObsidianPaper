@@ -232,5 +232,162 @@ describe("Camera", () => {
       expect(cam2.y).toBe(20);
       expect(cam2.zoom).toBe(1.5);
     });
+
+    it("should round-trip rotation", () => {
+      const cam = new Camera({ x: 0, y: 0, zoom: 1, rotation: Math.PI / 4 });
+      cam.setViewportSize(800, 600);
+      const state = cam.getState();
+
+      const cam2 = new Camera();
+      cam2.setViewportSize(800, 600);
+      cam2.setState(state);
+
+      expect(cam2.rotation).toBeCloseTo(Math.PI / 4);
+    });
+  });
+
+  describe("rotation", () => {
+    function makeRotatedCamera(rotation: number): Camera {
+      const cam = new Camera({ rotation });
+      cam.setViewportSize(800, 600);
+      return cam;
+    }
+
+    it("should initialize rotation to 0 by default", () => {
+      const cam = new Camera();
+      expect(cam.rotation).toBe(0);
+    });
+
+    it("should accept rotation in constructor", () => {
+      const cam = new Camera({ rotation: Math.PI / 2 });
+      expect(cam.rotation).toBeCloseTo(Math.PI / 2);
+    });
+
+    describe("screenToWorld / worldToScreen round-trip with rotation", () => {
+      it("should round-trip at 45° rotation", () => {
+        const cam = makeRotatedCamera(Math.PI / 4);
+        const world = cam.screenToWorld(150, 200);
+        const screen = cam.worldToScreen(world.x, world.y);
+        expect(screen.x).toBeCloseTo(150);
+        expect(screen.y).toBeCloseTo(200);
+      });
+
+      it("should round-trip at 90° rotation", () => {
+        const cam = makeRotatedCamera(Math.PI / 2);
+        const world = cam.screenToWorld(300, 100);
+        const screen = cam.worldToScreen(world.x, world.y);
+        expect(screen.x).toBeCloseTo(300);
+        expect(screen.y).toBeCloseTo(100);
+      });
+
+      it("should round-trip at 180° rotation with zoom and pan", () => {
+        const cam = new Camera({ x: 50, y: 100, zoom: 2, rotation: Math.PI });
+        cam.setViewportSize(800, 600);
+        const world = cam.screenToWorld(400, 300);
+        const screen = cam.worldToScreen(world.x, world.y);
+        expect(screen.x).toBeCloseTo(400);
+        expect(screen.y).toBeCloseTo(300);
+      });
+
+      it("should round-trip at arbitrary rotation with zoom", () => {
+        const cam = new Camera({ x: 20, y: 30, zoom: 1.5, rotation: 1.23 });
+        cam.setViewportSize(1024, 768);
+        const world = cam.screenToWorld(512, 384);
+        const screen = cam.worldToScreen(world.x, world.y);
+        expect(screen.x).toBeCloseTo(512);
+        expect(screen.y).toBeCloseTo(384);
+      });
+    });
+
+    describe("rotateAt", () => {
+      it("should keep the world point under the screen position stationary", () => {
+        const cam = new Camera({ x: 0, y: 0, zoom: 1 });
+        cam.setViewportSize(800, 600);
+        const screenX = 400;
+        const screenY = 300;
+
+        const worldBefore = cam.screenToWorld(screenX, screenY);
+        cam.rotateAt(screenX, screenY, Math.PI / 4);
+        const worldAfter = cam.screenToWorld(screenX, screenY);
+
+        expect(worldAfter.x).toBeCloseTo(worldBefore.x);
+        expect(worldAfter.y).toBeCloseTo(worldBefore.y);
+      });
+
+      it("should keep world point stationary at non-center position", () => {
+        const cam = new Camera({ x: 50, y: 100, zoom: 2 });
+        cam.setViewportSize(800, 600);
+        const screenX = 200;
+        const screenY = 150;
+
+        const worldBefore = cam.screenToWorld(screenX, screenY);
+        cam.rotateAt(screenX, screenY, Math.PI / 3);
+        const worldAfter = cam.screenToWorld(screenX, screenY);
+
+        expect(worldAfter.x).toBeCloseTo(worldBefore.x);
+        expect(worldAfter.y).toBeCloseTo(worldBefore.y);
+      });
+
+      it("should normalize rotation to [0, 2π)", () => {
+        const cam = new Camera();
+        cam.setViewportSize(800, 600);
+        cam.rotateAt(400, 300, -Math.PI / 2);
+        expect(cam.rotation).toBeCloseTo(3 * Math.PI / 2);
+      });
+    });
+
+    describe("snapRotation", () => {
+      it("should snap to 0 when close", () => {
+        expect(Camera.snapRotation(0.05)).toBe(0);
+        expect(Camera.snapRotation(2 * Math.PI - 0.05)).toBe(0);
+      });
+
+      it("should snap to 90° when close", () => {
+        expect(Camera.snapRotation(Math.PI / 2 + 0.02)).toBeCloseTo(Math.PI / 2);
+      });
+
+      it("should snap to 180° when close", () => {
+        expect(Camera.snapRotation(Math.PI - 0.03)).toBeCloseTo(Math.PI);
+      });
+
+      it("should not snap when far from snap angles", () => {
+        const angle = Math.PI / 4; // 45° — not a snap angle
+        expect(Camera.snapRotation(angle)).toBeCloseTo(angle);
+      });
+    });
+
+    describe("getVisibleRect with rotation", () => {
+      it("should return expanded AABB at 45° rotation", () => {
+        const cam = makeRotatedCamera(Math.PI / 4);
+        const rect = cam.getVisibleRect(800, 600);
+        // Rotated viewport should be larger than unrotated
+        const unrotatedCam = new Camera();
+        const unrotatedRect = unrotatedCam.getVisibleRect(800, 600);
+        // Width and height of AABB should be >= unrotated
+        const rotatedWidth = rect[2] - rect[0];
+        const rotatedHeight = rect[3] - rect[1];
+        const unrotatedWidth = unrotatedRect[2] - unrotatedRect[0];
+        const unrotatedHeight = unrotatedRect[3] - unrotatedRect[1];
+        expect(rotatedWidth).toBeGreaterThan(unrotatedWidth);
+        expect(rotatedHeight).toBeGreaterThan(unrotatedHeight);
+      });
+
+      it("should return same rect at 0° rotation", () => {
+        const cam = makeRotatedCamera(0);
+        const rect = cam.getVisibleRect(800, 600);
+        expect(rect).toEqual([0, 0, 800, 600]);
+      });
+    });
+
+    describe("pan with rotation", () => {
+      it("should adjust pan direction for rotation", () => {
+        const cam = makeRotatedCamera(Math.PI / 2); // 90° rotation
+        cam.pan(100, 0); // pan right on screen
+        // At 90° CW rotation, screen-right inverse-rotates to world-up (-Y direction)
+        // So camera moves +Y (content moves screen-right)
+        expect(cam.x).toBeCloseTo(0);
+        expect(cam.y).toBeCloseTo(100);
+      });
+    });
   });
 });
