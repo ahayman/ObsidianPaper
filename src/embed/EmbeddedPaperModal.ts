@@ -863,6 +863,11 @@ export class EmbeddedPaperModal extends Modal {
         this.deviceSettings.toolbarPosition = position;
         this.onDeviceSettingsChanged?.({ toolbarPosition: position });
       },
+      onRecentColorsChange: (colors, collapsed) => {
+        this.settings.recentColors = colors;
+        this.settings.recentColorsCollapsed = collapsed;
+        this.onSettingsChange?.({ recentColors: colors, recentColorsCollapsed: collapsed });
+      },
     };
   }
 

@@ -227,7 +227,9 @@ export class PaperView extends TextFileView {
       },
       this.settings.penPresets,
       this.deviceSettings.toolbarPosition,
-      this.themeDetector.isDarkMode
+      this.themeDetector.isDarkMode,
+      this.settings.recentColors,
+      this.settings.recentColorsCollapsed
     );
 
     // Show paste button if clipboard already has content (shared across views)
@@ -1198,6 +1200,11 @@ export class PaperView extends TextFileView {
       onPositionChange: (position) => {
         this.deviceSettings.toolbarPosition = position;
         this.onDeviceSettingsChange?.({ toolbarPosition: position });
+      },
+      onRecentColorsChange: (colors, collapsed) => {
+        this.settings.recentColors = colors;
+        this.settings.recentColorsCollapsed = collapsed;
+        this.onSettingsChange?.({ recentColors: colors, recentColorsCollapsed: collapsed });
       },
     };
   }

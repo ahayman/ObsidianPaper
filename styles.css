@@ -542,6 +542,219 @@
   opacity: 0.5;
 }
 
+/* ─── Recent Color Strip ──────────────────────────────────── */
+
+.paper-recent-colors {
+  position: absolute;
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 3px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  pointer-events: auto;
+  touch-action: manipulation;
+  transition: opacity 0.2s;
+}
+
+/* Position variants — left/top set by JS to anchor to the current pen button */
+.paper-recent-colors[data-position="top"] {
+  top: 72px;
+  flex-direction: row;
+}
+
+.paper-recent-colors[data-position="bottom"] {
+  bottom: 72px;
+  flex-direction: row;
+}
+
+.paper-recent-colors[data-position="left"] {
+  left: 72px;
+  flex-direction: column;
+}
+
+.paper-recent-colors[data-position="right"] {
+  right: 72px;
+  flex-direction: column;
+}
+
+/* Collapsed + minimized + empty states */
+.paper-recent-colors.is-collapsed {
+  display: none;
+}
+
+.paper-recent-colors.is-minimized {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.paper-recent-colors.is-empty {
+  display: none;
+}
+
+/* Toolbar toggle button (thin, between current pen and presets) */
+.paper-toolbar__recent-toggle {
+  padding: 0 !important;
+  margin: 0;
+  border: none !important;
+  border-radius: 4px !important;
+  background: transparent !important;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  appearance: none;
+  -webkit-appearance: none;
+  box-shadow: none !important;
+  line-height: 0;
+}
+
+/* Horizontal toolbar: narrow width, full height */
+.paper-toolbar[data-position="top"] .paper-toolbar__recent-toggle,
+.paper-toolbar[data-position="bottom"] .paper-toolbar__recent-toggle {
+  width: 16px !important;
+  min-width: 16px !important;
+  max-width: 16px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+}
+
+/* Vertical toolbar: full width, short height */
+.paper-toolbar[data-position="left"] .paper-toolbar__recent-toggle,
+.paper-toolbar[data-position="right"] .paper-toolbar__recent-toggle {
+  width: 32px !important;
+  min-width: 32px !important;
+  height: 16px !important;
+  min-height: 16px !important;
+  max-height: 16px !important;
+}
+
+.paper-toolbar__recent-toggle:hover {
+  background: var(--background-modifier-hover) !important;
+  color: var(--text-normal);
+}
+
+.paper-toolbar__recent-toggle svg {
+  width: 12px !important;
+  height: 12px !important;
+}
+
+/* Swatch container */
+.paper-recent-colors__swatches {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.paper-recent-colors__swatches::-webkit-scrollbar {
+  display: none;
+}
+
+.paper-recent-colors[data-position="top"] .paper-recent-colors__swatches,
+.paper-recent-colors[data-position="bottom"] .paper-recent-colors__swatches {
+  flex-direction: row;
+  max-width: 400px;
+  overflow-x: auto;
+}
+
+.paper-recent-colors[data-position="left"] .paper-recent-colors__swatches,
+.paper-recent-colors[data-position="right"] .paper-recent-colors__swatches {
+  flex-direction: column;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+/* Individual swatch — circular, reset Obsidian button defaults */
+.paper-recent-colors__swatch {
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
+  min-height: 28px !important;
+  border: 2px solid transparent !important;
+  border-radius: 50% !important;
+  cursor: pointer;
+  padding: 0 !important;
+  margin: 0;
+  transition: border-color 0.15s, transform 0.1s;
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+  appearance: none;
+  -webkit-appearance: none;
+  -webkit-tap-highlight-color: transparent;
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  line-height: 0;
+  font-size: 0;
+}
+
+.paper-recent-colors__swatch:hover {
+  transform: scale(1.15);
+  background: transparent !important;
+}
+
+.paper-recent-colors__swatch.is-active {
+  border-color: var(--interactive-accent) !important;
+  box-shadow: 0 0 0 1px var(--interactive-accent) !important;
+}
+
+/* Swatch color layer — diagonal split */
+.paper-recent-colors__swatch-color {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: linear-gradient(
+    135deg,
+    var(--swatch-color-dark, transparent) 50%,
+    var(--swatch-color-light, transparent) 50%
+  ) !important;
+  pointer-events: none;
+}
+
+/* Color wheel button — smaller than swatches, reset Obsidian defaults */
+.paper-recent-colors__wheel {
+  width: 26px !important;
+  height: 26px !important;
+  min-width: 26px !important;
+  min-height: 26px !important;
+  padding: 2px !important;
+  margin: 0;
+  border: 1px solid var(--background-modifier-border) !important;
+  border-radius: 50% !important;
+  background: var(--background-secondary) !important;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+  appearance: none;
+  -webkit-appearance: none;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: none !important;
+  line-height: 0;
+  font-size: 0;
+}
+
+.paper-recent-colors__wheel:hover {
+  background: var(--background-modifier-hover) !important;
+  color: var(--text-normal);
+}
+
+.paper-recent-colors__wheel svg {
+  width: 20px !important;
+  height: 20px !important;
+}
+
 /* ─── Customize Popover ────────────────────────────────────── */
 
 .paper-popover__backdrop {

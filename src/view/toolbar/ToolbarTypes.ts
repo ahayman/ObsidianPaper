@@ -47,6 +47,7 @@ export interface ToolbarCallbacks {
   onOpenDocumentSettings: () => void;
   onPresetSave: (presets: PenPreset[], activePresetId: string | null) => void;
   onPositionChange: (position: ToolbarPosition) => void;
+  onRecentColorsChange: (colors: string[], collapsed: boolean) => void;
 }
 
 export interface ToolbarQueries {

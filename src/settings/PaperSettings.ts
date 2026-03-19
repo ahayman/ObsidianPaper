@@ -68,6 +68,10 @@ export interface PaperSettings {
   penPresets: PenPreset[];
   activePresetId: string | null;
 
+  // Recent colors
+  recentColors: string[];          // MRU colorId list (dual-hex or single hex)
+  recentColorsCollapsed: boolean;  // Whether the recent color strip is collapsed
+
   // Clipboard
   clipboardQueueSize: number; // 1-10, number of copy entries in the LIFO paste queue
 
@@ -161,6 +165,9 @@ export const DEFAULT_SETTINGS: PaperSettings = {
 
   penPresets: DEFAULT_PRESETS,
   activePresetId: "preset-ballpoint-black",
+
+  recentColors: [],
+  recentColorsCollapsed: false,
 
   clipboardQueueSize: 5,
 

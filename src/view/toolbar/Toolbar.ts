@@ -12,6 +12,10 @@ import { PresetManager } from "./PresetManager";
 import { CustomizePopover } from "./CustomizePopover";
 import { CurrentPenButton } from "./CurrentPenButton";
 import { AutoMinimizer } from "./AutoMinimizer";
+import { RecentColorStrip } from "./RecentColorStrip";
+import { RecentColorManager } from "./RecentColorManager";
+import { ColorWheelPopover } from "./ColorWheelPopover";
+import { setIcon } from "obsidian";
 import { DEFAULT_GRAIN_VALUE } from "../../stamp/GrainMapping";
 
 /**
@@ -19,6 +23,7 @@ import { DEFAULT_GRAIN_VALUE } from "../../stamp/GrainMapping";
  */
 export class Toolbar {
   private el: HTMLElement;
+  private container: HTMLElement;
   private callbacks: ToolbarCallbacks;
   private queries: ToolbarQueries;
   private state: ToolbarState;
@@ -30,9 +35,19 @@ export class Toolbar {
   private popover: CustomizePopover | null = null;
   private autoMinimizer: AutoMinimizer;
 
+  // Recent colors
+  private recentColorManager: RecentColorManager;
+  private recentColorStrip: RecentColorStrip | null = null;
+  private colorWheelPopover: ColorWheelPopover | null = null;
+  private recentColorsCollapsed: boolean;
+  private recentColorsToggleBtn: HTMLButtonElement | null = null;
+
   // When non-null, the popover is editing this preset without changing the active pen
   private editingPresetId: string | null = null;
   private editingState: ToolbarState | null = null;
+
+  // Deferred MRU promotion: tracks the colorId when a popover opens
+  private colorIdBeforePopover: string | null = null;
 
   // Buttons
   private undoBtn: ToolbarButton | null = null;
@@ -51,14 +66,19 @@ export class Toolbar {
     initialState: ToolbarState,
     presets: PenPreset[],
     position: ToolbarPosition,
-    isDarkMode: boolean
+    isDarkMode: boolean,
+    recentColors: string[] = [],
+    recentColorsCollapsed = false
   ) {
+    this.container = container;
     this.callbacks = callbacks;
     this.queries = queries;
     this.state = { ...initialState };
     this.position = position;
     this.isDark = isDarkMode;
     this.presetManager = new PresetManager(presets);
+    this.recentColorManager = new RecentColorManager(recentColors);
+    this.recentColorsCollapsed = recentColorsCollapsed;
 
     this.el = container.createEl("div", {
       cls: "paper-toolbar",
@@ -67,9 +87,11 @@ export class Toolbar {
 
     this.autoMinimizer = new AutoMinimizer((minimized) => {
       this.el.toggleClass("is-minimized", minimized);
+      this.recentColorStrip?.setMinimized(minimized);
     });
 
     this.build();
+    this.buildRecentColorStrip(container);
   }
 
   private build(): void {
@@ -95,6 +117,19 @@ export class Toolbar {
       this.state.penType,
       () => this.togglePopover()
     );
+
+    // Recent colors collapse toggle (thin button between pen and presets)
+    this.recentColorsToggleBtn = this.el.createEl("button", {
+      cls: "paper-toolbar__recent-toggle",
+      attr: { "aria-label": this.recentColorsCollapsed ? "Show recent colors" : "Hide recent colors" },
+    });
+    this.updateRecentToggleIcon();
+    this.recentColorsToggleBtn.addEventListener("click", () => {
+      this.recentColorsCollapsed = !this.recentColorsCollapsed;
+      this.recentColorStrip?.setCollapsed(this.recentColorsCollapsed);
+      this.updateRecentToggleIcon();
+      this.persistRecentColors();
+    });
 
     // Separator
     this.el.createEl("div", { cls: "paper-toolbar__separator" });
@@ -186,6 +221,8 @@ export class Toolbar {
     this.presetStrip?.setActivePreset(presetId);
     this.currentPenBtn?.update(this.state.colorId, this.state.penType);
     this.callbacks.onPenSettingsChange({ ...this.state });
+    // Immediate promotion — selecting a preset is a deliberate choice
+    this.promoteAndPersist(this.state.colorId);
   }
 
   private handlePresetLongPress(presetId: string): void {
@@ -258,6 +295,9 @@ export class Toolbar {
     const isEditing = this.editingPresetId !== null;
     const popoverState = this.editingState ?? this.state;
     const popoverPresetId = this.editingPresetId ?? this.state.activePresetId;
+
+    // Record color before opening for deferred MRU promotion
+    this.colorIdBeforePopover = this.state.colorId;
 
     this.autoMinimizer.suspend();
     this.popover = new CustomizePopover(
@@ -333,9 +373,172 @@ export class Toolbar {
     if (!this.popover) return;
     this.popover.destroy();
     this.popover = null;
+
+    // Deferred MRU promotion: promote the final color if it changed
+    if (this.colorIdBeforePopover !== null) {
+      const isEditingNonActive = this.editingPresetId !== null
+        && this.editingPresetId !== this.state.activePresetId;
+      if (!isEditingNonActive && this.state.colorId !== this.colorIdBeforePopover) {
+        this.promoteAndPersist(this.state.colorId);
+      }
+      this.colorIdBeforePopover = null;
+    }
+
     this.editingPresetId = null;
     this.editingState = null;
     this.autoMinimizer.resume();
+  }
+
+  // ─── Recent Color Strip ────────────────────────────────────
+
+  private buildRecentColorStrip(container: HTMLElement): void {
+    this.recentColorStrip = new RecentColorStrip(
+      container,
+      this.recentColorManager.getColors() as string[],
+      this.state.colorId,
+      this.recentColorsCollapsed,
+      this.position,
+      {
+        onColorSelect: (colorId) => {
+          this.state.colorId = colorId;
+          // Check if the new color matches a preset
+          const match = this.presetManager.findMatchingPreset(this.state);
+          if (match !== this.state.activePresetId) {
+            this.state.activePresetId = match;
+            this.presetStrip?.setActivePreset(match);
+          }
+          this.currentPenBtn?.update(this.state.colorId, this.state.penType);
+          this.callbacks.onPenSettingsChange({ ...this.state });
+          // Immediate promotion — this is a deliberate choice
+          this.promoteAndPersist(colorId);
+
+          // Switch to pen tool if not already
+          if (this.state.activeTool !== "pen") {
+            this.state.activeTool = "pen";
+            this.eraserBtn?.setActive(false);
+            this.lassoBtn?.setActive(false);
+            this.callbacks.onToolChange("pen");
+          }
+        },
+        onColorRemove: (colorId) => {
+          this.recentColorManager.remove(colorId);
+          this.refreshRecentStrip();
+          this.persistRecentColors();
+        },
+        onOpenColorPicker: (anchor) => {
+          this.openColorWheelPopover(anchor);
+        },
+      }
+    );
+
+    // Position the strip after it's been added to the DOM
+    requestAnimationFrame(() => this.positionRecentStrip());
+  }
+
+  private updateRecentToggleIcon(): void {
+    if (!this.recentColorsToggleBtn) return;
+    this.recentColorsToggleBtn.empty();
+    const isVertical = this.position === "left" || this.position === "right";
+    if (isVertical) {
+      setIcon(this.recentColorsToggleBtn, this.recentColorsCollapsed ? "chevron-right" : "chevron-left");
+    } else {
+      setIcon(this.recentColorsToggleBtn, this.recentColorsCollapsed ? "chevron-down" : "chevron-up");
+    }
+    this.recentColorsToggleBtn.setAttribute(
+      "aria-label",
+      this.recentColorsCollapsed ? "Show recent colors" : "Hide recent colors"
+    );
+  }
+
+  /**
+   * Position the recent color strip so it's anchored to the current pen button.
+   * For horizontal toolbars: aligns left edge of strip with the pen button's left edge.
+   * For vertical toolbars: aligns top edge of strip with the pen button's top edge.
+   */
+  private positionRecentStrip(): void {
+    if (!this.recentColorStrip || !this.currentPenBtn) return;
+    const stripEl = this.recentColorStrip.el;
+    const containerRect = this.container.getBoundingClientRect();
+    const penRect = this.currentPenBtn.el.getBoundingClientRect();
+    const isVertical = this.position === "left" || this.position === "right";
+
+    if (isVertical) {
+      // Align top of strip to pen button's top, relative to container
+      const top = penRect.top - containerRect.top;
+      stripEl.style.top = `${top}px`;
+      stripEl.style.transform = "none";
+    } else {
+      // Align left of strip to pen button's left, relative to container
+      const left = penRect.left - containerRect.left;
+      stripEl.style.left = `${left}px`;
+      stripEl.style.transform = "none";
+    }
+  }
+
+  private openColorWheelPopover(anchor: HTMLElement): void {
+    if (this.colorWheelPopover) return;
+    this.autoMinimizer.suspend();
+    // Record color before opening for deferred promotion
+    this.colorIdBeforePopover = this.state.colorId;
+
+    this.colorWheelPopover = new ColorWheelPopover(
+      this.state.colorId,
+      this.position,
+      anchor,
+      {
+        onColorChange: (colorId) => {
+          // Live preview — update the pen but don't promote yet
+          this.state.colorId = colorId;
+          const match = this.presetManager.findMatchingPreset(this.state);
+          if (match !== this.state.activePresetId) {
+            this.state.activePresetId = match;
+            this.presetStrip?.setActivePreset(match);
+          }
+          this.currentPenBtn?.update(this.state.colorId, this.state.penType);
+          this.recentColorStrip?.setActiveColor(colorId);
+          this.callbacks.onPenSettingsChange({ ...this.state });
+        },
+        onDismiss: () => {
+          this.closeColorWheelPopover();
+        },
+      }
+    );
+  }
+
+  private closeColorWheelPopover(): void {
+    if (!this.colorWheelPopover) return;
+    this.colorWheelPopover.destroy();
+    this.colorWheelPopover = null;
+
+    // Deferred MRU promotion
+    if (this.colorIdBeforePopover !== null && this.state.colorId !== this.colorIdBeforePopover) {
+      this.promoteAndPersist(this.state.colorId);
+    }
+    this.colorIdBeforePopover = null;
+    this.autoMinimizer.resume();
+  }
+
+  // ─── MRU Helpers ───────────────────────────────────────────
+
+  private promoteAndPersist(colorId: string): void {
+    if (this.recentColorManager.promote(colorId)) {
+      this.refreshRecentStrip();
+      this.persistRecentColors();
+    }
+  }
+
+  private refreshRecentStrip(): void {
+    this.recentColorStrip?.updateColors(
+      this.recentColorManager.getColors() as string[],
+      this.state.colorId
+    );
+  }
+
+  private persistRecentColors(): void {
+    this.callbacks.onRecentColorsChange(
+      this.recentColorManager.toArray(),
+      this.recentColorsCollapsed
+    );
   }
 
   // ─── Public API ─────────────────────────────────────────────
@@ -362,6 +565,10 @@ export class Toolbar {
     if (partial.colorId !== undefined || partial.penType !== undefined) {
       this.currentPenBtn?.update(this.state.colorId, this.state.penType);
     }
+
+    if (partial.colorId !== undefined) {
+      this.recentColorStrip?.setActiveColor(this.state.colorId);
+    }
   }
 
   setDarkMode(isDark: boolean): void {
@@ -375,6 +582,9 @@ export class Toolbar {
     this.position = position;
     this.el.dataset.position = position;
     this.popover?.setPosition(position);
+    this.recentColorStrip?.setPosition(position);
+    this.updateRecentToggleIcon();
+    requestAnimationFrame(() => this.positionRecentStrip());
   }
 
   showPasteButton(visible: boolean, count = 0): void {
@@ -418,8 +628,10 @@ export class Toolbar {
 
   destroy(): void {
     this.closePopover();
+    this.closeColorWheelPopover();
     this.autoMinimizer.destroy();
     this.presetStrip?.destroy();
+    this.recentColorStrip?.destroy();
     this.undoBtn?.destroy();
     this.redoBtn?.destroy();
     this.eraserBtn?.destroy();
@@ -428,6 +640,7 @@ export class Toolbar {
     this.addPageBtn?.destroy();
     this.docSettingsBtn?.destroy();
     this.currentPenBtn?.destroy();
+    this.recentColorsToggleBtn?.remove();
     this.el.remove();
   }
 }
