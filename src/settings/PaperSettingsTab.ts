@@ -572,6 +572,17 @@ export class PaperSettingsTab extends PluginSettingTab {
           this.deviceAccess.onDeviceSettingsChange(updated);
         });
       });
+
+    new Setting(container)
+      .setName("Auto-hide toolbar while writing")
+      .setDesc("Minimize the toolbar when writing and restore it when finished")
+      .addToggle((toggle) => {
+        toggle.setValue(ds.autoHideToolbar);
+        toggle.onChange((value: boolean) => {
+          const updated = { ...this.deviceAccess.getDeviceSettings(), autoHideToolbar: value };
+          this.deviceAccess.onDeviceSettingsChange(updated);
+        });
+      });
   }
 
   private buildFilesTab(container: HTMLElement): void {

@@ -6,6 +6,7 @@ const EXPAND_DELAY_MS = 500;
 export class AutoMinimizer {
   private minimized = false;
   private suspended = false;
+  private enabled = true;
   private expandTimer: ReturnType<typeof setTimeout> | null = null;
   private onChange: (minimized: boolean) => void;
 
@@ -13,7 +14,16 @@ export class AutoMinimizer {
     this.onChange = onChange;
   }
 
+  setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+    if (!enabled) {
+      this.cancelTimer();
+      this.setMinimized(false);
+    }
+  }
+
   notifyStrokeStart(): void {
+    if (!this.enabled) return;
     this.cancelTimer();
     if (!this.suspended) {
       this.setMinimized(true);
@@ -21,6 +31,7 @@ export class AutoMinimizer {
   }
 
   notifyStrokeEnd(): void {
+    if (!this.enabled) return;
     if (this.suspended) return;
     this.cancelTimer();
     this.expandTimer = setTimeout(() => {

@@ -171,6 +171,7 @@ export class EmbeddedPaperModal extends Modal {
       this.deviceSettings.toolbarPosition,
       this.themeDetector.isDarkMode,
     );
+    this.toolbar.setAutoHide(this.deviceSettings.autoHideToolbar);
 
     // Page menu button
     this.pageMenuButton = new PageMenuButton(container, this.camera, {

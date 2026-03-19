@@ -11,6 +11,7 @@ export interface DeviceSettings {
   palmRejection: boolean;
   fingerAction: "pan" | "draw";
   toolbarPosition: ToolbarPosition;
+  autoHideToolbar: boolean;
   maxZoomLevel: MaxZoomLevel;
   tileMemoryBudgetMB: TileMemoryBudgetMB;
 }
@@ -21,6 +22,7 @@ export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = {
   palmRejection: true,
   fingerAction: "pan",
   toolbarPosition: "top",
+  autoHideToolbar: true,
   maxZoomLevel: 5,
   tileMemoryBudgetMB: 200,
 };

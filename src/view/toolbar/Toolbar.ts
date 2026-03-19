@@ -94,6 +94,10 @@ export class Toolbar {
     this.buildRecentColorStrip(container);
   }
 
+  setAutoHide(enabled: boolean): void {
+    this.autoMinimizer.setEnabled(enabled);
+  }
+
   private build(): void {
     // Undo
     this.undoBtn = new ToolbarButton(this.el, "Undo", "paper-toolbar__btn--undo", () => {

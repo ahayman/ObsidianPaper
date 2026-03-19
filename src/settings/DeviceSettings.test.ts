@@ -43,6 +43,7 @@ describe("DeviceSettings", () => {
         palmRejection: false,
         fingerAction: "draw",
         toolbarPosition: "bottom",
+        autoHideToolbar: true,
         maxZoomLevel: 10,
         tileMemoryBudgetMB: 600,
       };
@@ -84,6 +85,7 @@ describe("DeviceSettings", () => {
         palmRejection: false,
         fingerAction: "draw",
         toolbarPosition: "bottom",
+        autoHideToolbar: true,
         maxZoomLevel: 10,
         tileMemoryBudgetMB: 400,
       };

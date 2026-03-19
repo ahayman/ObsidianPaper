@@ -231,6 +231,7 @@ export class PaperView extends TextFileView {
       this.settings.recentColors,
       this.settings.recentColorsCollapsed
     );
+    this.toolbar.setAutoHide(this.deviceSettings.autoHideToolbar);
 
     // Show paste button if clipboard already has content (shared across views)
     if (this.clipboard && !this.clipboard.isEmpty) {
@@ -389,6 +390,7 @@ export class PaperView extends TextFileView {
     this.deviceSettings = ds;
     this.renderer?.setPipeline(this.getResolvedPipeline());
     this.toolbar?.setPosition(ds.toolbarPosition);
+    this.toolbar?.setAutoHide(ds.autoHideToolbar);
     this.updateZoomLimits();
   }
 

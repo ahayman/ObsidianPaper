@@ -138,4 +138,46 @@ describe("AutoMinimizer", () => {
     expect(onChange).toHaveBeenCalledTimes(1); // No extra call
     am.destroy();
   });
+
+  // ─── setEnabled ──────────────────────────────────────────────
+
+  it("does not minimize when disabled", () => {
+    const onChange = jest.fn();
+    const am = new AutoMinimizer(onChange);
+
+    am.setEnabled(false);
+    am.notifyStrokeStart();
+    expect(am.isMinimized()).toBe(false);
+    expect(onChange).not.toHaveBeenCalled();
+
+    am.notifyStrokeEnd();
+    jest.advanceTimersByTime(500);
+    expect(am.isMinimized()).toBe(false);
+    am.destroy();
+  });
+
+  it("disabling while minimized expands immediately", () => {
+    const onChange = jest.fn();
+    const am = new AutoMinimizer(onChange);
+
+    am.notifyStrokeStart();
+    expect(am.isMinimized()).toBe(true);
+
+    am.setEnabled(false);
+    expect(am.isMinimized()).toBe(false);
+    expect(onChange).toHaveBeenLastCalledWith(false);
+    am.destroy();
+  });
+
+  it("re-enabling restores auto-minimize behavior", () => {
+    const onChange = jest.fn();
+    const am = new AutoMinimizer(onChange);
+
+    am.setEnabled(false);
+    am.setEnabled(true);
+
+    am.notifyStrokeStart();
+    expect(am.isMinimized()).toBe(true);
+    am.destroy();
+  });
 });
