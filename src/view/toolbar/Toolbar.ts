@@ -284,20 +284,13 @@ export class Toolbar {
             }
           } else {
             Object.assign(this.state, partial);
-            if (this.state.activePresetId) {
-              // Auto-save changes back to the active preset
-              const data = this.presetManager.createFromState(this.state);
-              this.presetManager.updatePreset(this.state.activePresetId, data);
-              const updated = this.presetManager.getPreset(this.state.activePresetId);
-              if (updated) this.presetStrip?.updateSinglePreset(updated);
-              this.callbacks.onPresetSave(this.presetManager.toArray(), this.state.activePresetId);
-            } else {
-              // No active preset — check if state now matches one
-              const match = this.presetManager.findMatchingPreset(this.state);
-              if (match !== this.state.activePresetId) {
-                this.state.activePresetId = match;
-                this.presetStrip?.setActivePreset(match);
-              }
+            // Check if state matches any preset (including the currently active one)
+            const match = this.presetManager.findMatchingPreset(this.state);
+            if (match !== this.state.activePresetId) {
+              this.state.activePresetId = match;
+              this.presetStrip?.setActivePreset(match);
+              const matchedPreset = match ? this.presetManager.getPreset(match) ?? null : null;
+              this.popover?.setActivePreset(matchedPreset);
             }
             this.currentPenBtn?.update(this.state.colorId, this.state.penType);
             this.callbacks.onPenSettingsChange({ ...this.state });
