@@ -119,7 +119,7 @@ export class PresetManager {
       preset.useBarrelRotation = state.useBarrelRotation;
     }
     // Include stroke scaling if non-default
-    if (state.strokeScaling === "scaled") {
+    if (state.strokeScaling === "screen") {
       preset.strokeScaling = state.strokeScaling;
     }
     return preset;
@@ -143,7 +143,7 @@ export class PresetManager {
         (p.inkPreset ?? "standard") === state.inkPreset &&
         (p.inkDepletion ?? 0) === state.inkDepletion &&
         (p.useBarrelRotation ?? false) === state.useBarrelRotation &&
-        (p.strokeScaling ?? "fixed") === state.strokeScaling
+        (p.strokeScaling ?? "paper") === state.strokeScaling
       ) {
         return p.id;
       }

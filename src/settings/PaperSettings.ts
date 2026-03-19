@@ -246,5 +246,13 @@ export function mergeSettings(loaded: Partial<PaperSettings> | null): PaperSetti
     ...rest
   } = loaded as Record<string, unknown>;
   const merged = { ...DEFAULT_SETTINGS, ...rest } as PaperSettings;
+
+  // Migrate legacy strokeScaling values: "fixed" → "paper", "scaled" → "screen"
+  for (const preset of merged.penPresets) {
+    const ss = preset.strokeScaling as string | undefined;
+    if (ss === "fixed") preset.strokeScaling = "paper";
+    else if (ss === "scaled") preset.strokeScaling = "screen";
+  }
+
   return merged;
 }

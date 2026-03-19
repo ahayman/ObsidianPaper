@@ -114,7 +114,7 @@ export class PaperView extends TextFileView {
   private currentInkPreset = "standard";
   private currentInkDepletion = 0;
   private currentUseBarrelRotation = false;
-  private currentStrokeScaling: StrokeScaling = "fixed";
+  private currentStrokeScaling: StrokeScaling = "paper";
 
   /**
    * Callback for persisting settings changes (presets) back to the plugin.
@@ -353,7 +353,7 @@ export class PaperView extends TextFileView {
         this.currentInkPreset = preset.inkPreset ?? "standard";
         this.currentInkDepletion = preset.inkDepletion ?? 0;
         this.currentUseBarrelRotation = preset.useBarrelRotation ?? false;
-        this.currentStrokeScaling = preset.strokeScaling ?? "fixed";
+        this.currentStrokeScaling = preset.strokeScaling ?? "paper";
         if (preset.nibAngle !== undefined) this.currentNibAngle = preset.nibAngle;
         if (preset.nibThickness !== undefined) this.currentNibThickness = preset.nibThickness;
         if (preset.nibPressure !== undefined) this.currentNibPressure = preset.nibPressure;
@@ -1322,7 +1322,7 @@ export class PaperView extends TextFileView {
         this.activeStrokePageIndex = pageIndex;
         const style = this.getCurrentStyle();
         // Scale stroke width to zoom level if enabled
-        if (this.currentStrokeScaling === "scaled") {
+        if (this.currentStrokeScaling === "screen") {
           style.width = style.width / this.camera.zoom;
         }
         const styleName = this.getCurrentStyleName();
@@ -1376,7 +1376,7 @@ export class PaperView extends TextFileView {
 
         if (!this.strokeBuilder) return;
         const style = this.getCurrentStyle();
-        if (this.currentStrokeScaling === "scaled") {
+        if (this.currentStrokeScaling === "screen") {
           style.width = style.width / this.camera.zoom;
         }
         const pageRect = this.getActivePageRect();
@@ -1444,7 +1444,7 @@ export class PaperView extends TextFileView {
         if (this.strokeBuilder.pointCount >= 2) {
           const builder = this.strokeBuilder;
           const style = this.getCurrentStyle();
-          if (this.currentStrokeScaling === "scaled") {
+          if (this.currentStrokeScaling === "screen") {
             style.width = style.width / this.camera.zoom;
           }
           const styleName = this.getCurrentStyleName();
@@ -1577,7 +1577,7 @@ export class PaperView extends TextFileView {
         if (hasNib && this.currentUseBarrelRotation && twist !== 0) {
           nibAngle = twist * Math.PI / 180;
         }
-        const hoverWidth = this.currentStrokeScaling === "scaled"
+        const hoverWidth = this.currentStrokeScaling === "screen"
           ? this.currentWidth / this.camera.zoom
           : this.currentWidth;
         this.hoverCursor?.show(x, y, {

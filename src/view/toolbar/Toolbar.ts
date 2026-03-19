@@ -254,7 +254,7 @@ export class Toolbar {
       nibThickness: preset.nibThickness ?? this.state.nibThickness,
       nibPressure: preset.nibPressure ?? this.state.nibPressure,
       useBarrelRotation: preset.useBarrelRotation ?? false,
-      strokeScaling: preset.strokeScaling ?? "fixed",
+      strokeScaling: preset.strokeScaling ?? "paper",
     };
 
     const anchor = this.presetStrip?.getButtonElement(presetId);
@@ -269,7 +269,7 @@ export class Toolbar {
     this.state.grain = preset.grain ?? DEFAULT_GRAIN_VALUE;
     this.state.inkPreset = preset.inkPreset ?? "standard";
     this.state.useBarrelRotation = preset.useBarrelRotation ?? false;
-    this.state.strokeScaling = preset.strokeScaling ?? "fixed";
+    this.state.strokeScaling = preset.strokeScaling ?? "paper";
     if (preset.nibAngle !== undefined) this.state.nibAngle = preset.nibAngle;
     if (preset.nibThickness !== undefined) this.state.nibThickness = preset.nibThickness;
     if (preset.nibPressure !== undefined) this.state.nibPressure = preset.nibPressure;

@@ -11,7 +11,7 @@ export type PenType =
   | "fountain"
   | "highlighter";
 
-export type StrokeScaling = "fixed" | "scaled";
+export type StrokeScaling = "paper" | "screen";
 
 export interface PenStyle {
   pen: PenType;

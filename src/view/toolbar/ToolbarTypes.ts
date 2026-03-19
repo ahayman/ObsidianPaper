@@ -14,7 +14,7 @@ export interface PenPreset {
   grain?: number;          // 0-1, pencil only (grain slider value)
   inkPreset?: string;      // Ink preset ID, fountain only
   inkDepletion?: number;   // 0-1, felt-tip only (ink depletion rate)
-  strokeScaling?: StrokeScaling; // "fixed" (default) or "scaled" (width scales with zoom)
+  strokeScaling?: StrokeScaling; // "paper" (default) or "screen" (width scales with zoom)
 }
 
 export type ToolbarPosition = "top" | "bottom" | "left" | "right";

@@ -304,12 +304,12 @@ export class CustomizePopover {
   private buildStrokeScalingSection(parent: HTMLElement): void {
     const section = parent.createEl("div", { cls: "paper-popover__section" });
     const row = section.createEl("div", { cls: "paper-popover__slider-row" });
-    row.createEl("span", { cls: "paper-popover__slider-label", text: "Stroke size" });
+    row.createEl("span", { cls: "paper-popover__slider-label", text: "Fix to" });
     const btnGroup = row.createEl("div", { cls: "paper-popover__toggle-group" });
 
     const options: { value: StrokeScaling; label: string }[] = [
-      { value: "fixed", label: "Fixed" },
-      { value: "scaled", label: "Scaled" },
+      { value: "paper", label: "Paper" },
+      { value: "screen", label: "Screen" },
     ];
 
     for (const opt of options) {
