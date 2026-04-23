@@ -1784,3 +1784,19 @@
   border-radius: 50%;
   background: var(--text-muted);
 }
+
+/* OCR status bar */
+.paper-ocr-status {
+  padding: 0 8px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.paper-ocr-status.is-dirty {
+  color: var(--text-accent, #cea32a);
+}
+.paper-ocr-status.is-running {
+  color: var(--text-accent, #3a8dff);
+}
+.paper-ocr-status.is-error {
+  color: var(--text-error, #e03e3e);
+}

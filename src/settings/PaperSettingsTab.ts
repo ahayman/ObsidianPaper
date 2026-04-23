@@ -1,6 +1,6 @@
 import { PluginSettingTab, App, Notice, Setting } from "obsidian";
 import type { Plugin } from "obsidian";
-import type { PaperSettings, PaperFormat, NewNoteLocation } from "./PaperSettings";
+import type { PaperSettings, NewNoteLocation } from "./PaperSettings";
 import { HandwritingOcrBackend } from "../ocr/HandwritingOcrBackend";
 import { formatSpacingDisplay, displayToWorldUnits } from "./PaperSettings";
 import type { PenType, PaperType, PageSizePreset, PageOrientation, LayoutDirection, PageUnit, SpacingUnit, RenderPipeline, RenderEngineType } from "../types";
@@ -641,19 +641,6 @@ export class PaperSettingsTab extends PluginSettingTab {
         text.setValue(this.settings.fileNameTemplate);
         text.onChange((value: string) => {
           this.settings.fileNameTemplate = value || "Untitled Paper";
-          this.notifyChange();
-        });
-      });
-
-    new Setting(container)
-      .setName("Default format")
-      .setDesc("File format for new paper notes")
-      .addDropdown((dropdown) => {
-        dropdown.addOption("paper", ".paper");
-        dropdown.addOption("paper.md", ".paper.md");
-        dropdown.setValue(this.settings.defaultFormat);
-        dropdown.onChange((value: string) => {
-          this.settings.defaultFormat = value as PaperFormat;
           this.notifyChange();
         });
       });

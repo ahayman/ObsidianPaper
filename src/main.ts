@@ -23,6 +23,7 @@ import { MigrationConfirmModal, BackupCleanupModal } from "./migration/Migration
 import { HandwritingOcrBackend } from "./ocr/HandwritingOcrBackend";
 import type { OcrBackend } from "./ocr/OcrBackend";
 import { runIncrementalOcr, countDirtyPages } from "./ocr/IncrementalOcrRunner";
+import { OcrStatusBar } from "./ocr/OcrStatusBar";
 import { checkQuota, incrementCounter, resetMonthlyCounterIfNeeded } from "./ocr/OcrQuota";
 import { exportToSvg } from "./export/SvgExporter";
 import { NewPaperModal } from "./modal/NewPaperModal";
@@ -34,6 +35,7 @@ export default class PaperPlugin extends Plugin {
   private deviceSettingsListeners: Set<(ds: DeviceSettings) => void> = new Set();
   private embedRegistry: EmbedEntry[] = [];
   private clipboard = new ClipboardQueue(DEFAULT_SETTINGS.clipboardQueueSize);
+  private ocrStatusBar: OcrStatusBar | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -101,6 +103,24 @@ export default class PaperPlugin extends Plugin {
         if (classifyPaperFile(file.name) !== "md") return;
         this.maybeSwapToPaperView(file);
       })
+    );
+
+    // Status-bar OCR indicator. updateOcrStatusBar is idempotent so we
+    // can call it on every file-open or vault modify.
+    this.ocrStatusBar = new OcrStatusBar(this.addStatusBarItem());
+    this.updateOcrStatusBar();
+    this.registerEvent(
+      this.app.workspace.on("file-open", () => this.updateOcrStatusBar()),
+    );
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", () => this.updateOcrStatusBar()),
+    );
+    this.registerEvent(
+      this.app.vault.on("modify", (f) => {
+        if (f instanceof TFile && classifyPaperFile(f.name) === "md") {
+          this.updateOcrStatusBar();
+        }
+      }),
     );
 
     this.addSettingTab(
@@ -404,6 +424,20 @@ export default class PaperPlugin extends Plugin {
     });
   }
 
+  private updateOcrStatusBar(): void {
+    if (!this.ocrStatusBar) return;
+    const view = this.getActivePaperView();
+    if (!view || classifyPaperFile(view.file?.name) !== "md") {
+      this.ocrStatusBar.setStatus({ kind: "hidden" });
+      return;
+    }
+    this.ocrStatusBar.setFromDocument(
+      view.getDocument(),
+      view.getMdOcr(),
+      this.settings.ocrBackend !== "none",
+    );
+  }
+
   private getOcrBackend(): OcrBackend | null {
     if (this.settings.ocrBackend === "handwriting-ocr") {
       return new HandwritingOcrBackend(() => ({
@@ -451,16 +485,16 @@ export default class PaperPlugin extends Plugin {
     }
 
     const progress = new Notice("Preparing OCR…", 0);
+    this.ocrStatusBar?.setStatus({ kind: "running", message: "starting…" });
     try {
       const runResult = await runIncrementalOcr({
         document: doc,
         previous,
         backend,
         onProgress: (p) => {
-          progress.setMessage(
-            `OCR: page ${p.currentPage}/${p.totalPages} — ${p.phase} ` +
-            `(${p.pagesReused} reused, ${p.pagesRecognizing} new)`,
-          );
+          const msg = `page ${p.currentPage}/${p.totalPages} ${p.phase}`;
+          progress.setMessage(`OCR: ${msg} (${p.pagesReused} reused, ${p.pagesRecognizing} new)`);
+          this.ocrStatusBar?.setStatus({ kind: "running", message: msg });
         },
       });
 
@@ -473,6 +507,7 @@ export default class PaperPlugin extends Plugin {
       }
 
       progress.hide();
+      this.updateOcrStatusBar();
       const lineTotal = runResult.ocr.pages.reduce((n, p) => n + p.lines.length, 0);
       if (runResult.pagesRecognized === 0 && runResult.pagesReused > 0) {
         new Notice(`OCR up to date — reused all ${runResult.pagesReused} pages.`, 5000);
@@ -485,6 +520,7 @@ export default class PaperPlugin extends Plugin {
     } catch (e) {
       progress.hide();
       const message = e instanceof Error ? e.message : String(e);
+      this.ocrStatusBar?.setStatus({ kind: "error", message });
       new Notice(`OCR failed: ${message}`, 10000);
       console.error("[Paper OCR]", e);
     }

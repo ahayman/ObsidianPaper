@@ -151,6 +151,7 @@ export class Plugin {
   registerEditorExtension = jest.fn();
   loadData = jest.fn(() => Promise.resolve(null));
   saveData = jest.fn(() => Promise.resolve());
+  addStatusBarItem = jest.fn(() => document.createElement("div"));
 }
 
 export class TextFileView {

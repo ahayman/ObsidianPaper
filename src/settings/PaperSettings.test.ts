@@ -89,7 +89,6 @@ describe("PaperSettings", () => {
         defaultFolder: "Papers/",
         newNoteSubfolder: "handwriting",
         fileNameTemplate: "Note",
-        defaultFormat: "paper.md",
         penPresets: [],
         activePresetId: null,
         savedColors: [],

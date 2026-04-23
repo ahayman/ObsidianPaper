@@ -12,7 +12,6 @@ import type {
 import { PAGE_SIZE_PRESETS, PPI, CM_PER_INCH } from "../types";
 import type { PenPreset } from "../view/toolbar/ToolbarTypes";
 
-export type PaperFormat = "paper" | "paper.md";
 export type NewNoteLocation = "specified" | "current" | "subfolder";
 
 export interface PaperSettings {
@@ -62,7 +61,6 @@ export interface PaperSettings {
   defaultFolder: string;
   newNoteSubfolder: string;
   fileNameTemplate: string;
-  defaultFormat: PaperFormat;
 
   // Toolbar
   penPresets: PenPreset[];
@@ -171,7 +169,6 @@ export const DEFAULT_SETTINGS: PaperSettings = {
   defaultFolder: "",
   newNoteSubfolder: "",
   fileNameTemplate: "Untitled Paper",
-  defaultFormat: "paper",
 
   penPresets: DEFAULT_PRESETS,
   activePresetId: "preset-ballpoint-black",
