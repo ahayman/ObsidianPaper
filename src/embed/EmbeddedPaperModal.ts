@@ -10,6 +10,13 @@ import { StrokeBuilder } from "../stroke/StrokeBuilder";
 import { UndoManager } from "../document/UndoManager";
 import { createEmptyDocument, generatePageId } from "../document/Document";
 import { serializeDocument, deserializeDocument, precompressStroke } from "../document/Serializer";
+import {
+  serializePaperMd,
+  deserializePaperMd,
+  type OcrResult,
+  type PaperMdFrontmatter,
+} from "../document/PaperMdSerializer";
+import { classifyPaperFile } from "../view/PaperView";
 import { getPenConfig } from "../stroke/PenConfigs";
 import { findHitStrokes } from "../eraser/StrokeEraser";
 import { ThemeDetector } from "../color/ThemeDetector";
@@ -67,6 +74,11 @@ export class EmbeddedPaperModal extends Modal {
   private staticRafId: number | null = null;
   private saveTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private precompressTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  private mdFrontmatter: PaperMdFrontmatter | null = null;
+  private mdOcr: OcrResult | null = null;
+  private mdTranscript: string = "";
+  private mdPrelude: string = "";
 
   private cssWidth = 0;
   private cssHeight = 0;
@@ -243,7 +255,21 @@ export class EmbeddedPaperModal extends Modal {
   // ─── Document Lifecycle ─────────────────────────────────────
 
   private loadDocument(data: string): void {
-    this.document = deserializeDocument(data);
+    const kind = classifyPaperFile(this.file.name);
+    if (kind === "md") {
+      const parsed = deserializePaperMd(data);
+      this.document = parsed.document;
+      this.mdFrontmatter = parsed.frontmatter;
+      this.mdOcr = parsed.ocr;
+      this.mdTranscript = parsed.transcript;
+      this.mdPrelude = parsed.prelude;
+    } else {
+      this.document = deserializeDocument(data);
+      this.mdFrontmatter = null;
+      this.mdOcr = null;
+      this.mdTranscript = "";
+      this.mdPrelude = "";
+    }
     this.spatialIndex.buildFromStrokes(this.document.strokes);
     this.recomputeLayout();
 
@@ -266,7 +292,17 @@ export class EmbeddedPaperModal extends Modal {
     this.renderer?.flushFinalizations();
     this.document.meta.modified = Date.now();
     this.document.viewport = this.camera.getState();
-    const content = serializeDocument(this.document);
+
+    const kind = classifyPaperFile(this.file.name);
+    const content = kind === "md"
+      ? serializePaperMd({
+          document: this.document,
+          ocr: this.mdOcr,
+          frontmatter: this.mdFrontmatter ?? undefined,
+          transcript: this.mdTranscript,
+          prelude: this.mdPrelude,
+        })
+      : serializeDocument(this.document);
     await this.app.vault.modify(this.file, content);
   }
 

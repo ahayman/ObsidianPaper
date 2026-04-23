@@ -1,6 +1,6 @@
 import type { App, TFile } from "obsidian";
 import { renderEmbed, parseEmbedDimensions } from "./EmbedRenderer";
-import { PAPER_EXTENSION } from "../view/PaperView";
+import { classifyPaperFile } from "../view/PaperView";
 import type { PaperSettings } from "../settings/PaperSettings";
 
 export interface EmbedEntry {
@@ -10,10 +10,11 @@ export interface EmbedEntry {
 }
 
 /**
- * Create a Markdown post processor that renders `.paper` file embeds
- * as static canvas previews in reading mode.
+ * Create a Markdown post processor that renders `.paper` and `.paper.md`
+ * file embeds as static canvas previews in reading mode.
  *
- * Handles `![[name.paper]]`, `![[name.paper|width]]`, and `![[name.paper|widthxheight]]` syntax.
+ * Handles `![[name.paper]]`, `![[name.paper.md]]`, `![[name.paper|width]]`,
+ * and `![[name.paper|widthxheight]]` syntax.
  */
 export function createEmbedPostProcessor(
   app: App,
@@ -23,14 +24,13 @@ export function createEmbedPostProcessor(
   openModal: (file: TFile) => void,
 ) {
   return (el: HTMLElement): void => {
-    // Find all internal embed spans that reference .paper files
-    const embeds = el.querySelectorAll(
-      `.internal-embed[src$=".${PAPER_EXTENSION}"]`
-    );
+    const embeds = el.querySelectorAll(".internal-embed[src]");
 
     for (const embedEl of Array.from(embeds)) {
       const src = embedEl.getAttribute("src");
       if (!src) continue;
+      const filePart = src.split("|")[0];
+      if (!classifyPaperFile(filePart)) continue;
 
       processEmbed(app, embedEl as HTMLElement, src, isDarkMode, getSettings, embedRegistry, openModal);
     }

@@ -1,10 +1,23 @@
-import type { PenStyle, Stroke } from "../types";
+import type { PaperDocument, PenStyle, Stroke } from "../types";
 import { decodePoints } from "../document/PointEncoder";
 import { generateStrokePath } from "../stroke/OutlineGenerator";
 import { resolveColor } from "../color/ColorPalette";
 import { getPenConfig } from "../stroke/PenConfigs";
 import { deserializeDocument } from "../document/Serializer";
+import { deserializePaperMd } from "../document/PaperMdSerializer";
 import { computePageLayout, getDocumentBounds } from "../document/PageLayout";
+
+/**
+ * Parse a paper file's raw content into a PaperDocument, auto-detecting
+ * between v3 JSON (`.paper`) and v4 markdown-wrapped (`.paper.md`) formats.
+ */
+function parsePaperData(data: string): PaperDocument {
+  const trimmed = data.trimStart();
+  if (trimmed.startsWith("{")) {
+    return deserializeDocument(data);
+  }
+  return deserializePaperMd(data).document;
+}
 
 /**
  * Parse embed dimension parameters from the display text.
@@ -37,7 +50,7 @@ export function renderEmbed(
   maxWidth: number,
   maxHeight?: number,
 ): void {
-  const doc = deserializeDocument(data);
+  const doc = parsePaperData(data);
   const pageLayout = computePageLayout(doc.pages, doc.layoutDirection);
 
   if (pageLayout.length === 0) {
@@ -159,7 +172,7 @@ function resolveStyle(
  * Compute the aspect ratio (width/height) of a paper document based on its page layout.
  */
 export function getDocumentAspectRatio(data: string): number {
-  const doc = deserializeDocument(data);
+  const doc = parsePaperData(data);
   const pageLayout = computePageLayout(doc.pages, doc.layoutDirection);
 
   if (pageLayout.length === 0) {

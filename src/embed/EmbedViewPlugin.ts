@@ -1,6 +1,6 @@
 import type { App, TFile } from "obsidian";
 import { renderEmbed, parseEmbedDimensions } from "./EmbedRenderer";
-import { PAPER_EXTENSION } from "../view/PaperView";
+import { classifyPaperFile } from "../view/PaperView";
 import type { PaperSettings } from "../settings/PaperSettings";
 import type { EmbedEntry } from "./EmbedPostProcessor";
 
@@ -99,8 +99,8 @@ export function renderPaperWidget(
 }
 
 /**
- * Check if a link target is a paper file.
+ * Check if a link target is a paper file (either legacy .paper or new .paper.md).
  */
 export function isPaperEmbed(href: string): boolean {
-  return href.endsWith(`.${PAPER_EXTENSION}`);
+  return classifyPaperFile(href) !== null;
 }

@@ -74,6 +74,8 @@ function createAugmentedDiv(): HTMLElement {
 export class App {
   vault = new Vault();
   workspace = new Workspace();
+  metadataCache = new MetadataCache();
+  fileManager = new FileManager();
   plugins = {
     getPlugin: jest.fn(),
   };
@@ -110,12 +112,24 @@ export class Workspace {
   getLeaf = jest.fn((_newLeaf?: boolean) => new WorkspaceLeaf());
   getActiveFile = jest.fn();
   getActiveViewOfType = jest.fn(() => null);
+  activeLeaf: WorkspaceLeaf | null = null;
   on = jest.fn();
   onLayoutReady = jest.fn((cb: () => void) => cb());
 }
 
 export class WorkspaceLeaf {
   openFile = jest.fn();
+  setViewState = jest.fn(() => Promise.resolve());
+  view = { getViewType: () => "markdown" };
+}
+
+export class MetadataCache {
+  getFileCache = jest.fn(() => null);
+  on = jest.fn();
+}
+
+export class FileManager {
+  processFrontMatter = jest.fn((_file: TFile, _fn: (fm: Record<string, unknown>) => void) => Promise.resolve());
 }
 
 export class Plugin {
@@ -133,6 +147,7 @@ export class Plugin {
   registerView = jest.fn();
   registerExtensions = jest.fn();
   registerMarkdownPostProcessor = jest.fn();
+  registerMarkdownCodeBlockProcessor = jest.fn();
   registerEditorExtension = jest.fn();
   loadData = jest.fn(() => Promise.resolve(null));
   saveData = jest.fn(() => Promise.resolve());

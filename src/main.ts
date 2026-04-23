@@ -1,7 +1,8 @@
 import { Notice, Plugin, TFile, TFolder, normalizePath } from "obsidian";
-import { PaperView, VIEW_TYPE_PAPER, PAPER_EXTENSION } from "./view/PaperView";
+import { PaperView, VIEW_TYPE_PAPER, PAPER_EXTENSION, classifyPaperFile } from "./view/PaperView";
 import { createEmptyDocument } from "./document/Document";
-import { serializeDocument, deserializeDocument } from "./document/Serializer";
+import { deserializeDocument } from "./document/Serializer";
+import { serializePaperMd, deserializePaperMd, PAPER_MD_VERSION } from "./document/PaperMdSerializer";
 import { DEFAULT_SETTINGS, mergeSettings, resolvePageSize, resolveMargins } from "./settings/PaperSettings";
 import type { PaperSettings } from "./settings/PaperSettings";
 import { ClipboardQueue } from "./selection/Clipboard";
@@ -10,6 +11,7 @@ import type { DeviceSettings } from "./settings/DeviceSettings";
 import { DEFAULT_DEVICE_SETTINGS, loadDeviceSettings, saveDeviceSettings } from "./settings/DeviceSettings";
 import { createEmbedPostProcessor } from "./embed/EmbedPostProcessor";
 import type { EmbedEntry } from "./embed/EmbedPostProcessor";
+import { createPaperCodeBlockProcessor } from "./embed/PaperCodeBlockProcessor";
 import { EmbeddedPaperModal } from "./embed/EmbeddedPaperModal";
 import { exportToSvg } from "./export/SvgExporter";
 import { NewPaperModal } from "./modal/NewPaperModal";
@@ -56,12 +58,37 @@ export default class PaperPlugin extends Plugin {
       )
     );
 
-    // Auto-refresh embeds when .paper files are modified
+    // Render ```paper``` fenced code blocks (the .paper.md scene payload)
+    // as static canvas previews in markdown views.
+    this.registerMarkdownCodeBlockProcessor(
+      "paper",
+      createPaperCodeBlockProcessor(
+        this.app,
+        () => document.body.classList.contains("theme-dark"),
+        () => this.settings,
+        this.embedRegistry,
+        (file: TFile) => {
+          void this.openInPaperView(file);
+        },
+      )
+    );
+
+    // Auto-refresh embeds when .paper or .paper.md files are modified
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
-        if (file instanceof TFile && file.extension === PAPER_EXTENSION) {
+        if (file instanceof TFile && classifyPaperFile(file.name)) {
           this.refreshEmbedsFor(file.path);
         }
+      })
+    );
+
+    // Route .paper.md files to the Paper editor view unless the user has
+    // explicitly asked for markdown via `paper-default-view: markdown`.
+    this.registerEvent(
+      this.app.workspace.on("file-open", (file) => {
+        if (!(file instanceof TFile)) return;
+        if (classifyPaperFile(file.name) !== "md") return;
+        this.maybeSwapToPaperView(file);
       })
     );
 
@@ -106,6 +133,18 @@ export default class PaperPlugin extends Plugin {
         if (!view) return false;
         if (checking) return true;
         view.redo();
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "toggle-paper-view",
+      name: "Toggle Paper / Markdown view",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file || classifyPaperFile(file.name) !== "md") return false;
+        if (checking) return true;
+        void this.togglePaperView(file);
         return true;
       },
     });
@@ -267,6 +306,68 @@ export default class PaperPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
+  /**
+   * Open a paper file in the Paper editor view. For `.paper.md` files this
+   * forces the leaf to switch from the default markdown view to our view.
+   */
+  private async openInPaperView(file: TFile): Promise<void> {
+    const leaf = this.app.workspace.getLeaf(false);
+    await leaf.openFile(file);
+    const kind = classifyPaperFile(file.name);
+    if (kind === "md") {
+      await leaf.setViewState({
+        type: VIEW_TYPE_PAPER,
+        state: { file: file.path },
+      });
+    }
+  }
+
+  /**
+   * Flip `paper-default-view` between `paper` and `markdown` in the file's
+   * frontmatter, then swap the active leaf to match.
+   */
+  private async togglePaperView(file: TFile): Promise<void> {
+    // Persist any unsaved canvas state before we yank the view out.
+    const paperView = this.app.workspace.getActiveViewOfType(PaperView);
+    if (paperView && paperView.file === file) {
+      await paperView.save();
+    }
+
+    let nextView: "paper" | "markdown" = "paper";
+    await this.app.fileManager.processFrontMatter(file, (fm) => {
+      const current = fm["paper-default-view"];
+      nextView = current === "paper" ? "markdown" : "paper";
+      fm["paper-default-view"] = nextView;
+    });
+
+    const leaf = this.app.workspace.activeLeaf;
+    if (!leaf) return;
+    await leaf.setViewState({
+      type: nextView === "paper" ? VIEW_TYPE_PAPER : "markdown",
+      state: { file: file.path },
+    });
+  }
+
+  /**
+   * Called when a `.paper.md` file opens. If the user has set
+   * `paper-default-view: markdown` in frontmatter, leaves the leaf in
+   * markdown view. Otherwise swaps to the Paper editor view.
+   */
+  private maybeSwapToPaperView(file: TFile): void {
+    const leaf = this.app.workspace.activeLeaf;
+    if (!leaf) return;
+    if (leaf.view.getViewType() === VIEW_TYPE_PAPER) return;
+
+    const cache = this.app.metadataCache.getFileCache(file);
+    const defaultView = cache?.frontmatter?.["paper-default-view"];
+    if (defaultView === "markdown") return;
+
+    void leaf.setViewState({
+      type: VIEW_TYPE_PAPER,
+      state: { file: file.path },
+    });
+  }
+
   private openPaperModal(file: TFile): void {
     const modal = new EmbeddedPaperModal(
       this.app,
@@ -389,7 +490,7 @@ export default class PaperPlugin extends Plugin {
 
   private async doCreatePaper(baseName: string, folder: TFolder): Promise<void> {
     const uniqueName = this.ensureUniqueName(baseName, folder);
-    const path = normalizePath(`${folder.path}/${uniqueName}.${PAPER_EXTENSION}`);
+    const path = normalizePath(`${folder.path}/${uniqueName}.paper.md`);
 
     const doc = createEmptyDocument(
       this.manifest.version,
@@ -404,7 +505,13 @@ export default class PaperPlugin extends Plugin {
       doc.pages[0].lineSpacing = this.settings.lineSpacing;
       doc.pages[0].gridSize = this.settings.gridSize;
     }
-    const content = serializeDocument(doc);
+    const content = serializePaperMd({
+      document: doc,
+      frontmatter: {
+        "paper-version": PAPER_MD_VERSION,
+        "paper-default-view": "paper",
+      },
+    });
 
     try {
       const file = await this.app.vault.create(path, content);
@@ -425,11 +532,16 @@ export default class PaperPlugin extends Plugin {
 
     try {
       const data = view.getViewData();
-      const doc = deserializeDocument(data);
+      const kind = classifyPaperFile(file.name);
+      const doc = kind === "md"
+        ? deserializePaperMd(data).document
+        : deserializeDocument(data);
       const isDark = document.body.classList.contains("theme-dark");
       const svg = exportToSvg(doc, isDark);
 
-      const svgPath = file.path.replace(/\.[^.]+$/, ".svg");
+      const svgPath = kind === "md"
+        ? file.path.replace(/\.paper\.md$/i, ".svg")
+        : file.path.replace(/\.[^.]+$/, ".svg");
       const normalizedPath = normalizePath(svgPath);
 
       const existing = this.app.vault.getAbstractFileByPath(normalizedPath);
@@ -456,16 +568,18 @@ export default class PaperPlugin extends Plugin {
   }
 
   private ensureUniqueName(base: string, folder: TFolder): string {
-    const existingNames = new Set(
+    const existingFullNames = new Set(
       folder.children
         .filter((f): f is TFile => f instanceof TFile)
-        .map((f) => f.basename)
+        .map((f) => f.name.toLowerCase())
     );
 
-    if (!existingNames.has(base)) return base;
+    const candidate = (name: string): string => `${name}.paper.md`.toLowerCase();
+
+    if (!existingFullNames.has(candidate(base))) return base;
 
     let i = 1;
-    while (existingNames.has(`${base} ${i}`)) {
+    while (existingFullNames.has(candidate(`${base} ${i}`))) {
       i++;
     }
     return `${base} ${i}`;

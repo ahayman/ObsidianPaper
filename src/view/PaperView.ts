@@ -9,6 +9,12 @@ import { StrokeBuilder } from "../stroke/StrokeBuilder";
 import { UndoManager } from "../document/UndoManager";
 import { createEmptyDocument, generatePageId, generateStrokeId } from "../document/Document";
 import { serializeDocument, deserializeDocument, precompressStroke, clearCompressedCache } from "../document/Serializer";
+import {
+  serializePaperMd,
+  deserializePaperMd,
+  type OcrResult,
+  type PaperMdFrontmatter,
+} from "../document/PaperMdSerializer";
 import { getPenConfig } from "../stroke/PenConfigs";
 import { findHitStrokes } from "../eraser/StrokeEraser";
 import { ThemeDetector } from "../color/ThemeDetector";
@@ -41,7 +47,32 @@ import { getEffectiveDPR } from "../canvas/HighDPI";
 import { CompassIndicator } from "./CompassIndicator";
 
 export const VIEW_TYPE_PAPER = "paper-view";
+/** Legacy extension for pre-v4 paper files. */
 export const PAPER_EXTENSION = "paper";
+/** Secondary (".paper") segment of the new .paper.md format. */
+export const PAPER_MD_SUFFIX = ".paper.md";
+
+/**
+ * Classify a file by its name to decide which serializer to use.
+ * Returns "md" for new `.paper.md` files, "paper" for legacy `.paper`, or null.
+ */
+export function classifyPaperFile(fileName: string | undefined): "md" | "paper" | null {
+  if (!fileName) return null;
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith(".paper.md")) return "md";
+  if (lower.endsWith(".paper")) return "paper";
+  return null;
+}
+
+/**
+ * Fallback format detection when the filename is unavailable.
+ * v3 files are JSON starting with `{`; v4 files are markdown.
+ */
+function detectFormatFromData(data: string): "md" | "paper" {
+  const trimmed = data.trimStart();
+  if (trimmed.startsWith("{")) return "paper";
+  return "md";
+}
 
 const DEFAULT_ERASER_RADIUS = 10;
 /** Max screen-space movement (squared) for a pen gesture to count as a tap */
@@ -74,6 +105,13 @@ export class PaperView extends TextFileView {
   private deviceSettings: DeviceSettings = DEFAULT_DEVICE_SETTINGS;
   private staticRafId: number | null = null;
   private precompressTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  // .paper.md extras — preserved across load/save so user frontmatter,
+  // transcript, OCR data, and prelude markdown round-trip cleanly.
+  private mdFrontmatter: PaperMdFrontmatter | null = null;
+  private mdOcr: OcrResult | null = null;
+  private mdTranscript: string = "";
+  private mdPrelude: string = "";
 
   // Container size tracking for resize anchoring
   private cssWidth = 0;
@@ -314,12 +352,38 @@ export class PaperView extends TextFileView {
   getViewData(): string {
     this.renderer?.flushFinalizations();
     this.document.meta.modified = Date.now();
+
+    const kind = classifyPaperFile(this.file?.name);
+    if (kind === "md") {
+      return serializePaperMd({
+        document: this.document,
+        ocr: this.mdOcr,
+        frontmatter: this.mdFrontmatter ?? undefined,
+        transcript: this.mdTranscript,
+        prelude: this.mdPrelude,
+      });
+    }
     return serializeDocument(this.document);
   }
 
   setViewData(data: string, clear: boolean): void {
     this.renderer?.flushFinalizations();
-    this.document = deserializeDocument(data);
+
+    const kind = classifyPaperFile(this.file?.name) ?? detectFormatFromData(data);
+    if (kind === "md") {
+      const parsed = deserializePaperMd(data);
+      this.document = parsed.document;
+      this.mdFrontmatter = parsed.frontmatter;
+      this.mdOcr = parsed.ocr;
+      this.mdTranscript = parsed.transcript;
+      this.mdPrelude = parsed.prelude;
+    } else {
+      this.document = deserializeDocument(data);
+      this.mdFrontmatter = null;
+      this.mdOcr = null;
+      this.mdTranscript = "";
+      this.mdPrelude = "";
+    }
 
     if (clear) {
       this.undoManager.clear();
@@ -342,6 +406,10 @@ export class PaperView extends TextFileView {
     this.cancelPrecompression();
     this.renderer?.flushFinalizations();
     this.document = createEmptyDocument();
+    this.mdFrontmatter = null;
+    this.mdOcr = null;
+    this.mdTranscript = "";
+    this.mdPrelude = "";
     // Reset the existing camera — do NOT replace with `new Camera()`.
     // Renderer, InputManager, and TiledStaticLayer hold references to this object.
     this.camera.setState({ x: 0, y: 0, zoom: 1.0 });
