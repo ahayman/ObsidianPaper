@@ -449,6 +449,8 @@ export type TAbstractFile = TFile | TFolder;
 
 export class Notice {
   constructor(message: string, timeout?: number) {}
+  setMessage(_message: string): void {}
+  hide(): void {}
 }
 
 export class Menu {

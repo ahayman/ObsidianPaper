@@ -13,6 +13,13 @@ import { createEmbedPostProcessor } from "./embed/EmbedPostProcessor";
 import type { EmbedEntry } from "./embed/EmbedPostProcessor";
 import { createPaperCodeBlockProcessor } from "./embed/PaperCodeBlockProcessor";
 import { EmbeddedPaperModal } from "./embed/EmbeddedPaperModal";
+import {
+  planMigration,
+  runMigration,
+  listBackups,
+  deleteBackups,
+} from "./migration/PaperMigrator";
+import { MigrationConfirmModal, BackupCleanupModal } from "./migration/MigrationModal";
 import { exportToSvg } from "./export/SvgExporter";
 import { NewPaperModal } from "./modal/NewPaperModal";
 
@@ -209,6 +216,18 @@ export default class PaperPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "migrate-paper-to-paper-md",
+      name: "Migrate .paper files to .paper.md",
+      callback: () => void this.runPaperMigrationCommand(),
+    });
+
+    this.addCommand({
+      id: "delete-paper-backups",
+      name: "Delete .paper backups from migration",
+      callback: () => void this.runBackupCleanupCommand(),
+    });
+
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu, file) => {
         if (!(file instanceof TFolder)) return;
@@ -366,6 +385,90 @@ export default class PaperPlugin extends Plugin {
       type: VIEW_TYPE_PAPER,
       state: { file: file.path },
     });
+  }
+
+  private async runPaperMigrationCommand(): Promise<void> {
+    const planningNotice = new Notice("Scanning vault for .paper files…", 0);
+    let plan;
+    try {
+      plan = await planMigration(this.app);
+    } finally {
+      planningNotice.hide();
+    }
+
+    if (plan.paperFiles.length === 0 && plan.skipped.length === 0) {
+      new Notice("No .paper files found — nothing to migrate.");
+      return;
+    }
+
+    const choice = await new Promise<"run" | "cancel">((resolve) => {
+      new MigrationConfirmModal(this.app, plan, resolve).open();
+    });
+    if (choice === "cancel") return;
+
+    const progress = new Notice("Migrating…", 0);
+    try {
+      const result = await runMigration(
+        this.app,
+        plan,
+        this.manifest.version,
+        (status) => progress.setMessage(status),
+      );
+      progress.hide();
+
+      if (result.failed.length === 0) {
+        new Notice(
+          `Migration complete: converted ${result.migrated} .paper files, rewrote ${result.rewritten} embed refs.`,
+          8000,
+        );
+      } else {
+        new Notice(
+          `Migration finished with ${result.failed.length} failures. Converted ${result.migrated}, rewrote ${result.rewritten}. See console.`,
+          10000,
+        );
+        for (const f of result.failed) {
+          console.error("[Paper migration]", f.path, "—", f.reason);
+        }
+      }
+    } catch (e) {
+      progress.hide();
+      const message = e instanceof Error ? e.message : String(e);
+      new Notice(`Migration aborted: ${message}`, 10000);
+    }
+  }
+
+  private async runBackupCleanupCommand(): Promise<void> {
+    const listing = listBackups(this.app);
+    const summary = {
+      count: listing.total,
+      paths: listing.files.map((f) => f.path),
+    };
+
+    const confirmed = await new Promise<boolean>((resolve) => {
+      new BackupCleanupModal(this.app, summary, resolve).open();
+    });
+    if (!confirmed) return;
+
+    const progress = new Notice("Deleting backups…", 0);
+    try {
+      const result = await deleteBackups(this.app, (status) => progress.setMessage(status));
+      progress.hide();
+      if (result.failed.length === 0) {
+        new Notice(`Deleted ${result.deleted} .paper backups.`);
+      } else {
+        new Notice(
+          `Deleted ${result.deleted} backups, ${result.failed.length} failed. See console.`,
+          10000,
+        );
+        for (const f of result.failed) {
+          console.error("[Paper backup delete]", f.path, "—", f.reason);
+        }
+      }
+    } catch (e) {
+      progress.hide();
+      const message = e instanceof Error ? e.message : String(e);
+      new Notice(`Cleanup aborted: ${message}`, 10000);
+    }
   }
 
   private openPaperModal(file: TFile): void {
