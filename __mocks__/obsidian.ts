@@ -469,6 +469,17 @@ export function normalizePath(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/+/g, "/");
 }
 
+import { parse as yamlParse, stringify as yamlStringify } from "yaml";
+
+export function parseYaml(yaml: string): unknown {
+  if (!yaml || yaml.trim() === "") return {};
+  return yamlParse(yaml) ?? {};
+}
+
+export function stringifyYaml(obj: unknown): string {
+  return yamlStringify(obj ?? {});
+}
+
 export const Platform = {
   isMobile: false,
   isDesktop: true,
