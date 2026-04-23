@@ -7,7 +7,6 @@ function makePreset(overrides: Partial<PenPreset> = {}): PenPreset {
     id: overrides.id ?? "test-1",
     name: overrides.name ?? "Test Preset",
     penType: overrides.penType ?? "ballpoint",
-    colorId: overrides.colorId ?? "#1a1a1a|#e8e8e8",
     width: overrides.width ?? 2,
     smoothing: overrides.smoothing ?? 0.3,
     ...overrides,
@@ -68,7 +67,6 @@ describe("PresetManager", () => {
       const result = mgr.addPreset({
         name: "New",
         penType: "felt-tip",
-        colorId: "#dc2626|#f87171",
         width: 5,
         smoothing: 0.5,
       });
@@ -86,7 +84,6 @@ describe("PresetManager", () => {
       const result = mgr.addPreset({
         name: "One Too Many",
         penType: "ballpoint",
-        colorId: "#1a1a1a|#e8e8e8",
         width: 2,
         smoothing: 0.3,
       });
@@ -151,31 +148,40 @@ describe("PresetManager", () => {
   });
 
   describe("createFromState", () => {
-    it("creates a preset from toolbar state with auto-generated name", () => {
+    it("creates a preset from toolbar state with pen type name", () => {
       const mgr = new PresetManager([]);
-      const state = makeState({ penType: "fountain", colorId: "#1a1a1a|#e8e8e8", nibAngle: 0.5, nibThickness: 0.3, nibPressure: 0.7 });
+      const state = makeState({ penType: "fountain", nibAngle: 0.5, nibThickness: 0.3, nibPressure: 0.7 });
       const preset = mgr.createFromState(state);
-      expect(preset.name).toBe("Fountain (Black)");
+      expect(preset.name).toBe("Fountain");
       expect(preset.penType).toBe("fountain");
       expect(preset.nibAngle).toBe(0.5);
       expect(preset.nibThickness).toBe(0.3);
       expect(preset.nibPressure).toBe(0.7);
+      expect(preset.linkedColorId).toBeUndefined();
     });
 
-    it("uses hex color in name when not semantic", () => {
+    it("includes linkedColorId when provided", () => {
       const mgr = new PresetManager([]);
-      const state = makeState({ penType: "highlighter", colorId: "#FFE066" });
+      const state = makeState({ penType: "ballpoint" });
+      const preset = mgr.createFromState(state, "#ff0000|#ff6666");
+      expect(preset.linkedColorId).toBe("#ff0000|#ff6666");
+    });
+
+    it("does not include linkedColorId when not provided", () => {
+      const mgr = new PresetManager([]);
+      const state = makeState({ penType: "highlighter" });
       const preset = mgr.createFromState(state);
-      expect(preset.name).toBe("Highlighter (#FFE066)");
+      expect(preset.linkedColorId).toBeUndefined();
     });
   });
 
   describe("findMatchingPreset", () => {
-    it("finds exact match", () => {
+    it("finds exact match ignoring color", () => {
       const mgr = new PresetManager([
-        makePreset({ id: "m1", penType: "ballpoint", colorId: "#1a1a1a|#e8e8e8", width: 2, smoothing: 0.3 }),
+        makePreset({ id: "m1", penType: "ballpoint", width: 2, smoothing: 0.3 }),
       ]);
-      const state = makeState({ penType: "ballpoint", colorId: "#1a1a1a|#e8e8e8", width: 2, smoothing: 0.3 });
+      // Should match regardless of colorId
+      const state = makeState({ penType: "ballpoint", colorId: "#ff0000", width: 2, smoothing: 0.3 });
       expect(mgr.findMatchingPreset(state)).toBe("m1");
     });
 
@@ -204,6 +210,29 @@ describe("PresetManager", () => {
         nibPressure: 0.7,
       });
       expect(mgr.findMatchingPreset(state)).toBe("f1");
+    });
+
+    it("requires color match when preset has linkedColorId", () => {
+      const mgr = new PresetManager([
+        makePreset({ id: "lc1", penType: "ballpoint", linkedColorId: "#1a1a1a|#e8e8e8" }),
+      ]);
+      // Matching color
+      const stateMatch = makeState({ penType: "ballpoint", colorId: "#1a1a1a|#e8e8e8" });
+      expect(mgr.findMatchingPreset(stateMatch)).toBe("lc1");
+
+      // Different color
+      const stateDiff = makeState({ penType: "ballpoint", colorId: "#ff0000" });
+      expect(mgr.findMatchingPreset(stateDiff)).toBeNull();
+    });
+
+    it("ignores color when preset has no linkedColorId", () => {
+      const mgr = new PresetManager([
+        makePreset({ id: "nc1", penType: "ballpoint" }),
+      ]);
+      const state1 = makeState({ penType: "ballpoint", colorId: "#ff0000" });
+      const state2 = makeState({ penType: "ballpoint", colorId: "#00ff00" });
+      expect(mgr.findMatchingPreset(state1)).toBe("nc1");
+      expect(mgr.findMatchingPreset(state2)).toBe("nc1");
     });
   });
 

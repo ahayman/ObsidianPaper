@@ -1,5 +1,4 @@
 import type { PenPreset, ToolbarState } from "./ToolbarTypes";
-import { getColorDisplayName } from "../../color/ColorUtils";
 import { DEFAULT_GRAIN_VALUE } from "../../stamp/GrainMapping";
 import { getPenConfig } from "../../stroke/PenConfigs";
 
@@ -14,12 +13,10 @@ const PEN_TYPE_LABELS: Record<string, string> = {
 };
 
 /**
- * Generate a display name from pen type and color: "Type (Color)"
+ * Generate a display name from pen type.
  */
-export function generatePresetName(penType: string, colorId: string): string {
-  const typeLabel = PEN_TYPE_LABELS[penType] ?? penType;
-  const colorLabel = getColorDisplayName(colorId);
-  return `${typeLabel} (${colorLabel})`;
+export function generatePresetName(penType: string): string {
+  return PEN_TYPE_LABELS[penType] ?? penType;
 }
 
 function generateId(): string {
@@ -88,16 +85,18 @@ export class PresetManager {
 
   /**
    * Create a PenPreset from current toolbar state.
-   * Name is auto-generated as "Type (Color)".
+   * Color is NOT included by default — pass linkedColorId to link one.
    */
-  createFromState(state: ToolbarState): Omit<PenPreset, "id"> {
+  createFromState(state: ToolbarState, linkedColorId?: string): Omit<PenPreset, "id"> {
     const preset: Omit<PenPreset, "id"> = {
-      name: generatePresetName(state.penType, state.colorId),
+      name: generatePresetName(state.penType),
       penType: state.penType,
-      colorId: state.colorId,
       width: state.width,
       smoothing: state.smoothing,
     };
+    if (linkedColorId) {
+      preset.linkedColorId = linkedColorId;
+    }
     // Include grain for pencil presets
     const penConfig = getPenConfig(state.penType);
     if (penConfig.stamp) {
@@ -127,13 +126,14 @@ export class PresetManager {
 
   /**
    * Find a preset that exactly matches the given toolbar state.
+   * Color is ignored unless the preset has a linkedColorId, in which case
+   * the current colorId must also match.
    * Returns the preset ID, or null if no match.
    */
   findMatchingPreset(state: ToolbarState): string | null {
     for (const p of this.presets) {
       if (
         p.penType === state.penType &&
-        p.colorId === state.colorId &&
         p.width === state.width &&
         p.smoothing === state.smoothing &&
         (p.nibAngle ?? state.nibAngle) === state.nibAngle &&
@@ -143,7 +143,9 @@ export class PresetManager {
         (p.inkPreset ?? "standard") === state.inkPreset &&
         (p.inkDepletion ?? 0) === state.inkDepletion &&
         (p.useBarrelRotation ?? false) === state.useBarrelRotation &&
-        (p.strokeScaling ?? "paper") === state.strokeScaling
+        (p.strokeScaling ?? "paper") === state.strokeScaling &&
+        // If preset has linked color, also require color match
+        (!p.linkedColorId || p.linkedColorId === state.colorId)
       ) {
         return p.id;
       }

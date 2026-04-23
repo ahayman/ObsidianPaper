@@ -68,7 +68,8 @@ export interface PaperSettings {
   penPresets: PenPreset[];
   activePresetId: string | null;
 
-  // Recent colors
+  // Color strip
+  savedColors: string[];           // Pinned colors in the color strip (max 12)
   recentColors: string[];          // MRU colorId list (dual-hex or single hex)
   recentColorsCollapsed: boolean;  // Whether the recent color strip is collapsed
 
@@ -83,44 +84,44 @@ export interface PaperSettings {
 export const DEFAULT_PRESETS: PenPreset[] = [
   {
     id: "preset-ballpoint-black",
-    name: "Ballpoint (Black)",
+    name: "Ballpoint",
     penType: "ballpoint",
-    colorId: "#1a1a1a|#e8e8e8",
     width: 2,
     smoothing: 0.3,
+    linkedColorId: "#1a1a1a|#e8e8e8",
   },
   {
     id: "preset-ballpoint-blue",
-    name: "Ballpoint (Blue)",
+    name: "Ballpoint",
     penType: "ballpoint",
-    colorId: "#2563eb|#60a5fa",
     width: 2,
     smoothing: 0.3,
+    linkedColorId: "#2563eb|#60a5fa",
   },
   {
     id: "preset-felt-red",
-    name: "Felt tip (Red)",
+    name: "Felt tip",
     penType: "felt-tip",
-    colorId: "#dc2626|#f87171",
     width: 3,
     smoothing: 0.5,
+    linkedColorId: "#dc2626|#f87171",
   },
   {
     id: "preset-pencil",
-    name: "Pencil (Gray)",
+    name: "Pencil",
     penType: "pencil",
-    colorId: "#6b7280|#9ca3af",
     width: 3,
     smoothing: 0.4,
     grain: 0.35,
+    linkedColorId: "#6b7280|#9ca3af",
   },
   {
     id: "preset-highlighter-yellow",
-    name: "Highlighter (#FFE066)",
+    name: "Highlighter",
     penType: "highlighter",
-    colorId: "#FFE066",
     width: 24,
     smoothing: 0.8,
+    linkedColorId: "#FFE066",
   },
 ];
 
@@ -166,6 +167,7 @@ export const DEFAULT_SETTINGS: PaperSettings = {
   penPresets: DEFAULT_PRESETS,
   activePresetId: "preset-ballpoint-black",
 
+  savedColors: [],
   recentColors: [],
   recentColorsCollapsed: false,
 
@@ -248,10 +250,17 @@ export function mergeSettings(loaded: Partial<PaperSettings> | null): PaperSetti
   const merged = { ...DEFAULT_SETTINGS, ...rest } as PaperSettings;
 
   // Migrate legacy strokeScaling values: "fixed" → "paper", "scaled" → "screen"
+  // Migrate legacy colorId → linkedColorId (presets no longer bundle color by default)
   for (const preset of merged.penPresets) {
     const ss = preset.strokeScaling as string | undefined;
     if (ss === "fixed") preset.strokeScaling = "paper";
     else if (ss === "scaled") preset.strokeScaling = "screen";
+
+    const legacy = preset as unknown as Record<string, unknown>;
+    if ("colorId" in legacy && legacy.colorId && !preset.linkedColorId) {
+      preset.linkedColorId = legacy.colorId as string;
+      delete legacy.colorId;
+    }
   }
 
   return merged;

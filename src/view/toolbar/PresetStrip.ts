@@ -27,10 +27,10 @@ export class PresetStrip {
     this.onContextMenu = onContextMenu;
 
     this.el = parent.createEl("div", { cls: "paper-toolbar__presets" });
-    this.buildButtons(presets, activeId);
+    this.buildButtons(presets);
   }
 
-  private buildButtons(presets: readonly PenPreset[], activeId: string | null): void {
+  private buildButtons(presets: readonly PenPreset[]): void {
     for (const [, btn] of this.buttons) btn.destroy();
     this.buttons.clear();
 
@@ -43,21 +43,13 @@ export class PresetStrip {
         this.onLongPress,
         this.onContextMenu
       );
-      if (preset.id === activeId) btn.setActive(true);
       this.buttons.set(preset.id, btn);
     }
   }
 
-  setActivePreset(id: string | null): void {
-    for (const [pid, btn] of this.buttons) {
-      btn.setActive(pid === id);
-    }
-  }
-
-  updatePresets(presets: readonly PenPreset[], activeId: string | null): void {
-    // Rebuild all buttons
+  updatePresets(presets: readonly PenPreset[]): void {
     this.el.empty();
-    this.buildButtons(presets, activeId);
+    this.buildButtons(presets);
   }
 
   updateSinglePreset(preset: PenPreset): void {

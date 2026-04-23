@@ -23,6 +23,7 @@ const POSITIONS: { value: ToolbarPosition; label: string }[] = [
 
 export interface CustomizePopoverCallbacks {
   onStateChange: (partial: Partial<ToolbarState>) => void;
+  onLinkedColorChange: (linkedColorId: string | null) => void;
   onSaveAsNew: () => void;
   onDeletePreset: () => void;
   onPositionChange: (position: ToolbarPosition) => void;
@@ -40,6 +41,12 @@ export class CustomizePopover {
   private isDark: boolean;
   private activePreset: PenPreset | null;
   private callbacks: CustomizePopoverCallbacks;
+
+  private isPresetEditing: boolean;
+  private linkedColorId: string | null;
+  private linkColorToggle: HTMLInputElement | null = null;
+  private linkColorSection: HTMLElement | null = null;
+  private linkColorPicker: ColorPickerPanel | null = null;
 
   // Element refs for updates
   private inkPresetSection: HTMLElement | null = null;
@@ -74,13 +81,16 @@ export class CustomizePopover {
     isDarkMode: boolean,
     activePreset: PenPreset | null,
     anchor: HTMLElement,
-    callbacks: CustomizePopoverCallbacks
+    callbacks: CustomizePopoverCallbacks,
+    isPresetEditing = false
   ) {
     this.state = { ...state };
     this.position = position;
     this.isDark = isDarkMode;
     this.activePreset = activePreset;
     this.callbacks = callbacks;
+    this.isPresetEditing = isPresetEditing;
+    this.linkedColorId = activePreset?.linkedColorId ?? null;
 
     // Backdrop
     this.backdrop = document.body.createEl("div", { cls: "paper-popover__backdrop" });
@@ -111,8 +121,12 @@ export class CustomizePopover {
     // 1. Pen Type
     this.buildPenTypeSection(content);
 
-    // 2. Colors
-    this.buildColorSection(content);
+    // 2. Colors / Link Color
+    if (this.isPresetEditing) {
+      this.buildLinkColorSection(content);
+    } else {
+      this.buildColorSection(content);
+    }
 
     // 3. Width
     this.buildSliderSection(content, "Width", 0.5, 30, 0.5, this.state.width, (v) => {
@@ -297,6 +311,69 @@ export class CustomizePopover {
         this.callbacks.onStateChange({ colorId });
       },
     });
+  }
+
+  // ─── Link Color Section (preset editing) ──────────────────
+
+  private buildLinkColorSection(parent: HTMLElement): void {
+    this.linkColorSection = parent.createEl("div", { cls: "paper-popover__section paper-popover__link-color" });
+
+    // Toggle row
+    const row = this.linkColorSection.createEl("div", { cls: "paper-popover__slider-row" });
+    const label = row.createEl("label", { cls: "paper-popover__slider-label" });
+    label.createEl("span", { text: "Link color" });
+
+    const toggle = row.createEl("input", {
+      type: "checkbox",
+      cls: "paper-popover__checkbox",
+    });
+    toggle.checked = this.linkedColorId !== null;
+    this.linkColorToggle = toggle;
+
+    toggle.addEventListener("change", () => {
+      if (toggle.checked) {
+        // Enable — use current pen color as default
+        this.linkedColorId = this.state.colorId;
+        this.callbacks.onLinkedColorChange(this.linkedColorId);
+      } else {
+        // Disable
+        this.linkedColorId = null;
+        this.callbacks.onLinkedColorChange(null);
+      }
+      this.updateLinkColorPicker();
+    });
+
+    // Color picker (shown only when linked)
+    this.updateLinkColorPicker();
+  }
+
+  private updateLinkColorPicker(): void {
+    if (!this.linkColorSection) return;
+
+    // Remove existing picker if any
+    if (this.linkColorPicker) {
+      this.linkColorPicker.destroy();
+      this.linkColorPicker = null;
+    }
+
+    // Remove existing picker container
+    const existing = this.linkColorSection.querySelector(".paper-popover__link-color-picker");
+    if (existing) existing.remove();
+
+    if (this.linkedColorId) {
+      const pickerContainer = this.linkColorSection.createEl("div", { cls: "paper-popover__link-color-picker" });
+      this.linkColorPicker = new ColorPickerPanel(pickerContainer, this.linkedColorId, {
+        onColorSelect: (colorId) => {
+          this.linkedColorId = colorId;
+          this.callbacks.onLinkedColorChange(colorId);
+        },
+      });
+    }
+  }
+
+  /** Get the current linked color state (used by Toolbar when saving). */
+  getLinkedColorId(): string | null {
+    return this.linkedColorId;
   }
 
   // ─── Stroke Scaling Section ───────────────────────────────
@@ -535,6 +612,7 @@ export class CustomizePopover {
   destroy(): void {
     document.removeEventListener("keydown", this.handleKeyDown);
     this.colorPicker?.destroy();
+    this.linkColorPicker?.destroy();
     this.backdrop.remove();
     this.el.remove();
   }

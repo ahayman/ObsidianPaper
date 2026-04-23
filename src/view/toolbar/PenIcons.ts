@@ -1,4 +1,5 @@
 import type { PenType } from "../../types";
+import type { PenPreset } from "./ToolbarTypes";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -100,6 +101,148 @@ export function createPenIconElement(penType: PenType): SVGSVGElement {
     if (shape.stroke) el.setAttribute("stroke", shape.stroke);
     if (shape.strokeWidth) el.setAttribute("stroke-width", shape.strokeWidth);
     svg.appendChild(el);
+  }
+
+  return svg;
+}
+
+// ─── Nib Shape Icon (for preset buttons) ────────────────────
+
+/** Minimum minor axis for ellipses to remain visible. */
+const MIN_MINOR_AXIS = 0.5;
+
+/**
+ * Map pen width (0.5–30) to icon units using split logic:
+ *  - width ≤ 12 → 1:1 mapping (0.5–12 icon units)
+ *  - width > 12 → compressed linear (12–19.2 icon units)
+ */
+export function computeNibSize(width: number): number {
+  if (width <= 12) return width;
+  return 12 + ((width - 12) / 18) * 7.2;
+}
+
+/**
+ * Append the pen-type silhouette shapes into a <g> group, using a given CSS class
+ * for fill instead of the original white/opacity values.
+ */
+function appendPenShapes(parent: SVGElement, penType: PenType, cls: string): void {
+  const shapes = PEN_ICON_SHAPES[penType];
+  for (const shape of shapes) {
+    let el: SVGElement;
+    switch (shape.type) {
+      case "path":
+        el = document.createElementNS(SVG_NS, "path");
+        el.setAttribute("d", shape.d!);
+        break;
+      case "circle":
+        el = document.createElementNS(SVG_NS, "circle");
+        el.setAttribute("cx", String(shape.cx));
+        el.setAttribute("cy", String(shape.cy));
+        el.setAttribute("r", String(shape.r));
+        break;
+      case "rect":
+        el = document.createElementNS(SVG_NS, "rect");
+        el.setAttribute("x", String(shape.x));
+        el.setAttribute("y", String(shape.y));
+        el.setAttribute("width", String(shape.width));
+        el.setAttribute("height", String(shape.height));
+        if (shape.rx) el.setAttribute("rx", String(shape.rx));
+        break;
+      case "line":
+        el = document.createElementNS(SVG_NS, "line");
+        el.setAttribute("x1", String(shape.x1));
+        el.setAttribute("y1", String(shape.y1));
+        el.setAttribute("x2", String(shape.x2));
+        el.setAttribute("y2", String(shape.y2));
+        break;
+      default:
+        continue;
+    }
+    el.setAttribute("class", cls);
+    parent.appendChild(el);
+  }
+}
+
+/**
+ * Create an SVG showing a pen-type icon above a nib/tip shape for a preset.
+ * Upper portion: small pen silhouette identifying the pen type.
+ * Lower portion: nib footprint sized by width (circle, ellipse, rectangle).
+ */
+export function createPresetNibIcon(preset: PenPreset): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "-2 -2 28 28");
+  svg.setAttribute("class", "preset-nib-svg");
+
+  // Background circle
+  const bg = document.createElementNS(SVG_NS, "circle");
+  bg.setAttribute("cx", "12");
+  bg.setAttribute("cy", "12");
+  bg.setAttribute("r", "12");
+  bg.setAttribute("class", "preset-nib-bg");
+  svg.appendChild(bg);
+
+  // Pen-type silhouette in the upper portion
+  // Original icons are 24×24; scale to 55% and center horizontally
+  const penGroup = document.createElementNS(SVG_NS, "g");
+  penGroup.setAttribute("transform", "translate(5.4, -0.5) scale(0.55)");
+  appendPenShapes(penGroup, preset.penType, "preset-pen-icon");
+  svg.appendChild(penGroup);
+
+  // Nib shape in the lower portion (pushed down; clipping is acceptable)
+  const nibSize = computeNibSize(preset.width);
+  const nibCY = 18;
+
+  switch (preset.penType) {
+    case "ballpoint":
+    case "pencil": {
+      const circle = document.createElementNS(SVG_NS, "circle");
+      circle.setAttribute("cx", "12");
+      circle.setAttribute("cy", String(nibCY));
+      circle.setAttribute("r", String(nibSize / 2));
+      circle.setAttribute("class", "preset-nib-shape");
+      svg.appendChild(circle);
+      break;
+    }
+    case "fountain": {
+      const rx = nibSize / 2;
+      const ry = Math.max(MIN_MINOR_AXIS, rx * (preset.nibThickness ?? 0.25));
+      const angleDeg = ((preset.nibAngle ?? Math.PI / 6) * 180) / Math.PI;
+      const ellipse = document.createElementNS(SVG_NS, "ellipse");
+      ellipse.setAttribute("cx", "12");
+      ellipse.setAttribute("cy", String(nibCY));
+      ellipse.setAttribute("rx", String(rx));
+      ellipse.setAttribute("ry", String(ry));
+      ellipse.setAttribute("transform", `rotate(${angleDeg} 12 ${nibCY})`);
+      ellipse.setAttribute("class", "preset-nib-shape");
+      svg.appendChild(ellipse);
+      break;
+    }
+    case "felt-tip": {
+      const w = nibSize;
+      const h = nibSize * 0.55;
+      const rect = document.createElementNS(SVG_NS, "rect");
+      rect.setAttribute("x", String(12 - w / 2));
+      rect.setAttribute("y", String(nibCY - h / 2));
+      rect.setAttribute("width", String(w));
+      rect.setAttribute("height", String(h));
+      rect.setAttribute("rx", String(Math.min(h / 4, 1)));
+      rect.setAttribute("class", "preset-nib-shape");
+      svg.appendChild(rect);
+      break;
+    }
+    case "highlighter": {
+      const w = nibSize;
+      const h = nibSize * 0.35;
+      const rect = document.createElementNS(SVG_NS, "rect");
+      rect.setAttribute("x", String(12 - w / 2));
+      rect.setAttribute("y", String(nibCY - h / 2));
+      rect.setAttribute("width", String(w));
+      rect.setAttribute("height", String(h));
+      rect.setAttribute("rx", "1");
+      rect.setAttribute("class", "preset-nib-shape");
+      svg.appendChild(rect);
+      break;
+    }
   }
 
   return svg;

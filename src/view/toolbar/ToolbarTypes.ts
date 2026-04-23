@@ -4,7 +4,6 @@ export interface PenPreset {
   id: string;
   name: string;
   penType: PenType;
-  colorId: string;         // Dual-hex ("#light|#dark") or single "#hex"
   width: number;
   smoothing: number;       // 0-1
   nibAngle?: number;       // Radians, fountain only
@@ -15,6 +14,7 @@ export interface PenPreset {
   inkPreset?: string;      // Ink preset ID, fountain only
   inkDepletion?: number;   // 0-1, felt-tip only (ink depletion rate)
   strokeScaling?: StrokeScaling; // "paper" (default) or "screen" (width scales with zoom)
+  linkedColorId?: string;  // Optional linked color — when set, selecting preset also applies this color
 }
 
 export type ToolbarPosition = "top" | "bottom" | "left" | "right";
@@ -47,7 +47,7 @@ export interface ToolbarCallbacks {
   onOpenDocumentSettings: () => void;
   onPresetSave: (presets: PenPreset[], activePresetId: string | null) => void;
   onPositionChange: (position: ToolbarPosition) => void;
-  onRecentColorsChange: (colors: string[], collapsed: boolean) => void;
+  onRecentColorsChange: (savedColors: string[], recentColors: string[], collapsed: boolean) => void;
 }
 
 export interface ToolbarQueries {

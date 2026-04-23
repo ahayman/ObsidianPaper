@@ -13,7 +13,7 @@ import { CustomizePopover } from "./CustomizePopover";
 import { CurrentPenButton } from "./CurrentPenButton";
 import { AutoMinimizer } from "./AutoMinimizer";
 import { RecentColorStrip } from "./RecentColorStrip";
-import { RecentColorManager } from "./RecentColorManager";
+import { ColorStripManager } from "./ColorStripManager";
 import { ColorWheelPopover } from "./ColorWheelPopover";
 import { setIcon } from "obsidian";
 import { DEFAULT_GRAIN_VALUE } from "../../stamp/GrainMapping";
@@ -35,8 +35,8 @@ export class Toolbar {
   private popover: CustomizePopover | null = null;
   private autoMinimizer: AutoMinimizer;
 
-  // Recent colors
-  private recentColorManager: RecentColorManager;
+  // Color strip
+  private colorStripManager: ColorStripManager;
   private recentColorStrip: RecentColorStrip | null = null;
   private colorWheelPopover: ColorWheelPopover | null = null;
   private recentColorsCollapsed: boolean;
@@ -67,6 +67,7 @@ export class Toolbar {
     presets: PenPreset[],
     position: ToolbarPosition,
     isDarkMode: boolean,
+    savedColors: string[] = [],
     recentColors: string[] = [],
     recentColorsCollapsed = false
   ) {
@@ -77,7 +78,7 @@ export class Toolbar {
     this.position = position;
     this.isDark = isDarkMode;
     this.presetManager = new PresetManager(presets);
-    this.recentColorManager = new RecentColorManager(recentColors);
+    this.colorStripManager = new ColorStripManager(savedColors, recentColors);
     this.recentColorsCollapsed = recentColorsCollapsed;
 
     this.el = container.createEl("div", {
@@ -221,11 +222,14 @@ export class Toolbar {
 
     this.applyPreset(preset);
     this.state.activePresetId = presetId;
-    this.presetStrip?.setActivePreset(presetId);
+
     this.currentPenBtn?.update(this.state.colorId, this.state.penType);
     this.callbacks.onPenSettingsChange({ ...this.state });
-    // Immediate promotion — selecting a preset is a deliberate choice
-    this.promoteAndPersist(this.state.colorId);
+
+    // Promote linked color if preset has one
+    if (preset.linkedColorId) {
+      this.promoteAndPersist(preset.linkedColorId);
+    }
   }
 
   private handlePresetLongPress(presetId: string): void {
@@ -243,7 +247,7 @@ export class Toolbar {
       activeTool: "pen",
       activePresetId: presetId,
       penType: preset.penType,
-      colorId: preset.colorId,
+      colorId: preset.linkedColorId ?? this.state.colorId,
       width: preset.width,
       smoothing: preset.smoothing,
       grain: preset.grain ?? DEFAULT_GRAIN_VALUE,
@@ -262,7 +266,6 @@ export class Toolbar {
 
   private applyPreset(preset: PenPreset): void {
     this.state.penType = preset.penType;
-    this.state.colorId = preset.colorId;
     this.state.width = preset.width;
     this.state.smoothing = preset.smoothing;
     this.state.grain = preset.grain ?? DEFAULT_GRAIN_VALUE;
@@ -272,6 +275,11 @@ export class Toolbar {
     if (preset.nibAngle !== undefined) this.state.nibAngle = preset.nibAngle;
     if (preset.nibThickness !== undefined) this.state.nibThickness = preset.nibThickness;
     if (preset.nibPressure !== undefined) this.state.nibPressure = preset.nibPressure;
+
+    // Only apply color if the preset has a linked color
+    if (preset.linkedColorId) {
+      this.state.colorId = preset.linkedColorId;
+    }
 
     // Switch to pen tool when selecting a preset
     if (this.state.activeTool !== "pen") {
@@ -314,7 +322,8 @@ export class Toolbar {
           if (isEditing && this.editingState && this.editingPresetId) {
             // Editing a preset without changing the active pen
             Object.assign(this.editingState, partial);
-            const data = this.presetManager.createFromState(this.editingState);
+            const linkedColorId = this.popover?.getLinkedColorId() ?? undefined;
+            const data = this.presetManager.createFromState(this.editingState, linkedColorId);
             this.presetManager.updatePreset(this.editingPresetId, data);
             const updated = this.presetManager.getPreset(this.editingPresetId);
             if (updated) this.presetStrip?.updateSinglePreset(updated);
@@ -331,7 +340,7 @@ export class Toolbar {
             const match = this.presetManager.findMatchingPreset(this.state);
             if (match !== this.state.activePresetId) {
               this.state.activePresetId = match;
-              this.presetStrip?.setActivePreset(match);
+          
               const matchedPreset = match ? this.presetManager.getPreset(match) ?? null : null;
               this.popover?.setActivePreset(matchedPreset);
             }
@@ -339,13 +348,22 @@ export class Toolbar {
             this.callbacks.onPenSettingsChange({ ...this.state });
           }
         },
+        onLinkedColorChange: (linkedColorId) => {
+          if (isEditing && this.editingPresetId) {
+            this.presetManager.updatePreset(this.editingPresetId, { linkedColorId: linkedColorId ?? undefined });
+            const updated = this.presetManager.getPreset(this.editingPresetId);
+            if (updated) this.presetStrip?.updateSinglePreset(updated);
+            this.callbacks.onPresetSave(this.presetManager.toArray(), this.state.activePresetId);
+          }
+        },
         onSaveAsNew: () => {
           const sourceState = this.editingState ?? this.state;
-          const data = this.presetManager.createFromState(sourceState);
+          const linkedColorId = this.popover?.getLinkedColorId() ?? undefined;
+          const data = this.presetManager.createFromState(sourceState, linkedColorId);
           const added = this.presetManager.addPreset(data);
           if (added) {
             this.state.activePresetId = added.id;
-            this.presetStrip?.updatePresets(this.presetManager.getPresets(), added.id);
+            this.presetStrip?.updatePresets(this.presetManager.getPresets());
             this.callbacks.onPresetSave(this.presetManager.toArray(), added.id);
             this.popover?.setActivePreset(added);
           }
@@ -357,7 +375,7 @@ export class Toolbar {
           if (targetId === this.state.activePresetId) {
             this.state.activePresetId = null;
           }
-          this.presetStrip?.updatePresets(this.presetManager.getPresets(), this.state.activePresetId);
+          this.presetStrip?.updatePresets(this.presetManager.getPresets());
           this.callbacks.onPresetSave(this.presetManager.toArray(), this.state.activePresetId);
           this.popover?.setActivePreset(null);
         },
@@ -368,7 +386,8 @@ export class Toolbar {
         onDismiss: () => {
           this.closePopover();
         },
-      }
+      },
+      isEditing
     );
   }
 
@@ -397,8 +416,8 @@ export class Toolbar {
   private buildRecentColorStrip(container: HTMLElement): void {
     this.recentColorStrip = new RecentColorStrip(
       container,
-      this.recentColorManager.getColors() as string[],
-      this.state.colorId,
+      this.colorStripManager.getSavedColors() as string[],
+      this.colorStripManager.getRecentColors() as string[],
       this.recentColorsCollapsed,
       this.position,
       {
@@ -408,7 +427,7 @@ export class Toolbar {
           const match = this.presetManager.findMatchingPreset(this.state);
           if (match !== this.state.activePresetId) {
             this.state.activePresetId = match;
-            this.presetStrip?.setActivePreset(match);
+        
           }
           this.currentPenBtn?.update(this.state.colorId, this.state.penType);
           this.callbacks.onPenSettingsChange({ ...this.state });
@@ -423,8 +442,18 @@ export class Toolbar {
             this.callbacks.onToolChange("pen");
           }
         },
+        onPinColor: (colorId) => {
+          this.colorStripManager.pinColor(colorId);
+          this.refreshRecentStrip();
+          this.persistRecentColors();
+        },
+        onUnpinColor: (colorId) => {
+          this.colorStripManager.unpinColor(colorId);
+          this.refreshRecentStrip();
+          this.persistRecentColors();
+        },
         onColorRemove: (colorId) => {
-          this.recentColorManager.remove(colorId);
+          this.colorStripManager.remove(colorId);
           this.refreshRecentStrip();
           this.persistRecentColors();
         },
@@ -455,8 +484,6 @@ export class Toolbar {
 
   /**
    * Position the recent color strip so it's anchored to the current pen button.
-   * For horizontal toolbars: aligns left edge of strip with the pen button's left edge.
-   * For vertical toolbars: aligns top edge of strip with the pen button's top edge.
    */
   private positionRecentStrip(): void {
     if (!this.recentColorStrip || !this.currentPenBtn) return;
@@ -466,12 +493,10 @@ export class Toolbar {
     const isVertical = this.position === "left" || this.position === "right";
 
     if (isVertical) {
-      // Align top of strip to pen button's top, relative to container
       const top = penRect.top - containerRect.top;
       stripEl.style.top = `${top}px`;
       stripEl.style.transform = "none";
     } else {
-      // Align left of strip to pen button's left, relative to container
       const left = penRect.left - containerRect.left;
       stripEl.style.left = `${left}px`;
       stripEl.style.transform = "none";
@@ -495,16 +520,26 @@ export class Toolbar {
           const match = this.presetManager.findMatchingPreset(this.state);
           if (match !== this.state.activePresetId) {
             this.state.activePresetId = match;
-            this.presetStrip?.setActivePreset(match);
+        
           }
           this.currentPenBtn?.update(this.state.colorId, this.state.penType);
-          this.recentColorStrip?.setActiveColor(colorId);
           this.callbacks.onPenSettingsChange({ ...this.state });
+        },
+        onPinColor: (colorId) => {
+          this.colorStripManager.pinColor(colorId);
+          this.refreshRecentStrip();
+          this.persistRecentColors();
+        },
+        onUnpinColor: (colorId) => {
+          this.colorStripManager.unpinColor(colorId);
+          this.refreshRecentStrip();
+          this.persistRecentColors();
         },
         onDismiss: () => {
           this.closeColorWheelPopover();
         },
-      }
+      },
+      (colorId) => this.colorStripManager.isSaved(colorId)
     );
   }
 
@@ -524,7 +559,7 @@ export class Toolbar {
   // ─── MRU Helpers ───────────────────────────────────────────
 
   private promoteAndPersist(colorId: string): void {
-    if (this.recentColorManager.promote(colorId)) {
+    if (this.colorStripManager.promote(colorId)) {
       this.refreshRecentStrip();
       this.persistRecentColors();
     }
@@ -532,14 +567,15 @@ export class Toolbar {
 
   private refreshRecentStrip(): void {
     this.recentColorStrip?.updateColors(
-      this.recentColorManager.getColors() as string[],
-      this.state.colorId
+      this.colorStripManager.getSavedColors() as string[],
+      this.colorStripManager.getRecentColors() as string[]
     );
   }
 
   private persistRecentColors(): void {
     this.callbacks.onRecentColorsChange(
-      this.recentColorManager.toArray(),
+      this.colorStripManager.toSavedArray(),
+      this.colorStripManager.toRecentArray(),
       this.recentColorsCollapsed
     );
   }
@@ -555,13 +591,13 @@ export class Toolbar {
     }
 
     if (partial.activePresetId !== undefined) {
-      this.presetStrip?.setActivePreset(this.state.activePresetId);
+
     } else {
       // Check if manual changes now match a preset
       const match = this.presetManager.findMatchingPreset(this.state);
       if (match !== this.state.activePresetId) {
         this.state.activePresetId = match;
-        this.presetStrip?.setActivePreset(match);
+    
       }
     }
 
@@ -569,9 +605,6 @@ export class Toolbar {
       this.currentPenBtn?.update(this.state.colorId, this.state.penType);
     }
 
-    if (partial.colorId !== undefined) {
-      this.recentColorStrip?.setActiveColor(this.state.colorId);
-    }
   }
 
   setDarkMode(isDark: boolean): void {
@@ -622,7 +655,7 @@ export class Toolbar {
   updatePresets(presets: PenPreset[], activePresetId: string | null): void {
     this.presetManager = new PresetManager(presets);
     this.state.activePresetId = activePresetId;
-    this.presetStrip?.updatePresets(presets, activePresetId);
+    this.presetStrip?.updatePresets(presets);
   }
 
   getDocSettingsAnchor(): HTMLElement {

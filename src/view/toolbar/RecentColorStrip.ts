@@ -6,14 +6,15 @@ const LONG_PRESS_MS = 500;
 
 export interface RecentColorStripCallbacks {
   onColorSelect: (colorId: string) => void;
+  onPinColor: (colorId: string) => void;
+  onUnpinColor: (colorId: string) => void;
   onColorRemove: (colorId: string) => void;
   onOpenColorPicker: (anchor: HTMLElement) => void;
 }
 
 /**
- * Single-row strip displaying recently-used colors.
- * Sits adjacent to the main toolbar, anchored to the current pen button.
- * Collapse state is controlled externally by the Toolbar via setCollapsed().
+ * Single-row strip displaying saved (pinned) + recent colors.
+ * Saved colors appear first, separated by a divider from history colors.
  */
 export class RecentColorStrip {
   readonly el: HTMLElement;
@@ -21,23 +22,22 @@ export class RecentColorStrip {
   private wheelBtn: HTMLButtonElement;
 
   private callbacks: RecentColorStripCallbacks;
-  private activeColorId: string;
-  private colorIds: string[] = [];
+  private savedIds: string[] = [];
+  private recentIds: string[] = [];
 
-  // Long-press tracking per swatch
+  // Long-press tracking
   private longPressTimer: ReturnType<typeof setTimeout> | null = null;
   private didLongPress = false;
 
   constructor(
     container: HTMLElement,
+    savedColors: string[],
     recentColors: string[],
-    activeColorId: string,
     collapsed: boolean,
     position: ToolbarPosition,
     callbacks: RecentColorStripCallbacks
   ) {
     this.callbacks = callbacks;
-    this.activeColorId = activeColorId;
 
     this.el = container.createEl("div", {
       cls: "paper-recent-colors",
@@ -57,29 +57,41 @@ export class RecentColorStrip {
       this.callbacks.onOpenColorPicker(this.wheelBtn);
     });
 
-    this.buildSwatches(recentColors);
-
-    // Apply initial collapsed state
+    this.buildSwatches(savedColors, recentColors);
     this.el.toggleClass("is-collapsed", collapsed);
   }
 
   // ─── Swatch Building ──────────────────────────────────────
 
-  private buildSwatches(colors: string[]): void {
+  private buildSwatches(saved: string[], recent: string[]): void {
     this.swatchContainer.empty();
-    this.colorIds = [...colors];
+    this.savedIds = [...saved];
+    this.recentIds = [...recent];
 
-    for (const colorId of colors) {
-      this.createSwatchEl(colorId);
+    // Saved colors
+    for (const colorId of saved) {
+      this.createSwatchEl(colorId, true);
+    }
+
+    // Divider (only if both sections have colors)
+    if (saved.length > 0 && recent.length > 0) {
+      this.swatchContainer.createEl("div", { cls: "paper-recent-colors__divider" });
+    }
+
+    // History colors
+    for (const colorId of recent) {
+      this.createSwatchEl(colorId, false);
     }
   }
 
-  private createSwatchEl(colorId: string): HTMLButtonElement {
+  private createSwatchEl(colorId: string, isSaved: boolean): HTMLButtonElement {
     const { light, dark } = parseColorId(colorId);
     const swatch = this.swatchContainer.createEl("button", {
       cls: "paper-recent-colors__swatch",
-      attr: { "aria-label": `Recent color` },
+      attr: { "aria-label": isSaved ? "Saved color" : "Recent color" },
     });
+
+    if (isSaved) swatch.addClass("is-saved");
 
     // Diagonal split color layer
     const colorLayer = swatch.createEl("span", { cls: "paper-recent-colors__swatch-color" });
@@ -88,17 +100,23 @@ export class RecentColorStrip {
       "--swatch-color-light": light,
     });
 
-    if (colorId === this.activeColorId) {
-      swatch.addClass("is-active");
+    // Pin indicator for saved colors
+    if (isSaved) {
+      const pin = swatch.createEl("span", { cls: "paper-recent-colors__pin" });
+      setIcon(pin, "pin");
     }
 
-    // Long-press to remove, tap to select
+    // Long-press for context action, tap to select
     const startLongPress = (e: Event) => {
       e.preventDefault();
+      if (this.longPressTimer) {
+        clearTimeout(this.longPressTimer);
+      }
       this.didLongPress = false;
       this.longPressTimer = setTimeout(() => {
+        this.longPressTimer = null;
         this.didLongPress = true;
-        this.callbacks.onColorRemove(colorId);
+        this.handleLongPress(colorId, isSaved);
       }, LONG_PRESS_MS);
     };
 
@@ -122,32 +140,32 @@ export class RecentColorStrip {
     swatch.addEventListener("pointercancel", cancelLongPress);
     swatch.addEventListener("pointerleave", cancelLongPress);
 
-    // Right-click also removes
+    // Right-click also triggers context action
     swatch.addEventListener("contextmenu", (e) => {
       e.preventDefault();
+      if (!swatch.isConnected) return;
       cancelLongPress();
-      this.callbacks.onColorRemove(colorId);
+      this.handleLongPress(colorId, isSaved);
     });
 
     return swatch;
   }
 
-  // ─── Public API ───────────────────────────────────────────
-
-  updateColors(colors: string[], activeColorId: string): void {
-    this.activeColorId = activeColorId;
-    this.buildSwatches(colors);
-
-    // Hide the whole strip when there are no recent colors
-    this.el.toggleClass("is-empty", colors.length === 0);
+  private handleLongPress(colorId: string, isSaved: boolean): void {
+    if (isSaved) {
+      // Unpin saved color → moves to history
+      this.callbacks.onUnpinColor(colorId);
+    } else {
+      // Pin history color → saves it
+      this.callbacks.onPinColor(colorId);
+    }
   }
 
-  setActiveColor(colorId: string): void {
-    this.activeColorId = colorId;
-    const swatches = this.swatchContainer.querySelectorAll(".paper-recent-colors__swatch");
-    swatches.forEach((el, i) => {
-      (el as HTMLElement).toggleClass("is-active", this.colorIds[i] === colorId);
-    });
+  // ─── Public API ───────────────────────────────────────────
+
+  updateColors(saved: string[], recent: string[]): void {
+    this.buildSwatches(saved, recent);
+    this.el.toggleClass("is-empty", saved.length === 0 && recent.length === 0);
   }
 
   setPosition(position: ToolbarPosition): void {

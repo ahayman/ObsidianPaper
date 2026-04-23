@@ -173,7 +173,7 @@ export class InputManager {
   private isInteractiveOverlay(e: PointerEvent): boolean {
     const target = e.target as Element | null;
     if (!target) return false;
-    return target.closest(".paper-toolbar, .paper-popover, .paper-popover__backdrop, .paper-selection-bar") !== null;
+    return target.closest(".paper-toolbar, .paper-recent-colors, .paper-popover, .paper-popover__backdrop, .paper-selection-bar") !== null;
   }
 
   private handleDocPointerDown(e: PointerEvent): void {

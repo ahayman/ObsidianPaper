@@ -285,7 +285,7 @@ export class EmbeddedPaperModal extends Modal {
       const preset = settings.penPresets.find((p) => p.id === settings.activePresetId);
       if (preset) {
         this.currentPenType = preset.penType;
-        this.currentColorId = preset.colorId;
+        if (preset.linkedColorId) this.currentColorId = preset.linkedColorId;
         this.currentWidth = preset.width;
         this.currentSmoothing = preset.smoothing;
         this.currentGrain = preset.grain ?? DEFAULT_GRAIN_VALUE;
@@ -868,10 +868,11 @@ export class EmbeddedPaperModal extends Modal {
         this.deviceSettings.toolbarPosition = position;
         this.onDeviceSettingsChanged?.({ toolbarPosition: position });
       },
-      onRecentColorsChange: (colors, collapsed) => {
-        this.settings.recentColors = colors;
+      onRecentColorsChange: (savedColors, recentColors, collapsed) => {
+        this.settings.savedColors = savedColors;
+        this.settings.recentColors = recentColors;
         this.settings.recentColorsCollapsed = collapsed;
-        this.onSettingsChange?.({ recentColors: colors, recentColorsCollapsed: collapsed });
+        this.onSettingsChange?.({ savedColors, recentColors, recentColorsCollapsed: collapsed });
       },
     };
   }
