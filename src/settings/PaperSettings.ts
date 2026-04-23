@@ -79,7 +79,16 @@ export interface PaperSettings {
   // Embeds
   embedMaxWidth: number;   // Max width in px for embedded previews (0 = fill container)
   embedMaxHeight: number;  // Max height in px for embedded previews (0 = no limit)
+
+  // OCR
+  ocrBackend: OcrBackendId | "none";
+  handwritingOcrApiToken: string;
+  ocrMonthlyCap: number;          // Max pages OCR'd per calendar month (0 = no cap)
+  ocrCallsThisMonth: number;      // Running count, reset automatically via ocrMonthKey.
+  ocrMonthKey: string;            // "YYYY-MM" marker for when the counter was last reset.
 }
+
+export type OcrBackendId = "handwriting-ocr";
 
 export const DEFAULT_PRESETS: PenPreset[] = [
   {
@@ -175,6 +184,12 @@ export const DEFAULT_SETTINGS: PaperSettings = {
 
   embedMaxWidth: 0,
   embedMaxHeight: 400,
+
+  ocrBackend: "none",
+  handwritingOcrApiToken: "",
+  ocrMonthlyCap: 5000,
+  ocrCallsThisMonth: 0,
+  ocrMonthKey: "",
 };
 
 /**

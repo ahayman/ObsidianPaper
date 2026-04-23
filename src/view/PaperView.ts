@@ -15,6 +15,7 @@ import {
   type OcrResult,
   type PaperMdFrontmatter,
 } from "../document/PaperMdSerializer";
+import { buildTranscript } from "../ocr/TranscriptBuilder";
 import { getPenConfig } from "../stroke/PenConfigs";
 import { findHitStrokes } from "../eraser/StrokeEraser";
 import { ThemeDetector } from "../color/ThemeDetector";
@@ -364,6 +365,16 @@ export class PaperView extends TextFileView {
       });
     }
     return serializeDocument(this.document);
+  }
+
+  /**
+   * Replace the stored OCR result and regenerate the transcript, then
+   * schedule a save. Only meaningful for `.paper.md` files.
+   */
+  applyOcrResult(result: OcrResult | null): void {
+    this.mdOcr = result;
+    this.mdTranscript = buildTranscript(result);
+    this.requestSave();
   }
 
   setViewData(data: string, clear: boolean): void {

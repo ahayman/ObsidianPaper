@@ -506,3 +506,32 @@ export const Platform = {
   isIosApp: false,
   isAndroidApp: false,
 };
+
+export interface RequestUrlResponse {
+  status: number;
+  headers: Record<string, string>;
+  text: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  json: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  arrayBuffer: any;
+}
+
+export interface RequestUrlParam {
+  url: string;
+  method?: string;
+  contentType?: string;
+  headers?: Record<string, string>;
+  body?: string | ArrayBuffer;
+  throw?: boolean;
+}
+
+export const requestUrl = jest.fn<Promise<RequestUrlResponse>, [RequestUrlParam]>(() =>
+  Promise.resolve({
+    status: 200,
+    headers: {},
+    text: "{}",
+    json: {},
+    arrayBuffer: new ArrayBuffer(0),
+  })
+);

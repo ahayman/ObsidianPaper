@@ -33,7 +33,7 @@ export interface PaperMdFrontmatter {
 
 export interface OcrWord {
   text: string;
-  bbox: [number, number, number, number];
+  bbox?: [number, number, number, number];
   strokeIds?: string[];
   confidence?: number;
 }
@@ -41,8 +41,10 @@ export interface OcrWord {
 export interface OcrLine {
   id: string;
   text: string;
-  bbox: [number, number, number, number];
-  confidence: number;
+  /** Page-local bbox [x, y, w, h]; absent if the backend doesn't supply geometry. */
+  bbox?: [number, number, number, number];
+  /** 0–1; absent if unknown. */
+  confidence?: number;
   strokeIds?: string[];
   words?: OcrWord[];
 }

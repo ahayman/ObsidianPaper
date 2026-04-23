@@ -129,7 +129,9 @@
       "WebFetch(domain:alexharri.com)",
       "WebFetch(domain:techcommunity.microsoft.com)",
       "WebFetch(domain:support.microsoft.com)",
-      "WebFetch(domain:bora.uib.no)"
+      "WebFetch(domain:bora.uib.no)",
+      "Bash(curl -s \"https://docs.obsidian.md/Reference/TypeScript+API/MetadataCache\")",
+      "Bash(curl -s \"https://docs.obsidian.md/Plugins/Guides/Understanding+deferred+views\")"
     ]
   }
 }

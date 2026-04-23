@@ -1,6 +1,7 @@
-import { PluginSettingTab, App, Setting } from "obsidian";
+import { PluginSettingTab, App, Notice, Setting } from "obsidian";
 import type { Plugin } from "obsidian";
 import type { PaperSettings, PaperFormat, NewNoteLocation } from "./PaperSettings";
+import { HandwritingOcrBackend } from "../ocr/HandwritingOcrBackend";
 import { formatSpacingDisplay, displayToWorldUnits } from "./PaperSettings";
 import type { PenType, PaperType, PageSizePreset, PageOrientation, LayoutDirection, PageUnit, SpacingUnit, RenderPipeline, RenderEngineType } from "../types";
 import type { DeviceSettings, MaxZoomLevel, TileMemoryBudgetMB } from "./DeviceSettings";
@@ -704,6 +705,82 @@ export class PaperSettingsTab extends PluginSettingTab {
           }
         });
       });
+
+    // --- OCR ---
+    new Setting(container).setName("Handwriting OCR").setHeading();
+
+    new Setting(container)
+      .setName("Backend")
+      .setDesc(
+        "Service used to transcribe handwriting. Strokes or rasterized images " +
+        "of your pages are uploaded to the selected service. 'None' disables OCR.",
+      )
+      .addDropdown((dropdown) => {
+        dropdown.addOption("none", "None (OCR disabled)");
+        dropdown.addOption("handwriting-ocr", "Handwriting OCR (handwritingocr.com)");
+        dropdown.setValue(this.settings.ocrBackend);
+        dropdown.onChange((value: string) => {
+          this.settings.ocrBackend = value as PaperSettings["ocrBackend"];
+          this.notifyChange();
+          this.display();
+        });
+      });
+
+    if (this.settings.ocrBackend === "handwriting-ocr") {
+      new Setting(container)
+        .setName("Handwriting OCR API token")
+        .setDesc("Get one at https://www.handwritingocr.com/account — stored unencrypted in plugin data.")
+        .addText((text) => {
+          text.inputEl.type = "password";
+          text.setPlaceholder("paste your API token");
+          text.setValue(this.settings.handwritingOcrApiToken);
+          text.onChange((value: string) => {
+            this.settings.handwritingOcrApiToken = value.trim();
+            this.notifyChange();
+          });
+        })
+        .addButton((button) => {
+          button.setButtonText("Test connection");
+          button.onClick(async () => {
+            const backend = new HandwritingOcrBackend(() => ({
+              apiToken: this.settings.handwritingOcrApiToken,
+            }));
+            if (!backend.isConfigured()) {
+              new Notice("Enter an API token first.");
+              return;
+            }
+            button.setButtonText("Testing…");
+            button.buttonEl.setAttribute("disabled", "true");
+            const res = await backend.testConnection();
+            button.setButtonText("Test connection");
+            button.buttonEl.removeAttribute("disabled");
+            if (res.ok) new Notice("Handwriting OCR: connection OK.");
+            else new Notice(`Handwriting OCR: ${res.error ?? "failed."}`, 8000);
+          });
+        });
+    }
+
+    new Setting(container)
+      .setName("Monthly page cap")
+      .setDesc("Maximum pages OCR'd per month before the plugin pauses automatically. 0 = no cap. Resets on the 1st.")
+      .addText((text) => {
+        text.setValue(String(this.settings.ocrMonthlyCap));
+        text.onChange((value: string) => {
+          const num = parseInt(value);
+          if (!isNaN(num) && num >= 0) {
+            this.settings.ocrMonthlyCap = num;
+            this.notifyChange();
+          }
+        });
+      });
+
+    const remaining = this.settings.ocrMonthlyCap > 0
+      ? Math.max(0, this.settings.ocrMonthlyCap - this.settings.ocrCallsThisMonth)
+      : null;
+    const statusDesc = remaining === null
+      ? `Used this month: ${this.settings.ocrCallsThisMonth} pages (no cap).`
+      : `Used this month: ${this.settings.ocrCallsThisMonth} / ${this.settings.ocrMonthlyCap} pages (${remaining} remaining).`;
+    new Setting(container).setName("Usage").setDesc(statusDesc);
   }
 
   updateSettings(settings: PaperSettings): void {

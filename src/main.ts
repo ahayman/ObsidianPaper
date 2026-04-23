@@ -20,6 +20,10 @@ import {
   deleteBackups,
 } from "./migration/PaperMigrator";
 import { MigrationConfirmModal, BackupCleanupModal } from "./migration/MigrationModal";
+import { HandwritingOcrBackend } from "./ocr/HandwritingOcrBackend";
+import type { OcrBackend } from "./ocr/OcrBackend";
+import { rasterizeDocument } from "./ocr/PageRasterizer";
+import { checkQuota, incrementCounter, resetMonthlyCounterIfNeeded } from "./ocr/OcrQuota";
 import { exportToSvg } from "./export/SvgExporter";
 import { NewPaperModal } from "./modal/NewPaperModal";
 
@@ -140,6 +144,19 @@ export default class PaperPlugin extends Plugin {
         if (!view) return false;
         if (checking) return true;
         view.redo();
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "recognize-handwriting",
+      name: "Recognize handwriting (OCR)",
+      checkCallback: (checking) => {
+        const view = this.getActivePaperView();
+        if (!view || classifyPaperFile(view.file?.name) !== "md") return false;
+        if (this.settings.ocrBackend === "none") return false;
+        if (checking) return true;
+        void this.runOcrCommand();
         return true;
       },
     });
@@ -385,6 +402,80 @@ export default class PaperPlugin extends Plugin {
       type: VIEW_TYPE_PAPER,
       state: { file: file.path },
     });
+  }
+
+  private getOcrBackend(): OcrBackend | null {
+    if (this.settings.ocrBackend === "handwriting-ocr") {
+      return new HandwritingOcrBackend(() => ({
+        apiToken: this.settings.handwritingOcrApiToken,
+      }));
+    }
+    return null;
+  }
+
+  private async runOcrCommand(): Promise<void> {
+    const view = this.getActivePaperView();
+    if (!view || !view.file || classifyPaperFile(view.file.name) !== "md") {
+      new Notice("Open a .paper.md file first.");
+      return;
+    }
+
+    const backend = this.getOcrBackend();
+    if (!backend) {
+      new Notice("OCR disabled. Pick a backend in settings.");
+      return;
+    }
+    if (!backend.isConfigured()) {
+      new Notice("OCR backend not configured. Add an API token in settings.");
+      return;
+    }
+
+    // Reset the monthly counter if we've rolled into a new month.
+    const resetPatch = resetMonthlyCounterIfNeeded(this.settings);
+    if (resetPatch) {
+      Object.assign(this.settings, resetPatch);
+      await this.saveSettings();
+    }
+
+    const doc = view.getDocument();
+    const pageCount = doc.pages.length;
+    const quota = checkQuota(this.settings, pageCount);
+    if (!quota.ok) {
+      new Notice(`OCR paused: ${quota.reason} Raise the cap in settings or wait until next month.`, 10000);
+      return;
+    }
+
+    const progress = new Notice("Rendering pages…", 0);
+    try {
+      const rastered = await rasterizeDocument(doc);
+      if (rastered.length === 0) {
+        progress.hide();
+        new Notice("No strokes to recognize.");
+        return;
+      }
+      progress.setMessage(`Recognizing ${rastered.length} page(s)…`);
+
+      const result = await backend.recognizeDocument({
+        pages: rastered,
+        onProgress: (p) => {
+          progress.setMessage(`OCR: page ${p.currentPage}/${p.totalPages} — ${p.phase}`);
+        },
+      });
+
+      view.applyOcrResult(result);
+
+      Object.assign(this.settings, incrementCounter(this.settings, rastered.length));
+      await this.saveSettings();
+
+      progress.hide();
+      const lineTotal = result.pages.reduce((n, p) => n + p.lines.length, 0);
+      new Notice(`OCR complete: ${lineTotal} lines across ${rastered.length} page(s).`, 6000);
+    } catch (e) {
+      progress.hide();
+      const message = e instanceof Error ? e.message : String(e);
+      new Notice(`OCR failed: ${message}`, 10000);
+      console.error("[Paper OCR]", e);
+    }
   }
 
   private async runPaperMigrationCommand(): Promise<void> {

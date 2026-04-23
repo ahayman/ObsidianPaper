@@ -98,6 +98,11 @@ describe("PaperSettings", () => {
         clipboardQueueSize: 5,
         embedMaxWidth: 800,
         embedMaxHeight: 300,
+        ocrBackend: "handwriting-ocr",
+        handwritingOcrApiToken: "test-token",
+        ocrMonthlyCap: 2000,
+        ocrCallsThisMonth: 42,
+        ocrMonthKey: "2026-04",
       };
       const result = mergeSettings(custom);
       expect(result).toEqual(custom);
