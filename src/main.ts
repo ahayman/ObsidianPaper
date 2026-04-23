@@ -22,7 +22,7 @@ import {
 import { MigrationConfirmModal, BackupCleanupModal } from "./migration/MigrationModal";
 import { HandwritingOcrBackend } from "./ocr/HandwritingOcrBackend";
 import type { OcrBackend } from "./ocr/OcrBackend";
-import { rasterizeDocument } from "./ocr/PageRasterizer";
+import { runIncrementalOcr, countDirtyPages } from "./ocr/IncrementalOcrRunner";
 import { checkQuota, incrementCounter, resetMonthlyCounterIfNeeded } from "./ocr/OcrQuota";
 import { exportToSvg } from "./export/SvgExporter";
 import { NewPaperModal } from "./modal/NewPaperModal";
@@ -438,38 +438,50 @@ export default class PaperPlugin extends Plugin {
     }
 
     const doc = view.getDocument();
-    const pageCount = doc.pages.length;
-    const quota = checkQuota(this.settings, pageCount);
+    const previous = view.getMdOcr();
+    const dirtyPages = countDirtyPages(doc, previous);
+    if (dirtyPages === 0) {
+      new Notice("OCR already up to date for this document.");
+      return;
+    }
+    const quota = checkQuota(this.settings, dirtyPages);
     if (!quota.ok) {
       new Notice(`OCR paused: ${quota.reason} Raise the cap in settings or wait until next month.`, 10000);
       return;
     }
 
-    const progress = new Notice("Rendering pages…", 0);
+    const progress = new Notice("Preparing OCR…", 0);
     try {
-      const rastered = await rasterizeDocument(doc);
-      if (rastered.length === 0) {
-        progress.hide();
-        new Notice("No strokes to recognize.");
-        return;
-      }
-      progress.setMessage(`Recognizing ${rastered.length} page(s)…`);
-
-      const result = await backend.recognizeDocument({
-        pages: rastered,
+      const runResult = await runIncrementalOcr({
+        document: doc,
+        previous,
+        backend,
         onProgress: (p) => {
-          progress.setMessage(`OCR: page ${p.currentPage}/${p.totalPages} — ${p.phase}`);
+          progress.setMessage(
+            `OCR: page ${p.currentPage}/${p.totalPages} — ${p.phase} ` +
+            `(${p.pagesReused} reused, ${p.pagesRecognizing} new)`,
+          );
         },
       });
 
-      view.applyOcrResult(result);
+      view.applyOcrResult(runResult.ocr);
 
-      Object.assign(this.settings, incrementCounter(this.settings, rastered.length));
-      await this.saveSettings();
+      // Only charge quota for pages we actually sent to the backend.
+      if (runResult.pagesRecognized > 0) {
+        Object.assign(this.settings, incrementCounter(this.settings, runResult.pagesRecognized));
+        await this.saveSettings();
+      }
 
       progress.hide();
-      const lineTotal = result.pages.reduce((n, p) => n + p.lines.length, 0);
-      new Notice(`OCR complete: ${lineTotal} lines across ${rastered.length} page(s).`, 6000);
+      const lineTotal = runResult.ocr.pages.reduce((n, p) => n + p.lines.length, 0);
+      if (runResult.pagesRecognized === 0 && runResult.pagesReused > 0) {
+        new Notice(`OCR up to date — reused all ${runResult.pagesReused} pages.`, 5000);
+      } else {
+        new Notice(
+          `OCR complete: ${lineTotal} lines, ${runResult.pagesRecognized} page(s) recognized, ${runResult.pagesReused} reused.`,
+          6000,
+        );
+      }
     } catch (e) {
       progress.hide();
       const message = e instanceof Error ? e.message : String(e);

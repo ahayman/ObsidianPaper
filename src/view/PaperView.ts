@@ -367,6 +367,11 @@ export class PaperView extends TextFileView {
     return serializeDocument(this.document);
   }
 
+  /** Current OCR result for the loaded file, or null if none has been run. */
+  getMdOcr(): OcrResult | null {
+    return this.mdOcr;
+  }
+
   /**
    * Replace the stored OCR result and regenerate the transcript, then
    * schedule a save. Only meaningful for `.paper.md` files.

@@ -52,6 +52,12 @@ export interface OcrLine {
 export interface OcrPageResult {
   pageIndex: number;
   lines: OcrLine[];
+  /**
+   * Sorted list of stroke IDs present on the page at OCR time. Used for
+   * incremental re-OCR: if the current document's stroke set for this page
+   * is identical, we can skip the OCR call and reuse `lines`.
+   */
+  pageStrokeIds?: string[];
 }
 
 export interface OcrResult {
