@@ -286,6 +286,14 @@
   left: 6px;
 }
 
+/* Hide the markdown container of a .paper.md file while we swap it to the
+ * Paper editor view, so the user doesn't see the raw markdown flash. The
+ * class is added in the file-open handler and torn down with the view
+ * when setViewState swaps the leaf's view instance. */
+.paper-view-pending-swap {
+  visibility: hidden;
+}
+
 /* Fullscreen modal */
 .paper-fullscreen-modal {
   /* Override Obsidian's default modal sizing */

@@ -435,11 +435,40 @@ export default class PaperPlugin extends Plugin {
     const cache = this.app.metadataCache.getFileCache(file);
     const defaultView = cache?.frontmatter?.["paper-default-view"];
     if (defaultView === "markdown") return;
-    if (this.pendingPaperSwaps.has(file.path)) return;
 
+    // Hide any markdown view currently showing this file before the swap
+    // commits, so we don't flash the markdown source. Safe even if the
+    // leaf hasn't mounted yet — will be a no-op and picked up by retries.
+    this.hidePendingPaperLeaves(file.path);
+
+    if (this.pendingPaperSwaps.has(file.path)) return;
     this.pendingPaperSwaps.add(file.path);
-    // Defer to next tick so the markdown view's own mount finishes first.
-    setTimeout(() => { void this.doSwapToPaperView(file, 0); }, 0);
+    void this.doSwapToPaperView(file, 0);
+  }
+
+  /**
+   * Mark any non-Paper view showing this file as "pending swap" so our CSS
+   * hides its container. The marker is put on the view's containerEl; when
+   * setViewState replaces the view, the marked element gets torn down with
+   * the old view and the new PaperView's unhidden container takes its place.
+   */
+  private hidePendingPaperLeaves(filePath: string): void {
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      if (leaf.view.getViewType() === VIEW_TYPE_PAPER) return;
+      const leafFile = (leaf.view as { file?: TFile }).file;
+      if (leafFile?.path !== filePath) return;
+      leaf.view.containerEl.classList.add("paper-view-pending-swap");
+    });
+  }
+
+  /** Safety: if the swap gives up without flipping, unhide so the user
+   *  isn't stuck staring at a blank leaf. */
+  private unhideIfStillPending(filePath: string): void {
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const leafFile = (leaf.view as { file?: TFile }).file;
+      if (leafFile?.path !== filePath) return;
+      leaf.view.containerEl.classList.remove("paper-view-pending-swap");
+    });
   }
 
   /**
@@ -491,6 +520,9 @@ export default class PaperPlugin extends Plugin {
     }
 
     this.pendingPaperSwaps.delete(file.path);
+    // Whether we succeeded or exhausted retries, make sure we don't leave
+    // a hidden markdown leaf behind.
+    this.unhideIfStillPending(file.path);
   }
 
   private updateOcrStatusBar(): void {
