@@ -5,6 +5,20 @@ import type { PaperSettings } from "../settings/PaperSettings";
 import type { EmbedEntry } from "./EmbedPostProcessor";
 
 /**
+ * Extract scene JSON from a `paper` code block. Current files contain raw
+ * JSON; legacy files embedded deflate+base64, so accept both.
+ */
+function extractSceneJson(source: string): string | null {
+  const trimmed = source.trim();
+  if (trimmed.startsWith("{")) return trimmed;
+  try {
+    return decompressString(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Create a handler for fenced `paper` code blocks.
  *
  *     ```paper
@@ -27,10 +41,8 @@ export function createPaperCodeBlockProcessor(
       ? (app.vault.getAbstractFileByPath(sourcePath) as TFile | null)
       : null;
 
-    let sceneJson: string;
-    try {
-      sceneJson = decompressString(source.trim());
-    } catch {
+    const sceneJson = extractSceneJson(source);
+    if (!sceneJson) {
       const err = document.createElement("div");
       err.classList.add("paper-embed-error");
       err.textContent = "Unable to decode paper code block.";
@@ -39,7 +51,10 @@ export function createPaperCodeBlockProcessor(
     }
 
     const settings = getSettings();
-    const containerWidth = el.parentElement?.clientWidth ?? 600;
+    // `??` falls through on null/undefined only; the element is in the DOM
+    // but its parent may have zero width at post-process time, so use `||`
+    // to also fall through on 0.
+    const containerWidth = el.parentElement?.clientWidth || 600;
     const maxWidth = settings.embedMaxWidth || containerWidth;
     const maxHeight = settings.embedMaxHeight || undefined;
 

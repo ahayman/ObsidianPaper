@@ -113,6 +113,7 @@ export class Workspace {
   getActiveFile = jest.fn();
   getActiveViewOfType = jest.fn(() => null);
   activeLeaf: WorkspaceLeaf | null = null;
+  iterateAllLeaves = jest.fn((_cb: (leaf: WorkspaceLeaf) => void) => {});
   on = jest.fn();
   onLayoutReady = jest.fn((cb: () => void) => cb());
 }

@@ -285,5 +285,37 @@ describe("PaperMdSerializer", () => {
       const md = serializePaperMd({ document: createEmptyDocument() });
       expect(md).not.toContain("```paper-ocr");
     });
+
+    it("writes the paper code block as raw JSON, not base64", () => {
+      const doc = createEmptyDocument();
+      doc.strokes.push(makeStroke());
+      const md = serializePaperMd({ document: doc });
+
+      const codeBlockMatch = /```paper\n([\s\S]*?)\n```/.exec(md);
+      expect(codeBlockMatch).not.toBeNull();
+      const content = codeBlockMatch![1].trim();
+      // Raw JSON always starts with `{`; base64 never does.
+      expect(content.startsWith("{")).toBe(true);
+      expect(() => JSON.parse(content)).not.toThrow();
+    });
+  });
+
+  describe("backward compatibility", () => {
+    it("decodes legacy deflate+base64 code block content", async () => {
+      // Construct a .paper.md file by hand with a base64-encoded paper block,
+      // as an earlier version of the serializer would have written.
+      const doc = createEmptyDocument();
+      doc.strokes.push(makeStroke());
+
+      const { compressString } = await import("./Compression");
+      const { serializeDocument: sd } = await import("./Serializer");
+      const legacyMd =
+        `---\npaper-version: 4\npaper-default-view: paper\n---\n\n# Transcript\n\n` +
+        "```paper\n" + compressString(sd(doc)) + "\n```\n";
+
+      const parsed = deserializePaperMd(legacyMd);
+      expect(parsed.document.strokes).toHaveLength(1);
+      expect(parsed.document.strokes[0].id).toBe("s12345");
+    });
   });
 });

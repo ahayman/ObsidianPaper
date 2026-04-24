@@ -212,6 +212,50 @@ export function listBackups(app: App): BackupListing {
 }
 
 /**
+ * Round-trip every `.paper.md` through the current serializer. Upgrades files
+ * that still contain legacy base64-encoded scene data to the current raw-JSON
+ * format. Files that already match the current format are rewritten
+ * byte-identically — still a vault write, but a no-op semantically.
+ */
+export async function reformatAllPaperMd(
+  app: App,
+  onProgress?: (status: string) => void,
+): Promise<{ updated: number; unchanged: number; failed: MigrationSkip[] }> {
+  const failed: MigrationSkip[] = [];
+  let updated = 0;
+  let unchanged = 0;
+
+  for (const f of app.vault.getAllLoadedFiles()) {
+    if (!(f instanceof TFileClass)) continue;
+    if (classifyPaperFile(f.name) !== "md") continue;
+
+    onProgress?.(`Checking ${f.path}`);
+    try {
+      const before = await app.vault.read(f);
+      const parsed = deserializePaperMd(before);
+      const after = serializePaperMd({
+        document: parsed.document,
+        ocr: parsed.ocr,
+        frontmatter: parsed.frontmatter,
+        transcript: parsed.transcript,
+        prelude: parsed.prelude,
+      });
+      if (before === after) {
+        unchanged++;
+        continue;
+      }
+      await app.vault.modify(f, after);
+      updated++;
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      failed.push({ path: f.path, reason });
+    }
+  }
+
+  return { updated, unchanged, failed };
+}
+
+/**
  * Delete all `.paper` backup files whose `.paper.md` sibling exists.
  */
 export async function deleteBackups(

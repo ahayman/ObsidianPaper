@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile, TFolder, normalizePath } from "obsidian";
+import { Notice, Plugin, TFile, TFolder, normalizePath, WorkspaceLeaf } from "obsidian";
 import { PaperView, VIEW_TYPE_PAPER, PAPER_EXTENSION, classifyPaperFile } from "./view/PaperView";
 import { createEmptyDocument } from "./document/Document";
 import { deserializeDocument } from "./document/Serializer";
@@ -18,6 +18,7 @@ import {
   runMigration,
   listBackups,
   deleteBackups,
+  reformatAllPaperMd,
 } from "./migration/PaperMigrator";
 import { MigrationConfirmModal, BackupCleanupModal } from "./migration/MigrationModal";
 import { HandwritingOcrBackend } from "./ocr/HandwritingOcrBackend";
@@ -265,6 +266,12 @@ export default class PaperPlugin extends Plugin {
       callback: () => void this.runBackupCleanupCommand(),
     });
 
+    this.addCommand({
+      id: "reformat-paper-md-files",
+      name: "Re-format .paper.md files (upgrade base64 to raw JSON)",
+      callback: () => void this.runReformatCommand(),
+    });
+
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu, file) => {
         if (!(file instanceof TFolder)) return;
@@ -407,21 +414,35 @@ export default class PaperPlugin extends Plugin {
   /**
    * Called when a `.paper.md` file opens. If the user has set
    * `paper-default-view: markdown` in frontmatter, leaves the leaf in
-   * markdown view. Otherwise swaps to the Paper editor view.
+   * markdown view. Otherwise swaps every leaf currently showing this file
+   * to the Paper editor view.
+   *
+   * `workspace.activeLeaf` is deprecated and unreliable during file-open,
+   * so we iterate all leaves and swap any that match the path.
    */
-  private maybeSwapToPaperView(file: TFile): void {
-    const leaf = this.app.workspace.activeLeaf;
-    if (!leaf) return;
-    if (leaf.view.getViewType() === VIEW_TYPE_PAPER) return;
-
+  private async maybeSwapToPaperView(file: TFile): Promise<void> {
     const cache = this.app.metadataCache.getFileCache(file);
     const defaultView = cache?.frontmatter?.["paper-default-view"];
     if (defaultView === "markdown") return;
 
-    void leaf.setViewState({
-      type: VIEW_TYPE_PAPER,
-      state: { file: file.path },
+    const targets: WorkspaceLeaf[] = [];
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      if (leaf.view.getViewType() === VIEW_TYPE_PAPER) return;
+      const leafFile = (leaf.view as { file?: TFile }).file;
+      if (leafFile?.path === file.path) targets.push(leaf);
     });
+
+    for (const leaf of targets) {
+      try {
+        await leaf.setViewState({
+          type: VIEW_TYPE_PAPER,
+          state: { file: file.path },
+          active: leaf === this.app.workspace.activeLeaf,
+        });
+      } catch (e) {
+        console.error("[Paper] Failed to switch leaf to Paper view:", e);
+      }
+    }
   }
 
   private updateOcrStatusBar(): void {
@@ -573,6 +594,32 @@ export default class PaperPlugin extends Plugin {
       progress.hide();
       const message = e instanceof Error ? e.message : String(e);
       new Notice(`Migration aborted: ${message}`, 10000);
+    }
+  }
+
+  private async runReformatCommand(): Promise<void> {
+    const progress = new Notice("Re-formatting .paper.md files…", 0);
+    try {
+      const result = await reformatAllPaperMd(this.app, (status) => progress.setMessage(status));
+      progress.hide();
+      if (result.failed.length === 0) {
+        new Notice(
+          `Re-formatted ${result.updated} files (${result.unchanged} already current).`,
+          6000,
+        );
+      } else {
+        new Notice(
+          `Re-formatted ${result.updated}; ${result.failed.length} failed. See console.`,
+          10000,
+        );
+        for (const f of result.failed) {
+          console.error("[Paper re-format]", f.path, "—", f.reason);
+        }
+      }
+    } catch (e) {
+      progress.hide();
+      const message = e instanceof Error ? e.message : String(e);
+      new Notice(`Re-format aborted: ${message}`, 10000);
     }
   }
 

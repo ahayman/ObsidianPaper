@@ -5,7 +5,7 @@ import {
   serializeDocument as serializeDocumentJson,
   deserializeDocument as deserializeDocumentJson,
 } from "./Serializer";
-import { compressString, decompressString } from "./Compression";
+import { decompressString } from "./Compression";
 
 export const PAPER_MD_VERSION = 4;
 
@@ -151,11 +151,11 @@ export function serializePaperMd(input: SerializePaperMdInput): string {
   }
 
   const sceneJson = serializeDocumentJson(document);
-  parts.push("", "```" + PAPER_FENCE, compressString(sceneJson), "```");
+  parts.push("", "```" + PAPER_FENCE, sceneJson, "```");
 
   if (ocr) {
     const ocrJson = JSON.stringify(ocr);
-    parts.push("", "```" + PAPER_OCR_FENCE, compressString(ocrJson), "```");
+    parts.push("", "```" + PAPER_OCR_FENCE, ocrJson, "```");
   }
 
   return parts.join("\n") + "\n";
@@ -292,9 +292,17 @@ function extractTranscriptSection(body: string): { transcript: string; prelude: 
   };
 }
 
+/**
+ * Decode a `paper` code block. Current files embed raw JSON; a prior version
+ * of this serializer wrapped the JSON in deflate+base64 (readable only after
+ * decompressing). Accept both so existing files still load; they'll be
+ * re-emitted as raw JSON on the next save.
+ */
 function decodeSceneBlock(content: string): PaperDocument {
+  const trimmed = content.trim();
+  const json = trimmed.startsWith("{") ? trimmed : tryDecompress(trimmed);
+  if (!json) return createEmptyDocument();
   try {
-    const json = decompressString(content.trim());
     return deserializeDocumentJson(json);
   } catch {
     return createEmptyDocument();
@@ -302,13 +310,23 @@ function decodeSceneBlock(content: string): PaperDocument {
 }
 
 function decodeOcrBlock(content: string): OcrResult | null {
+  const trimmed = content.trim();
+  const json = trimmed.startsWith("{") ? trimmed : tryDecompress(trimmed);
+  if (!json) return null;
   try {
-    const json = decompressString(content.trim());
     const parsed = JSON.parse(json) as OcrResult;
     if (!parsed || typeof parsed !== "object") return null;
     if (typeof parsed.v !== "number") return null;
     if (!Array.isArray(parsed.pages)) return null;
     return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function tryDecompress(base64: string): string | null {
+  try {
+    return decompressString(base64);
   } catch {
     return null;
   }
