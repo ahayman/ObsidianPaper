@@ -22,6 +22,7 @@ import {
 } from "./migration/PaperMigrator";
 import { MigrationConfirmModal, BackupCleanupModal } from "./migration/MigrationModal";
 import { HandwritingOcrBackend } from "./ocr/HandwritingOcrBackend";
+import { MyScriptBackend } from "./ocr/MyScriptBackend";
 import type { OcrBackend } from "./ocr/OcrBackend";
 import { runIncrementalOcr, countDirtyPages } from "./ocr/IncrementalOcrRunner";
 import { ThumbnailManager, type ThumbnailHashStore } from "./thumbnail/ThumbnailManager";
@@ -591,6 +592,13 @@ export default class PaperPlugin extends Plugin {
     if (this.settings.ocrBackend === "handwriting-ocr") {
       return new HandwritingOcrBackend(() => ({
         apiToken: this.settings.handwritingOcrApiToken,
+      }));
+    }
+    if (this.settings.ocrBackend === "myscript") {
+      return new MyScriptBackend(() => ({
+        applicationKey: this.settings.myscriptApplicationKey,
+        hmacKey: this.settings.myscriptHmacKey,
+        language: this.settings.myscriptLanguage || "en_US",
       }));
     }
     return null;

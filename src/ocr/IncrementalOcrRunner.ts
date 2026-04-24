@@ -93,12 +93,22 @@ export async function runIncrementalOcr(
     }
 
     dirtyIdx++;
-    const rastered = await rasterize(document, plan.pageIndex);
-    if (!rastered) continue;
-    if (onRasterized) await onRasterized(rastered);
+
+    // Stroke-based backends (MyScript) consume the raw strokes directly;
+    // image-based backends (Handwriting OCR) take a rasterized PNG blob.
+    // The backend declares which it wants via inputType.
+    let pageInput: OcrPageBitmap;
+    if (backend.inputType === "strokes") {
+      pageInput = { pageIndex: plan.pageIndex, strokes: plan.strokes };
+    } else {
+      const rastered = await rasterize(document, plan.pageIndex);
+      if (!rastered) continue;
+      if (onRasterized) await onRasterized(rastered);
+      pageInput = rastered;
+    }
 
     const result = await backend.recognizeDocument({
-      pages: [rastered],
+      pages: [pageInput],
       onProgress: onProgress
         ? (p) => onProgress({ ...p, pagesReused: reusedCount, pagesRecognizing: recognizingCount })
         : undefined,

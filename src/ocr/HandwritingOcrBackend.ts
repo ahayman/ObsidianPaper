@@ -47,6 +47,7 @@ interface PollResponse {
  */
 export class HandwritingOcrBackend implements OcrBackend {
   readonly id: OcrBackendId = "handwriting-ocr";
+  readonly inputType = "image" as const;
 
   private pollIntervalMs: number;
   private maxWaitSeconds: number;
@@ -87,6 +88,7 @@ export class HandwritingOcrBackend implements OcrBackend {
       const page = input.pages[i];
       const totalPages = input.pages.length;
 
+      if (!page.blob) continue; // image backend — blob must be present
       input.onProgress?.({ currentPage: i + 1, totalPages, phase: "uploading" });
       const uploaded = await this.uploadPage(page.blob, page.pageIndex);
 

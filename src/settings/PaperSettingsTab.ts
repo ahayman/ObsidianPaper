@@ -2,6 +2,7 @@ import { PluginSettingTab, App, Notice, Setting } from "obsidian";
 import type { Plugin } from "obsidian";
 import type { PaperSettings, NewNoteLocation } from "./PaperSettings";
 import { HandwritingOcrBackend } from "../ocr/HandwritingOcrBackend";
+import { MyScriptBackend } from "../ocr/MyScriptBackend";
 import { formatSpacingDisplay, displayToWorldUnits } from "./PaperSettings";
 import type { PenType, PaperType, PageSizePreset, PageOrientation, LayoutDirection, PageUnit, SpacingUnit, RenderPipeline, RenderEngineType } from "../types";
 import type { DeviceSettings, MaxZoomLevel, TileMemoryBudgetMB } from "./DeviceSettings";
@@ -705,6 +706,7 @@ export class PaperSettingsTab extends PluginSettingTab {
       .addDropdown((dropdown) => {
         dropdown.addOption("none", "None (OCR disabled)");
         dropdown.addOption("handwriting-ocr", "Handwriting OCR (handwritingocr.com)");
+        dropdown.addOption("myscript", "MyScript iink Cloud (stroke-based)");
         dropdown.setValue(this.settings.ocrBackend);
         dropdown.onChange((value: string) => {
           this.settings.ocrBackend = value as PaperSettings["ocrBackend"];
@@ -743,6 +745,67 @@ export class PaperSettingsTab extends PluginSettingTab {
             button.buttonEl.removeAttribute("disabled");
             if (res.ok) new Notice("Handwriting OCR: connection OK.");
             else new Notice(`Handwriting OCR: ${res.error ?? "failed."}`, 8000);
+          });
+        });
+    }
+
+    if (this.settings.ocrBackend === "myscript") {
+      new Setting(container)
+        .setName("MyScript application key")
+        .setDesc("Get both keys at https://developer.myscript.com/ — stored unencrypted in plugin data.")
+        .addText((text) => {
+          text.inputEl.type = "password";
+          text.setPlaceholder("application key");
+          text.setValue(this.settings.myscriptApplicationKey);
+          text.onChange((value: string) => {
+            this.settings.myscriptApplicationKey = value.trim();
+            this.notifyChange();
+          });
+        });
+
+      new Setting(container)
+        .setName("MyScript HMAC key")
+        .setDesc("The paired HMAC key issued with your application key.")
+        .addText((text) => {
+          text.inputEl.type = "password";
+          text.setPlaceholder("hmac key");
+          text.setValue(this.settings.myscriptHmacKey);
+          text.onChange((value: string) => {
+            this.settings.myscriptHmacKey = value.trim();
+            this.notifyChange();
+          });
+        })
+        .addButton((button) => {
+          button.setButtonText("Test connection");
+          button.onClick(async () => {
+            const backend = new MyScriptBackend(() => ({
+              applicationKey: this.settings.myscriptApplicationKey,
+              hmacKey: this.settings.myscriptHmacKey,
+              language: this.settings.myscriptLanguage || "en_US",
+            }));
+            if (!backend.isConfigured()) {
+              new Notice("Enter both keys first.");
+              return;
+            }
+            button.setButtonText("Testing…");
+            button.buttonEl.setAttribute("disabled", "true");
+            const res = await backend.testConnection();
+            button.setButtonText("Test connection");
+            button.buttonEl.removeAttribute("disabled");
+            if (res.ok) new Notice("MyScript: connection OK.");
+            else new Notice(`MyScript: ${res.error ?? "failed."}`, 8000);
+          });
+        });
+
+      new Setting(container)
+        .setName("Language")
+        .setDesc("MyScript language code (e.g., en_US, fr_FR, de_DE, ja_JP).")
+        .addText((text) => {
+          text.setPlaceholder("en_US");
+          text.setValue(this.settings.myscriptLanguage);
+          text.onChange((value: string) => {
+            this.settings.myscriptLanguage = value.trim() || "en_US";
+            this.notifyChange();
           });
         });
     }

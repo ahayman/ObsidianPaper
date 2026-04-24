@@ -37,6 +37,7 @@ function mkDoc(pages: number, strokes: Stroke[]): PaperDocument {
 
 class FakeBackend implements OcrBackend {
   readonly id = "handwriting-ocr" as const;
+  readonly inputType = "image" as const;
   calls: OcrDocumentInput[] = [];
   textPerPageIndex = new Map<number, string[]>();
 

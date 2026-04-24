@@ -1,10 +1,22 @@
 import type { OcrBackendId, OcrResult } from "../document/PaperMdSerializer";
+import type { Stroke } from "../types";
 
 export type { OcrBackendId, OcrResult, OcrPageResult, OcrLine, OcrWord } from "../document/PaperMdSerializer";
 
-export interface OcrPageBitmap {
+/** Legacy alias for image backends — kept so call sites don't break. */
+export type OcrPageBitmap = OcrPageInput;
+
+/**
+ * One page's worth of input to the backend. Exactly one of `blob` or
+ * `strokes` is populated, matching the backend's declared `inputType`.
+ * The orchestrator prepares the right field per backend.
+ */
+export interface OcrPageInput {
   pageIndex: number;
-  blob: Blob;
+  /** PNG of the page. Populated for image-based backends. */
+  blob?: Blob;
+  /** Raw strokes on this page in world coordinates. Populated for stroke-based backends. */
+  strokes?: Stroke[];
 }
 
 export interface OcrProgress {
@@ -15,7 +27,7 @@ export interface OcrProgress {
 }
 
 export interface OcrDocumentInput {
-  pages: OcrPageBitmap[];
+  pages: OcrPageInput[];
   signal?: AbortSignal;
   onProgress?: (status: OcrProgress) => void;
 }
@@ -29,6 +41,9 @@ export interface OcrTestResult {
  *  whether we're sending strokes or images or calling which service. */
 export interface OcrBackend {
   readonly id: OcrBackendId;
+  /** Tells the orchestrator whether to rasterize the page (image) or pass
+   *  strokes through unchanged (strokes). */
+  readonly inputType: "image" | "strokes";
   isConfigured(): boolean;
   testConnection(): Promise<OcrTestResult>;
   recognizeDocument(input: OcrDocumentInput): Promise<OcrResult>;

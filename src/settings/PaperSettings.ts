@@ -11,6 +11,8 @@ import type {
 } from "../types";
 import { PAGE_SIZE_PRESETS, PPI, CM_PER_INCH } from "../types";
 import type { PenPreset } from "../view/toolbar/ToolbarTypes";
+import type { OcrBackendId } from "../document/PaperMdSerializer";
+export type { OcrBackendId };
 
 export type NewNoteLocation = "specified" | "current" | "subfolder";
 
@@ -85,6 +87,12 @@ export interface PaperSettings {
   ocrCallsThisMonth: number;      // Running count, reset automatically via ocrMonthKey.
   ocrMonthKey: string;            // "YYYY-MM" marker for when the counter was last reset.
 
+  // MyScript iink Cloud credentials — only used when ocrBackend === "myscript".
+  myscriptApplicationKey: string;
+  myscriptHmacKey: string;
+  /** Language code passed to MyScript, e.g. "en_US", "fr_FR". Default "en_US". */
+  myscriptLanguage: string;
+
   // Thumbnails
   thumbnailsEnabled: boolean;
   /** Folder (relative to the .paper.md file's folder) where thumbnails are stored. */
@@ -95,7 +103,6 @@ export interface PaperSettings {
   thumbnailMaxWidth: number;
 }
 
-export type OcrBackendId = "handwriting-ocr";
 
 export const DEFAULT_PRESETS: PenPreset[] = [
   {
@@ -196,6 +203,9 @@ export const DEFAULT_SETTINGS: PaperSettings = {
   ocrMonthlyCap: 5000,
   ocrCallsThisMonth: 0,
   ocrMonthKey: "",
+  myscriptApplicationKey: "",
+  myscriptHmacKey: "",
+  myscriptLanguage: "en_US",
 
   thumbnailsEnabled: false,
   thumbnailFolder: "attachments",
