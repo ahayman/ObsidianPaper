@@ -63,6 +63,9 @@ export default class PaperPlugin extends Plugin {
         this.notifyDeviceSettingsListeners();
       };
       view.onProcessFile = (mode) => this.processCurrentFile(view, mode);
+      view.onRequestMarkdownView = () => {
+        if (view.file) void this.togglePaperView(view.file);
+      };
       this.onDeviceSettingsChange((ds) => view.setDeviceSettings(ds));
       return view;
     });

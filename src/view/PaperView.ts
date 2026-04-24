@@ -175,6 +175,12 @@ export class PaperView extends TextFileView {
    */
   onProcessFile: ((mode: "both" | "ocr" | "thumbnail") => Promise<void> | void) | null = null;
 
+  /**
+   * Invoked when the user chooses "View raw" in the document-settings
+   * popover. The plugin swaps the leaf to the markdown view.
+   */
+  onRequestMarkdownView: (() => void) | null = null;
+
   /** Forwards to the toolbar so the plugin can light up the dirty indicator. */
   setProcessDirty(dirty: boolean): void {
     this.toolbar?.setProcessDirty(dirty);
@@ -764,6 +770,9 @@ export class PaperView extends TextFileView {
       {
         onRenderPipelineChange: (pipeline) => this.updateRenderPipeline(pipeline),
         onPageDefaultsChange: (defaults) => this.updatePageDefaults(defaults),
+        onViewAsMarkdown: this.onRequestMarkdownView
+          ? () => this.onRequestMarkdownView?.()
+          : undefined,
         onDismiss: () => {
           this.docSettingsPopover?.destroy();
           this.docSettingsPopover = null;

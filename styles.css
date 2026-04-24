@@ -1597,6 +1597,24 @@
   font-weight: normal;
 }
 
+.paper-doc-settings__action-btn {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  margin-top: 4px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  color: var(--text-normal);
+  cursor: pointer;
+  font-size: 14px;
+  text-align: left;
+}
+
+.paper-doc-settings__action-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
 /* ─── Settings Tabs ─────────────────────────────────────── */
 
 .paper-settings-tabs {

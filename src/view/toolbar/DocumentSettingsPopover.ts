@@ -48,6 +48,9 @@ export interface DocSettingsContext {
 export interface DocSettingsCallbacks {
   onRenderPipelineChange: (pipeline: RenderPipeline) => void;
   onPageDefaultsChange: (defaults: PageDefaults) => void;
+  /** Swap the current leaf to the markdown view. Optional: if omitted, the
+   *  "View raw" action is hidden (e.g., embed modal where it doesn't apply). */
+  onViewAsMarkdown?: () => void;
   onDismiss: () => void;
 }
 
@@ -126,6 +129,25 @@ export class DocumentSettingsPopover {
 
     // 7. Background
     this.buildBackgroundSection(content);
+
+    // 8. File actions (bottom)
+    if (this.callbacks.onViewAsMarkdown) {
+      this.buildFileActionsSection(content);
+    }
+  }
+
+  private buildFileActionsSection(parent: HTMLElement): void {
+    const section = parent.createEl("div", { cls: "paper-popover__section" });
+    section.createEl("div", { cls: "paper-popover__section-title", text: "File" });
+
+    const btn = section.createEl("button", {
+      cls: "paper-doc-settings__action-btn",
+      text: "View raw (markdown)",
+    });
+    btn.addEventListener("click", () => {
+      this.callbacks.onViewAsMarkdown?.();
+      this.callbacks.onDismiss();
+    });
   }
 
   // ─── Rendering Pipeline ──────────────────────────────────
