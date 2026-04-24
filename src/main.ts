@@ -37,6 +37,8 @@ export default class PaperPlugin extends Plugin {
   private embedRegistry: EmbedEntry[] = [];
   private clipboard = new ClipboardQueue(DEFAULT_SETTINGS.clipboardQueueSize);
   private ocrStatusBar: OcrStatusBar | null = null;
+  /** File paths currently being swapped to Paper view (dedup across events). */
+  private pendingPaperSwaps = new Set<string>();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -98,13 +100,17 @@ export default class PaperPlugin extends Plugin {
 
     // Route .paper.md files to the Paper editor view unless the user has
     // explicitly asked for markdown via `paper-default-view: markdown`.
-    this.registerEvent(
-      this.app.workspace.on("file-open", (file) => {
-        if (!(file instanceof TFile)) return;
-        if (classifyPaperFile(file.name) !== "md") return;
-        this.maybeSwapToPaperView(file);
-      })
-    );
+    // Listen to both events — file-open sometimes misses reused leaves, and
+    // active-leaf-change fires earlier but with a not-yet-mounted file.
+    // We dedupe overlapping attempts via pendingPaperSwaps.
+    const considerSwap = (): void => {
+      const file = this.app.workspace.getActiveFile();
+      if (!file) return;
+      if (classifyPaperFile(file.name) !== "md") return;
+      this.maybeSwapToPaperView(file);
+    };
+    this.registerEvent(this.app.workspace.on("file-open", considerSwap));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", considerSwap));
 
     // Status-bar OCR indicator. updateOcrStatusBar is idempotent so we
     // can call it on every file-open or vault modify.
@@ -429,12 +435,22 @@ export default class PaperPlugin extends Plugin {
     const cache = this.app.metadataCache.getFileCache(file);
     const defaultView = cache?.frontmatter?.["paper-default-view"];
     if (defaultView === "markdown") return;
+    if (this.pendingPaperSwaps.has(file.path)) return;
 
+    this.pendingPaperSwaps.add(file.path);
     // Defer to next tick so the markdown view's own mount finishes first.
-    setTimeout(() => { void this.doSwapToPaperView(file); }, 0);
+    setTimeout(() => { void this.doSwapToPaperView(file, 0); }, 0);
   }
 
-  private async doSwapToPaperView(file: TFile): Promise<void> {
+  /**
+   * `setViewState` silently no-ops when `active: false` and the leaf is
+   * mid-transition. It can also be called before Obsidian has finished
+   * mounting the markdown view. We pass `active: true` unconditionally and
+   * retry with exponential backoff if the view type didn't flip.
+   */
+  private async doSwapToPaperView(file: TFile, attempt: number): Promise<void> {
+    const MAX_ATTEMPTS = 5;
+
     const targets: WorkspaceLeaf[] = [];
     this.app.workspace.iterateAllLeaves((leaf) => {
       if (leaf.view.getViewType() === VIEW_TYPE_PAPER) return;
@@ -443,24 +459,38 @@ export default class PaperPlugin extends Plugin {
     });
 
     if (targets.length === 0) {
-      console.warn("[Paper] file-open fired for", file.path, "but no leaf was showing it");
+      // No leaf is showing this file yet — retry a few times before giving
+      // up, in case the leaf is still mounting.
+      if (attempt < 2) {
+        setTimeout(() => { void this.doSwapToPaperView(file, attempt + 1); }, 50);
+        return;
+      }
+      this.pendingPaperSwaps.delete(file.path);
       return;
     }
 
-    const activeLeaf = this.app.workspace.activeLeaf;
+    let allSwapped = true;
     for (const leaf of targets) {
       try {
-        const existing = leaf.getViewState();
         await leaf.setViewState({
-          ...existing,
           type: VIEW_TYPE_PAPER,
-          state: { ...(existing.state ?? {}), file: file.path },
-          active: leaf === activeLeaf,
+          state: { file: file.path },
+          active: true,
         });
+        if (leaf.view.getViewType() !== VIEW_TYPE_PAPER) allSwapped = false;
       } catch (e) {
-        console.error("[Paper] Failed to switch leaf to Paper view:", e);
+        console.error("[Paper] setViewState threw:", e);
+        allSwapped = false;
       }
     }
+
+    if (!allSwapped && attempt < MAX_ATTEMPTS) {
+      const delay = 50 * Math.pow(1.8, attempt);
+      setTimeout(() => { void this.doSwapToPaperView(file, attempt + 1); }, delay);
+      return;
+    }
+
+    this.pendingPaperSwaps.delete(file.path);
   }
 
   private updateOcrStatusBar(): void {
