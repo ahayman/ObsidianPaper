@@ -138,7 +138,15 @@ export default class PaperPlugin extends Plugin {
     // can call it on every file-open or vault modify. Clicking it when
     // there's work to do runs the same thing as the command palette.
     this.ocrStatusBar = new OcrStatusBar(this.addStatusBarItem());
-    this.ocrStatusBar.setOnActivate(() => void this.runOcrCommand());
+    this.ocrStatusBar.setOnActivate(() => {
+      // If the only reason the status bar is clickable is "up to date",
+      // a click means "re-run anyway" — so force past the cache.
+      const view = this.getActivePaperView();
+      const doc = view?.getDocument();
+      const prev = view?.getMdOcr() ?? null;
+      const force = doc ? countDirtyPages(doc, prev) === 0 : false;
+      void this.runOcrCommand({ force });
+    });
     this.updateOcrStatusBar();
     this.registerEvent(
       this.app.workspace.on("file-open", () => this.updateOcrStatusBar()),
@@ -207,7 +215,20 @@ export default class PaperPlugin extends Plugin {
         if (!view || classifyPaperFile(view.file?.name) !== "md") return false;
         if (this.settings.ocrBackend === "none") return false;
         if (checking) return true;
-        void this.runOcrCommand();
+        void this.runOcrCommand({ force: false });
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "recognize-handwriting-force",
+      name: "Re-run OCR on current file (ignore cache)",
+      checkCallback: (checking) => {
+        const view = this.getActivePaperView();
+        if (!view || classifyPaperFile(view.file?.name) !== "md") return false;
+        if (this.settings.ocrBackend === "none") return false;
+        if (checking) return true;
+        void this.runOcrCommand({ force: true });
         return true;
       },
     });
@@ -599,7 +620,7 @@ export default class PaperPlugin extends Plugin {
     return null;
   }
 
-  private async runOcrCommand(): Promise<void> {
+  private async runOcrCommand(options: { force: boolean } = { force: false }): Promise<void> {
     const view = this.getActivePaperView();
     if (!view || !view.file || classifyPaperFile(view.file.name) !== "md") {
       new Notice("Open a .paper.md file first.");
@@ -624,7 +645,9 @@ export default class PaperPlugin extends Plugin {
     }
 
     const doc = view.getDocument();
-    const previous = view.getMdOcr();
+    // Force mode ignores the previous result so every page with strokes
+    // counts as dirty and gets re-recognized.
+    const previous = options.force ? null : view.getMdOcr();
     const dirtyPages = countDirtyPages(doc, previous);
     if (dirtyPages === 0) {
       new Notice("OCR already up to date for this document.");

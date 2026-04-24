@@ -73,8 +73,8 @@ export class OcrStatusBar {
         el.classList.remove("is-dirty", "is-running", "is-error");
         break;
       case "up-to-date":
-        el.textContent = "OCR ✓";
-        el.setAttribute("aria-label", "OCR up to date. Click to re-run.");
+        el.textContent = "OCR ✓ — click to re-run";
+        el.setAttribute("aria-label", "OCR up to date. Click to force a full re-run.");
         el.classList.remove("is-dirty", "is-running", "is-error");
         break;
       case "dirty":
