@@ -147,10 +147,26 @@ export function thumbnailPathFor(sourcePath: string, subfolder: string): string 
 }
 
 /**
- * Compute the relative path from the note to the thumbnail for embedding
- * as a wikilink. Obsidian's wikilink resolver accepts vault-absolute
- * paths, so we just return the thumbnail path as-is.
+ * Format the thumbnail path for a frontmatter property. Returns a
+ * single-item list containing a wikilink string — this is Obsidian's
+ * canonical "list of links" property shape. A bare string value like
+ * "[[foo]]" is unreliable: YAML sees `[[` as a flow-sequence opener
+ * and Obsidian's frontmatter layer sometimes drops the property when
+ * quoting is lost on round-trip.
  */
-export function wikilinkForThumbnail(thumbPath: string): string {
-  return `[[${thumbPath}]]`;
+export function thumbnailFrontmatterValue(thumbPath: string): string[] {
+  return [`[[${thumbPath}]]`];
+}
+
+/**
+ * FNV-1a 32-bit hash rendered as 8 hex chars. Used as a compact cache
+ * key for detecting first-page changes.
+ */
+export function shortHash(input: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
 }

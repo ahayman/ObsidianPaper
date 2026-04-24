@@ -25,7 +25,7 @@ import { HandwritingOcrBackend } from "./ocr/HandwritingOcrBackend";
 import type { OcrBackend } from "./ocr/OcrBackend";
 import { runIncrementalOcr, countDirtyPages } from "./ocr/IncrementalOcrRunner";
 import { OcrStatusBar } from "./ocr/OcrStatusBar";
-import { ThumbnailManager } from "./thumbnail/ThumbnailManager";
+import { ThumbnailManager, type ThumbnailHashStore } from "./thumbnail/ThumbnailManager";
 import { checkQuota, incrementCounter, resetMonthlyCounterIfNeeded } from "./ocr/OcrQuota";
 import { exportToSvg } from "./export/SvgExporter";
 import { NewPaperModal } from "./modal/NewPaperModal";
@@ -41,6 +41,8 @@ export default class PaperPlugin extends Plugin {
   /** File paths currently being swapped to Paper view (dedup across events). */
   private pendingPaperSwaps = new Set<string>();
   private thumbnailManager: ThumbnailManager | null = null;
+  /** Per-file thumbnail cache keys, persisted alongside settings in plugin data. */
+  private thumbnailHashes: Record<string, string> = {};
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -91,7 +93,19 @@ export default class PaperPlugin extends Plugin {
       )
     );
 
-    this.thumbnailManager = new ThumbnailManager(this.app, () => this.settings);
+    const hashStore: ThumbnailHashStore = {
+      get: (path) => this.thumbnailHashes[path],
+      set: async (path, hash) => {
+        this.thumbnailHashes[path] = hash;
+        await this.saveSettings();
+      },
+      delete: async (path) => {
+        if (!(path in this.thumbnailHashes)) return;
+        delete this.thumbnailHashes[path];
+        await this.saveSettings();
+      },
+    };
+    this.thumbnailManager = new ThumbnailManager(this.app, () => this.settings, hashStore);
 
     // Auto-refresh embeds (and schedule thumbnail regen) when .paper or
     // .paper.md files are modified.
@@ -349,7 +363,18 @@ export default class PaperPlugin extends Plugin {
 
   private async loadSettings(): Promise<void> {
     const data = await this.loadData() as Record<string, unknown> | null;
-    this.settings = mergeSettings(data as Partial<PaperSettings> | null);
+
+    // Plugin data is either the legacy flat shape (the whole object is
+    // the settings map) or the current wrapped shape ({ settings, ... }).
+    // Detect by looking for the `settings` marker key.
+    const wrapped = data && typeof data === "object" && "settings" in data;
+    const rawSettings = wrapped
+      ? (data as { settings?: unknown }).settings as Partial<PaperSettings> | null
+      : data as Partial<PaperSettings> | null;
+    this.settings = mergeSettings(rawSettings);
+    this.thumbnailHashes = wrapped
+      ? ((data as { thumbnailHashes?: Record<string, string> }).thumbnailHashes ?? {})
+      : {};
     this.clipboard.maxSize = this.settings.clipboardQueueSize;
 
     // Load device settings from localStorage
@@ -395,7 +420,10 @@ export default class PaperPlugin extends Plugin {
 
   private async saveSettings(): Promise<void> {
     this.clipboard.maxSize = this.settings.clipboardQueueSize;
-    await this.saveData(this.settings);
+    await this.saveData({
+      settings: this.settings,
+      thumbnailHashes: this.thumbnailHashes,
+    });
   }
 
   /**

@@ -5,18 +5,27 @@ import { deserializePaperMd } from "../document/PaperMdSerializer";
 import {
   firstPageHash,
   renderFirstPageThumbnail,
+  shortHash,
+  thumbnailFrontmatterValue,
   thumbnailPathFor,
-  wikilinkForThumbnail,
 } from "./ThumbnailGenerator";
 
 const DEBOUNCE_MS = 2500;
 
+/** Storage interface for thumbnail cache keys. Kept out of frontmatter so
+ *  the on-disk file stays clean. Implementations typically persist into
+ *  plugin data (via loadData/saveData). */
+export interface ThumbnailHashStore {
+  get(filePath: string): string | undefined;
+  set(filePath: string, hash: string): Promise<void>;
+  delete(filePath: string): Promise<void>;
+}
+
 /**
  * Manages thumbnail regeneration for .paper.md files. A vault-modify event
  * schedules a debounced regen; when it fires, we parse the file, diff the
- * first-page hash against what's stored in frontmatter, and only render +
- * write if the visual content actually changed. Keeps API cost and vault
- * churn low.
+ * first-page hash against the cached one, and only render + write if the
+ * visual content actually changed. Keeps API cost and vault churn low.
  */
 export class ThumbnailManager {
   private pending = new Map<string, ReturnType<typeof setTimeout>>();
@@ -24,6 +33,7 @@ export class ThumbnailManager {
   constructor(
     private readonly app: App,
     private readonly getSettings: () => PaperSettings,
+    private readonly hashStore: ThumbnailHashStore,
     private readonly isDarkMode: () => boolean = () =>
       typeof document !== "undefined" &&
       document.body.classList.contains("theme-dark"),
@@ -69,14 +79,21 @@ export class ThumbnailManager {
     const pageHash = firstPageHash(parsed.document);
     if (pageHash === "blank" || pageHash === "empty") return false;
 
-    // Include the theme in the hash so a light→dark swap regenerates.
+    // Fold the theme in so a light→dark swap regenerates, then compact
+    // to 8 hex chars — it's a cache key, not document metadata.
     const dark = this.isDarkMode();
-    const hash = `${dark ? "dark" : "light"}:${pageHash}`;
-
-    const storedHash = parsed.frontmatter?.["paper-thumbnail-hash"];
-    if (!force && storedHash === hash) return false;
+    const hash = shortHash(`${dark ? "dark" : "light"}:${pageHash}`);
 
     const thumbPath = thumbnailPathFor(file.path, settings.thumbnailFolder);
+    const existingThumbnailFile = this.app.vault.getAbstractFileByPath(thumbPath);
+    const storedHash = this.hashStore.get(file.path);
+
+    // Skip only if we have a cached hash AND the PNG is still on disk. If
+    // the user deleted it manually, regen even when the hash matches.
+    if (!force && storedHash === hash && existingThumbnailFile instanceof TFileClass) {
+      return false;
+    }
+
     const folderPath = thumbPath.slice(0, thumbPath.lastIndexOf("/"));
     if (folderPath) {
       const existingFolder = this.app.vault.getAbstractFileByPath(folderPath);
@@ -92,23 +109,25 @@ export class ThumbnailManager {
     const rendered = await renderFirstPageThumbnail(
       parsed.document,
       settings.thumbnailMaxWidth,
-      this.isDarkMode(),
+      dark,
     );
     if (!rendered) return false;
 
     const buf = await rendered.blob.arrayBuffer();
-    const existingFile = this.app.vault.getAbstractFileByPath(thumbPath);
-    if (existingFile instanceof TFileClass) {
-      await this.app.vault.modifyBinary(existingFile, buf);
+    if (existingThumbnailFile instanceof TFileClass) {
+      await this.app.vault.modifyBinary(existingThumbnailFile, buf);
     } else {
       await this.app.vault.createBinary(thumbPath, buf);
     }
 
+    // Strip the legacy per-file hash entry if it's still sitting in
+    // frontmatter from an earlier plugin version.
     await this.app.fileManager.processFrontMatter(file, (fm) => {
-      fm[settings.thumbnailPropertyName] = wikilinkForThumbnail(thumbPath);
-      fm["paper-thumbnail-hash"] = hash;
+      fm[settings.thumbnailPropertyName] = thumbnailFrontmatterValue(thumbPath);
+      if ("paper-thumbnail-hash" in fm) delete fm["paper-thumbnail-hash"];
     });
 
+    await this.hashStore.set(file.path, hash);
     return true;
   }
 }

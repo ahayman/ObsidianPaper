@@ -1,6 +1,11 @@
 import type { Stroke } from "../types";
 import { createEmptyDocument } from "../document/Document";
-import { firstPageHash, thumbnailPathFor, wikilinkForThumbnail } from "./ThumbnailGenerator";
+import {
+  firstPageHash,
+  thumbnailPathFor,
+  thumbnailFrontmatterValue,
+  shortHash,
+} from "./ThumbnailGenerator";
 
 function mkStroke(id: string, pageIndex: number, bbox: [number, number, number, number]): Stroke {
   return {
@@ -84,8 +89,23 @@ describe("thumbnailPathFor", () => {
   });
 });
 
-describe("wikilinkForThumbnail", () => {
-  it("wraps path in [[...]]", () => {
-    expect(wikilinkForThumbnail("attachments/foo.paper.png")).toBe("[[attachments/foo.paper.png]]");
+describe("thumbnailFrontmatterValue", () => {
+  it("produces a single-item list with a wikilink string", () => {
+    expect(thumbnailFrontmatterValue("attachments/foo.paper.png"))
+      .toEqual(["[[attachments/foo.paper.png]]"]);
+  });
+});
+
+describe("shortHash", () => {
+  it("returns 8 hex chars", () => {
+    expect(shortHash("hello")).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  it("is deterministic", () => {
+    expect(shortHash("same input")).toBe(shortHash("same input"));
+  });
+
+  it("different inputs yield different hashes (usually)", () => {
+    expect(shortHash("a")).not.toBe(shortHash("b"));
   });
 });
