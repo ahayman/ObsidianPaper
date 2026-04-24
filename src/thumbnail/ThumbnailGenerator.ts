@@ -3,6 +3,7 @@ import { decodePoints } from "../document/PointEncoder";
 import { generateStrokePath } from "../stroke/OutlineGenerator";
 import { resolveColor } from "../color/ColorPalette";
 import { getPenConfig } from "../stroke/PenConfigs";
+import { computePageLayout } from "../document/PageLayout";
 
 const WORLD_DPI = 72;
 
@@ -32,20 +33,29 @@ export function firstPageHash(doc: PaperDocument): string {
  * Render the first page of a document to a PNG blob using preview-style
  * rendering (paper background, colored ink). Returns null if the page
  * has no strokes — we don't save blank thumbnails.
+ *
+ * Uses computePageLayout so the rasterizer gets page 0's actual world
+ * rect (orientation + centered-x offset); translating by -rect.x/-rect.y
+ * maps page-local coords to canvas-local coords. Without that step
+ * strokes on the left half of the page fall off the canvas since
+ * vertical layout centers pages on world X=0 (rect.x = -width/2).
  */
 export async function renderFirstPageThumbnail(
   doc: PaperDocument,
   maxWidth: number,
   isDarkMode: boolean,
 ): Promise<{ blob: Blob; widthPx: number; heightPx: number } | null> {
-  const page = doc.pages[0];
-  if (!page) return null;
+  if (!doc.pages[0]) return null;
   const strokes = doc.strokes.filter((s) => s.pageIndex === 0);
   if (strokes.length === 0) return null;
 
-  const scale = Math.min(1, maxWidth / page.size.width);
-  const widthPx = Math.max(1, Math.round(page.size.width * scale));
-  const heightPx = Math.max(1, Math.round(page.size.height * scale));
+  const layout = computePageLayout(doc.pages, doc.layoutDirection);
+  const pageRect = layout.find((r) => r.pageIndex === 0);
+  if (!pageRect) return null;
+
+  const scale = Math.min(1, maxWidth / pageRect.width);
+  const widthPx = Math.max(1, Math.round(pageRect.width * scale));
+  const heightPx = Math.max(1, Math.round(pageRect.height * scale));
 
   const canvas = document.createElement("canvas");
   canvas.width = widthPx;
@@ -58,6 +68,7 @@ export async function renderFirstPageThumbnail(
 
   ctx.save();
   ctx.scale(scale, scale);
+  ctx.translate(-pageRect.x, -pageRect.y);
   for (const stroke of strokes) {
     renderStrokeForThumbnail(ctx, stroke, doc.styles, isDarkMode);
   }

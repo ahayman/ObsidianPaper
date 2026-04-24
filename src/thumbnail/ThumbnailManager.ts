@@ -24,6 +24,9 @@ export class ThumbnailManager {
   constructor(
     private readonly app: App,
     private readonly getSettings: () => PaperSettings,
+    private readonly isDarkMode: () => boolean = () =>
+      typeof document !== "undefined" &&
+      document.body.classList.contains("theme-dark"),
   ) {}
 
   /** Debounced schedule — cancels any pending regen for the same file. */
@@ -63,8 +66,12 @@ export class ThumbnailManager {
       return false;
     }
     const parsed = deserializePaperMd(raw);
-    const hash = firstPageHash(parsed.document);
-    if (hash === "blank" || hash === "empty") return false;
+    const pageHash = firstPageHash(parsed.document);
+    if (pageHash === "blank" || pageHash === "empty") return false;
+
+    // Include the theme in the hash so a light→dark swap regenerates.
+    const dark = this.isDarkMode();
+    const hash = `${dark ? "dark" : "light"}:${pageHash}`;
 
     const storedHash = parsed.frontmatter?.["paper-thumbnail-hash"];
     if (!force && storedHash === hash) return false;
@@ -85,7 +92,7 @@ export class ThumbnailManager {
     const rendered = await renderFirstPageThumbnail(
       parsed.document,
       settings.thumbnailMaxWidth,
-      false,
+      this.isDarkMode(),
     );
     if (!rendered) return false;
 

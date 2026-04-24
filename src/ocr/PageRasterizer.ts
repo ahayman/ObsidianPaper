@@ -1,6 +1,7 @@
 import type { PaperDocument, Stroke } from "../types";
 import { decodePoints } from "../document/PointEncoder";
 import { generateStrokePath } from "../stroke/OutlineGenerator";
+import { computePageLayout } from "../document/PageLayout";
 
 /** DPI tuned for handwriting OCR. 150 is comfortable for cloud services that
  *  expect 100–300 DPI. Higher uses more bandwidth; lower loses detail. */
@@ -47,9 +48,17 @@ export async function rasterizePage(
   const pageStrokes = doc.strokes.filter((s) => s.pageIndex === pageIndex);
   if (pageStrokes.length === 0) return null;
 
+  // Pages are positioned in world space via computePageLayout (vertical
+  // layout centers on X=0 → rect.x is negative). We must translate so
+  // the page's top-left lands at canvas (0, 0), otherwise strokes on
+  // the left half of the page fall off the canvas and OCR sees blank.
+  const layout = computePageLayout(doc.pages, doc.layoutDirection);
+  const pageRect = layout.find((r) => r.pageIndex === pageIndex);
+  if (!pageRect) return null;
+
   const scale = dpi / WORLD_DPI;
-  const widthPx = Math.max(1, Math.ceil(page.size.width * scale));
-  const heightPx = Math.max(1, Math.ceil(page.size.height * scale));
+  const widthPx = Math.max(1, Math.ceil(pageRect.width * scale));
+  const heightPx = Math.max(1, Math.ceil(pageRect.height * scale));
 
   const canvas = document.createElement("canvas");
   canvas.width = widthPx;
@@ -62,6 +71,7 @@ export async function rasterizePage(
 
   ctx.save();
   ctx.scale(scale, scale);
+  ctx.translate(-pageRect.x, -pageRect.y);
 
   for (const stroke of pageStrokes) {
     renderStrokeForOcr(ctx, stroke);
