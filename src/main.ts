@@ -2,7 +2,7 @@ import { Notice, Plugin, TFile, TFolder, normalizePath, WorkspaceLeaf } from "ob
 import { PaperView, VIEW_TYPE_PAPER, PAPER_EXTENSION, classifyPaperFile } from "./view/PaperView";
 import { createEmptyDocument } from "./document/Document";
 import { deserializeDocument } from "./document/Serializer";
-import { serializePaperMd, deserializePaperMd, PAPER_MD_VERSION } from "./document/PaperMdSerializer";
+import { serializePaperMd, deserializePaperMd, PAPER_MD_VERSION, type OcrResult } from "./document/PaperMdSerializer";
 import { DEFAULT_SETTINGS, mergeSettings, resolvePageSize, resolveMargins } from "./settings/PaperSettings";
 import type { PaperSettings } from "./settings/PaperSettings";
 import { ClipboardQueue } from "./selection/Clipboard";
@@ -26,6 +26,7 @@ import type { OcrBackend } from "./ocr/OcrBackend";
 import { runIncrementalOcr, countDirtyPages } from "./ocr/IncrementalOcrRunner";
 import { ThumbnailManager, type ThumbnailHashStore } from "./thumbnail/ThumbnailManager";
 import { firstPageHash, shortHash } from "./thumbnail/ThumbnailGenerator";
+import { buildTranscript } from "./ocr/TranscriptBuilder";
 import { checkQuota, incrementCounter, resetMonthlyCounterIfNeeded } from "./ocr/OcrQuota";
 import { exportToSvg } from "./export/SvgExporter";
 import { NewPaperModal } from "./modal/NewPaperModal";
@@ -592,6 +593,25 @@ export default class PaperPlugin extends Plugin {
     return null;
   }
 
+  /**
+   * Write an OCR result to a file bypassing the view pipeline. Re-reads
+   * the current on-disk content first so any edits made after the OCR
+   * started (strokes added, frontmatter updated) are preserved — we only
+   * replace the ocr + transcript sections.
+   */
+  private async writeOcrToDisk(file: TFile, ocr: OcrResult): Promise<void> {
+    const raw = await this.app.vault.read(file);
+    const parsed = deserializePaperMd(raw);
+    const updated = serializePaperMd({
+      document: parsed.document,
+      ocr,
+      frontmatter: parsed.frontmatter,
+      transcript: buildTranscript(ocr),
+      prelude: parsed.prelude,
+    });
+    await this.app.vault.modify(file, updated);
+  }
+
   private async runOcrCommand(options: { force: boolean } = { force: false }): Promise<void> {
     const view = this.getActivePaperView();
     if (!view || !view.file || classifyPaperFile(view.file.name) !== "md") {
@@ -616,6 +636,9 @@ export default class PaperPlugin extends Plugin {
       await this.saveSettings();
     }
 
+    // Capture the file path at start so a post-resolution view switch doesn't
+    // cause us to apply this run's result to the wrong file.
+    const startingFilePath = view.file.path;
     const doc = view.getDocument();
     // Force mode ignores the previous result so every page with strokes
     // counts as dirty and gets re-recognized.
@@ -643,7 +666,21 @@ export default class PaperPlugin extends Plugin {
         },
       });
 
-      view.applyOcrResult(runResult.ocr);
+      // If the view is still showing the file we started with, use the
+      // normal apply path (in-memory + requestSave). If the user navigated
+      // away mid-run, the view's state now belongs to a different file —
+      // mutating it would corrupt *that* file. Write directly to disk in
+      // that case so the OCR work isn't wasted.
+      const stillOnSameFile = view.file?.path === startingFilePath;
+      if (stillOnSameFile) {
+        view.applyOcrResult(runResult.ocr);
+      } else {
+        const target = this.app.vault.getAbstractFileByPath(startingFilePath);
+        if (target instanceof TFile) {
+          await this.writeOcrToDisk(target, runResult.ocr);
+          new Notice(`OCR finished for ${target.name} in the background.`, 6000);
+        }
+      }
 
       // Only charge quota for pages we actually sent to the backend.
       if (runResult.pagesRecognized > 0) {
@@ -652,6 +689,7 @@ export default class PaperPlugin extends Plugin {
       }
 
       progress.hide();
+      if (!stillOnSameFile) return;  // background completion notice already shown
       const lineTotal = runResult.ocr.pages.reduce((n, p) => n + p.lines.length, 0);
       if (runResult.pagesRecognized === 0 && runResult.pagesReused > 0) {
         new Notice(`OCR up to date — reused all ${runResult.pagesReused} pages.`, 5000);
