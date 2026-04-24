@@ -154,6 +154,12 @@ export class HandwritingOcrBackend implements OcrBackend {
       if (status === "processed" || status === "complete" || status === "done") {
         const transcript = concatPageTranscripts(data.pages);
         console.log(`[Paper OCR] backend returned ${transcript.length} chars for doc ${documentId}`);
+        if (transcript.length === 0) {
+          // When the service comes back empty, dump the full parsed response
+          // so we can see whether the shape is what we expect (pages[].transcript)
+          // or whether text is living under a different field.
+          console.log("[Paper OCR] full response body (empty transcript):", res.text);
+        }
         return transcript;
       }
       if (status === "failed" || status === "error") {
