@@ -24,8 +24,8 @@ import { MigrationConfirmModal, BackupCleanupModal } from "./migration/Migration
 import { HandwritingOcrBackend } from "./ocr/HandwritingOcrBackend";
 import type { OcrBackend } from "./ocr/OcrBackend";
 import { runIncrementalOcr, countDirtyPages } from "./ocr/IncrementalOcrRunner";
-import { OcrStatusBar } from "./ocr/OcrStatusBar";
 import { ThumbnailManager, type ThumbnailHashStore } from "./thumbnail/ThumbnailManager";
+import { firstPageHash, shortHash } from "./thumbnail/ThumbnailGenerator";
 import { checkQuota, incrementCounter, resetMonthlyCounterIfNeeded } from "./ocr/OcrQuota";
 import { exportToSvg } from "./export/SvgExporter";
 import { NewPaperModal } from "./modal/NewPaperModal";
@@ -37,7 +37,6 @@ export default class PaperPlugin extends Plugin {
   private deviceSettingsListeners: Set<(ds: DeviceSettings) => void> = new Set();
   private embedRegistry: EmbedEntry[] = [];
   private clipboard = new ClipboardQueue(DEFAULT_SETTINGS.clipboardQueueSize);
-  private ocrStatusBar: OcrStatusBar | null = null;
   /** File paths currently being swapped to Paper view (dedup across events). */
   private pendingPaperSwaps = new Set<string>();
   private thumbnailManager: ThumbnailManager | null = null;
@@ -62,6 +61,7 @@ export default class PaperPlugin extends Plugin {
         this.saveDeviceSettingsLocal();
         this.notifyDeviceSettingsListeners();
       };
+      view.onProcessFile = (mode) => this.processCurrentFile(view, mode);
       this.onDeviceSettingsChange((ds) => view.setDeviceSettings(ds));
       return view;
     });
@@ -107,17 +107,30 @@ export default class PaperPlugin extends Plugin {
     };
     this.thumbnailManager = new ThumbnailManager(this.app, () => this.settings, hashStore);
 
-    // Auto-refresh embeds (and schedule thumbnail regen) when .paper or
-    // .paper.md files are modified.
+    // Auto-refresh embeds when .paper or .paper.md files are modified.
+    // Thumbnail regeneration is explicitly NOT auto-triggered here — it
+    // ran canvas rasterization mid-stroke on iPad and occasionally ate
+    // strokes as a result. Thumbnails refresh only when the user taps
+    // the "Process" toolbar button.
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
         if (file instanceof TFile && classifyPaperFile(file.name)) {
           this.refreshEmbedsFor(file.path);
-          if (classifyPaperFile(file.name) === "md") {
-            this.thumbnailManager?.schedule(file);
+          // If the modified file is the active paper doc, the dirty
+          // indicator may have just changed — update it.
+          const activeView = this.getActivePaperView();
+          if (activeView?.file?.path === file.path) {
+            this.refreshProcessDirty(activeView);
           }
         }
       })
+    );
+
+    this.registerEvent(
+      this.app.workspace.on("file-open", () => this.refreshProcessDirty()),
+    );
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", () => this.refreshProcessDirty()),
     );
 
     // Route .paper.md files to the Paper editor view unless the user has
@@ -134,33 +147,6 @@ export default class PaperPlugin extends Plugin {
     this.registerEvent(this.app.workspace.on("file-open", considerSwap));
     this.registerEvent(this.app.workspace.on("active-leaf-change", considerSwap));
 
-    // Status-bar OCR indicator. updateOcrStatusBar is idempotent so we
-    // can call it on every file-open or vault modify. Clicking it when
-    // there's work to do runs the same thing as the command palette.
-    this.ocrStatusBar = new OcrStatusBar(this.addStatusBarItem());
-    this.ocrStatusBar.setOnActivate(() => {
-      // If the only reason the status bar is clickable is "up to date",
-      // a click means "re-run anyway" — so force past the cache.
-      const view = this.getActivePaperView();
-      const doc = view?.getDocument();
-      const prev = view?.getMdOcr() ?? null;
-      const force = doc ? countDirtyPages(doc, prev) === 0 : false;
-      void this.runOcrCommand({ force });
-    });
-    this.updateOcrStatusBar();
-    this.registerEvent(
-      this.app.workspace.on("file-open", () => this.updateOcrStatusBar()),
-    );
-    this.registerEvent(
-      this.app.workspace.on("active-leaf-change", () => this.updateOcrStatusBar()),
-    );
-    this.registerEvent(
-      this.app.vault.on("modify", (f) => {
-        if (f instanceof TFile && classifyPaperFile(f.name) === "md") {
-          this.updateOcrStatusBar();
-        }
-      }),
-    );
 
     this.addSettingTab(
       new PaperSettingsTab(this.app, this, this.settings, (s) => {
@@ -597,20 +583,6 @@ export default class PaperPlugin extends Plugin {
     this.unhideIfStillPending(file.path);
   }
 
-  private updateOcrStatusBar(): void {
-    if (!this.ocrStatusBar) return;
-    const view = this.getActivePaperView();
-    if (!view || classifyPaperFile(view.file?.name) !== "md") {
-      this.ocrStatusBar.setStatus({ kind: "hidden" });
-      return;
-    }
-    this.ocrStatusBar.setFromDocument(
-      view.getDocument(),
-      view.getMdOcr(),
-      this.settings.ocrBackend !== "none",
-    );
-  }
-
   private getOcrBackend(): OcrBackend | null {
     if (this.settings.ocrBackend === "handwriting-ocr") {
       return new HandwritingOcrBackend(() => ({
@@ -660,7 +632,6 @@ export default class PaperPlugin extends Plugin {
     }
 
     const progress = new Notice("Preparing OCR…", 0);
-    this.ocrStatusBar?.setStatus({ kind: "running", message: "starting…" });
     try {
       const runResult = await runIncrementalOcr({
         document: doc,
@@ -669,7 +640,6 @@ export default class PaperPlugin extends Plugin {
         onProgress: (p) => {
           const msg = `page ${p.currentPage}/${p.totalPages} ${p.phase}`;
           progress.setMessage(`OCR: ${msg} (${p.pagesReused} reused, ${p.pagesRecognizing} new)`);
-          this.ocrStatusBar?.setStatus({ kind: "running", message: msg });
         },
       });
 
@@ -682,7 +652,6 @@ export default class PaperPlugin extends Plugin {
       }
 
       progress.hide();
-      this.updateOcrStatusBar();
       const lineTotal = runResult.ocr.pages.reduce((n, p) => n + p.lines.length, 0);
       if (runResult.pagesRecognized === 0 && runResult.pagesReused > 0) {
         new Notice(`OCR up to date — reused all ${runResult.pagesReused} pages.`, 5000);
@@ -695,10 +664,83 @@ export default class PaperPlugin extends Plugin {
     } catch (e) {
       progress.hide();
       const message = e instanceof Error ? e.message : String(e);
-      this.ocrStatusBar?.setStatus({ kind: "error", message });
       new Notice(`OCR failed: ${message}`, 10000);
       console.error("[Paper OCR]", e);
     }
+  }
+
+  /**
+   * Process button handler — runs OCR and/or thumbnail for the file the
+   * given view is showing. `mode` decides which subset; unconfigured or
+   * disabled features are skipped silently.
+   */
+  private async processCurrentFile(view: PaperView, mode: "both" | "ocr" | "thumbnail"): Promise<void> {
+    const file = view.file;
+    if (!file || classifyPaperFile(file.name) !== "md") {
+      new Notice("This file isn't a .paper.md.");
+      return;
+    }
+
+    const tasks: Promise<unknown>[] = [];
+    if (mode === "both" || mode === "ocr") {
+      const backend = this.getOcrBackend();
+      if (backend && backend.isConfigured()) {
+        tasks.push(this.runOcrCommand({ force: false }));
+      } else if (mode === "ocr") {
+        new Notice("OCR backend not configured. Add an API token in settings.");
+      }
+    }
+    if (mode === "both" || mode === "thumbnail") {
+      if (this.settings.thumbnailsEnabled && this.thumbnailManager) {
+        // Force a regen so the button always does something visible when
+        // the user explicitly picks it; the hash check would otherwise
+        // silently skip a no-op.
+        tasks.push(this.thumbnailManager.regenerateNow(file));
+      } else if (mode === "thumbnail") {
+        new Notice("Thumbnails disabled. Enable them in settings.");
+      }
+    }
+
+    if (tasks.length === 0) {
+      if (mode === "both") {
+        new Notice("Nothing to update — enable OCR or thumbnails in settings.", 6000);
+      }
+      return;
+    }
+
+    await Promise.all(tasks);
+    this.refreshProcessDirty(view);
+  }
+
+  /**
+   * True if the given view has pending OCR or thumbnail work. Called to
+   * drive the toolbar button's dirty indicator.
+   */
+  private isProcessDirty(view: PaperView): boolean {
+    const file = view.file;
+    if (!file || classifyPaperFile(file.name) !== "md") return false;
+    const doc = view.getDocument();
+
+    if (this.settings.ocrBackend !== "none") {
+      if (countDirtyPages(doc, view.getMdOcr()) > 0) return true;
+    }
+    if (this.settings.thumbnailsEnabled) {
+      // Compare the current first-page hash (folding in theme) against
+      // the stored one — catches both "never rendered" and "content
+      // changed since last render".
+      const page0Strokes = doc.strokes.some((s) => s.pageIndex === 0);
+      if (page0Strokes) {
+        const isDark = document.body.classList.contains("theme-dark");
+        const current = shortHash(`${isDark ? "dark" : "light"}:${firstPageHash(doc)}`);
+        if (this.thumbnailHashes[file.path] !== current) return true;
+      }
+    }
+    return false;
+  }
+
+  private refreshProcessDirty(view: PaperView | null = this.getActivePaperView()): void {
+    if (!view) return;
+    view.setProcessDirty(this.isProcessDirty(view));
   }
 
   private async runPaperMigrationCommand(): Promise<void> {

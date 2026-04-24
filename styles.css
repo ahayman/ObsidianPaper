@@ -1800,24 +1800,19 @@
   background: var(--text-muted);
 }
 
-/* OCR status bar */
-.paper-ocr-status {
-  padding: 0 8px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
+/* "Process" toolbar button: small dot overlay when OCR or thumbnail is dirty */
+.paper-toolbar__btn--process {
+  position: relative;
 }
-.paper-ocr-status.is-dirty {
-  color: var(--text-accent, #cea32a);
-}
-.paper-ocr-status.is-running {
-  color: var(--text-accent, #3a8dff);
-}
-.paper-ocr-status.is-error {
-  color: var(--text-error, #e03e3e);
-}
-.paper-ocr-status.is-clickable {
-  cursor: pointer;
-}
-.paper-ocr-status.is-clickable:hover {
-  color: var(--text-normal);
+.paper-toolbar__btn--process.is-dirty::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-accent, #3a8dff);
+  border: 1px solid var(--background-primary);
+  pointer-events: none;
 }

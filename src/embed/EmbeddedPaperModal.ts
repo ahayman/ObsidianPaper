@@ -895,6 +895,9 @@ export class EmbeddedPaperModal extends Modal {
       onPaste: () => { /* no-op in embed modal */ },
       onAddPage: () => this.addPage(),
       onOpenDocumentSettings: () => this.openDocumentSettings(),
+      // Embed modal is read-mostly; the process button is a no-op here.
+      // Users run OCR / thumbnail regen from the full Paper view.
+      onProcessFile: (_mode) => { /* not applicable in embed modal */ },
       onPresetSave: (presets, activePresetId) => {
         this.settings.penPresets = presets;
         this.settings.activePresetId = activePresetId;

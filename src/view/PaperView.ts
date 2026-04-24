@@ -168,6 +168,18 @@ export class PaperView extends TextFileView {
    */
   onDeviceSettingsChange: ((changes: Partial<DeviceSettings>) => void) | null = null;
 
+  /**
+   * Invoked when the toolbar's "Process" button is clicked or its
+   * long-press menu is used. The plugin runs OCR and/or regenerates the
+   * thumbnail for the current file based on `mode`.
+   */
+  onProcessFile: ((mode: "both" | "ocr" | "thumbnail") => Promise<void> | void) | null = null;
+
+  /** Forwards to the toolbar so the plugin can light up the dirty indicator. */
+  setProcessDirty(dirty: boolean): void {
+    this.toolbar?.setProcessDirty(dirty);
+  }
+
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
   }
@@ -1338,6 +1350,9 @@ export class PaperView extends TextFileView {
       },
       onOpenDocumentSettings: () => {
         this.openDocumentSettings();
+      },
+      onProcessFile: (mode) => {
+        return this.onProcessFile?.(mode);
       },
       onPresetSave: (presets, activePresetId) => {
         this.settings.penPresets = presets;

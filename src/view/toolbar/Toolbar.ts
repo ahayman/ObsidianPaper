@@ -15,7 +15,7 @@ import { AutoMinimizer } from "./AutoMinimizer";
 import { RecentColorStrip } from "./RecentColorStrip";
 import { ColorStripManager } from "./ColorStripManager";
 import { ColorWheelPopover } from "./ColorWheelPopover";
-import { setIcon } from "obsidian";
+import { setIcon, Menu } from "obsidian";
 import { DEFAULT_GRAIN_VALUE } from "../../stamp/GrainMapping";
 
 /**
@@ -57,6 +57,8 @@ export class Toolbar {
   private pasteBtn: ToolbarButton | null = null;
   private addPageBtn: ToolbarButton | null = null;
   private docSettingsBtn: ToolbarButton | null = null;
+  private processBtn: ToolbarButton | null = null;
+  private processBtnBusy = false;
   private currentPenBtn: CurrentPenButton | null = null;
 
   constructor(
@@ -190,6 +192,19 @@ export class Toolbar {
     // Separator
     this.el.createEl("div", { cls: "paper-toolbar__separator" });
 
+    // Process: re-OCR + regenerate thumbnail in one shot. Auto-regen was
+    // dropped to avoid stealing main-thread time mid-stroke, so this is
+    // the primary way to refresh derived artifacts for the current file.
+    // Right-click / long-press opens a menu to run just one of the two.
+    this.processBtn = new ToolbarButton(
+      this.el,
+      "Update transcript & thumbnail (long-press for options)",
+      "paper-toolbar__btn--process",
+      () => void this.runProcess("both"),
+      "sparkles",
+    );
+    this.attachProcessContextMenu(this.processBtn.el);
+
     // Document settings (gear)
     this.docSettingsBtn = new ToolbarButton(this.el, "Document settings", "paper-toolbar__btn--doc-settings", () => {
       this.callbacks.onOpenDocumentSettings();
@@ -206,6 +221,86 @@ export class Toolbar {
     });
 
     this.refreshUndoRedo();
+  }
+
+  // ─── Process Button ─────────────────────────────────────────
+
+  private async runProcess(mode: "both" | "ocr" | "thumbnail"): Promise<void> {
+    if (this.processBtnBusy) return;
+    this.processBtnBusy = true;
+    this.processBtn?.setDisabled(true);
+    try {
+      await this.callbacks.onProcessFile(mode);
+    } finally {
+      this.processBtnBusy = false;
+      this.processBtn?.setDisabled(false);
+    }
+  }
+
+  /** Show the per-action menu at the button anchor. */
+  private showProcessMenu(x: number, y: number): void {
+    const menu = new Menu();
+    menu.addItem((item) => {
+      item.setTitle("Update transcript & thumbnail")
+        .setIcon("sparkles")
+        .onClick(() => void this.runProcess("both"));
+    });
+    menu.addSeparator();
+    menu.addItem((item) => {
+      item.setTitle("Update transcript only (OCR)")
+        .setIcon("text")
+        .onClick(() => void this.runProcess("ocr"));
+    });
+    menu.addItem((item) => {
+      item.setTitle("Update thumbnail only")
+        .setIcon("image")
+        .onClick(() => void this.runProcess("thumbnail"));
+    });
+    menu.showAtPosition({ x, y });
+  }
+
+  /** Wire right-click + long-press triggers for the process menu. */
+  private attachProcessContextMenu(el: HTMLElement): void {
+    el.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.showProcessMenu(e.clientX, e.clientY);
+    });
+
+    // Long-press for touch: hold 500ms without moving to trigger the menu.
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let suppressTap = false;
+    const cancel = (): void => {
+      if (timer) { clearTimeout(timer); timer = null; }
+    };
+    el.addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      const { clientX: x, clientY: y } = t;
+      suppressTap = false;
+      timer = setTimeout(() => {
+        suppressTap = true;
+        this.showProcessMenu(x, y);
+      }, 500);
+    }, { passive: true });
+    el.addEventListener("touchmove", cancel, { passive: true });
+    el.addEventListener("touchcancel", cancel, { passive: true });
+    el.addEventListener("touchend", (e) => {
+      cancel();
+      if (suppressTap) {
+        // The long-press already fired; swallow the synthetic click.
+        e.preventDefault();
+        suppressTap = false;
+      }
+    });
+  }
+
+  /**
+   * Toggle the "something needs updating" indicator on the process button.
+   * The plugin calls this on vault modify / file open.
+   */
+  setProcessDirty(dirty: boolean): void {
+    this.processBtn?.el.toggleClass("is-dirty", dirty);
   }
 
   // ─── Preset Interaction ─────────────────────────────────────
