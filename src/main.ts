@@ -594,33 +594,9 @@ export default class PaperPlugin extends Plugin {
     if (this.settings.ocrBackend === "handwriting-ocr") {
       return new HandwritingOcrBackend(() => ({
         apiToken: this.settings.handwritingOcrApiToken,
-        debug: this.settings.ocrDebugLogging,
       }));
     }
     return null;
-  }
-
-  /** Save a rasterized OCR page to the vault so the user can visually
-   *  check exactly what we're sending. Paths look like:
-   *    <source-folder>/<source-basename>.ocr-debug-page-0.png
-   */
-  private async saveOcrDebugPng(sourceFile: TFile, page: { pageIndex: number; blob: Blob }): Promise<void> {
-    try {
-      const lastSlash = sourceFile.path.lastIndexOf("/");
-      const folder = lastSlash === -1 ? "" : sourceFile.path.slice(0, lastSlash);
-      const base = sourceFile.name.replace(/\.paper\.md$/i, "");
-      const path = `${folder ? folder + "/" : ""}${base}.ocr-debug-page-${page.pageIndex}.png`;
-      const buf = await page.blob.arrayBuffer();
-      const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof TFile) {
-        await this.app.vault.modifyBinary(existing, buf);
-      } else {
-        await this.app.vault.createBinary(path, buf);
-      }
-      console.log("[Paper OCR] debug PNG written to", path, `(${buf.byteLength} bytes)`);
-    } catch (e) {
-      console.error("[Paper OCR] debug PNG write failed:", e);
-    }
   }
 
   private async runOcrCommand(): Promise<void> {
@@ -663,8 +639,6 @@ export default class PaperPlugin extends Plugin {
     const progress = new Notice("Preparing OCR…", 0);
     this.ocrStatusBar?.setStatus({ kind: "running", message: "starting…" });
     try {
-      const debug = this.settings.ocrDebugLogging;
-      if (debug) console.log("[Paper OCR] starting run for", view.file.path, "(", dirtyPages, "dirty pages )");
       const runResult = await runIncrementalOcr({
         document: doc,
         previous,
@@ -674,9 +648,7 @@ export default class PaperPlugin extends Plugin {
           progress.setMessage(`OCR: ${msg} (${p.pagesReused} reused, ${p.pagesRecognizing} new)`);
           this.ocrStatusBar?.setStatus({ kind: "running", message: msg });
         },
-        onRasterized: debug ? (page) => this.saveOcrDebugPng(view.file!, page) : undefined,
       });
-      if (debug) console.log("[Paper OCR] run complete:", JSON.stringify(runResult.ocr).slice(0, 1000));
 
       view.applyOcrResult(runResult.ocr);
 

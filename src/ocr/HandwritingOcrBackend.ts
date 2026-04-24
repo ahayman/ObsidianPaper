@@ -20,8 +20,6 @@ export interface HandwritingOcrConfig {
   pollIntervalMs?: number;
   /** Total timeout per page in seconds. */
   maxWaitSeconds?: number;
-  /** Log raw API traffic + responses to the console for debugging. */
-  debug?: boolean;
 }
 
 interface UploadResponse {
@@ -50,16 +48,10 @@ export class HandwritingOcrBackend implements OcrBackend {
 
   private pollIntervalMs: number;
   private maxWaitSeconds: number;
-  private debug: boolean;
 
   constructor(private getConfig: () => HandwritingOcrConfig) {
     this.pollIntervalMs = 700;
     this.maxWaitSeconds = 120;
-    this.debug = false;
-  }
-
-  private log(...args: unknown[]): void {
-    if (this.debug) console.log("[Paper OCR]", ...args);
   }
 
   isConfigured(): boolean {
@@ -86,7 +78,6 @@ export class HandwritingOcrBackend implements OcrBackend {
 
     this.pollIntervalMs = config.pollIntervalMs ?? 700;
     this.maxWaitSeconds = config.maxWaitSeconds ?? 120;
-    this.debug = config.debug ?? false;
 
     const pages: OcrPageResult[] = [];
     for (let i = 0; i < input.pages.length; i++) {
@@ -120,8 +111,6 @@ export class HandwritingOcrBackend implements OcrBackend {
     const arrayBuf = await blob.arrayBuffer();
     const filename = `paper-page-${pageIndex}.png`;
 
-    this.log(`uploading page ${pageIndex}: ${arrayBuf.byteLength} bytes`);
-
     const { body, contentType } = buildMultipartBody([
       { name: "action", value: "transcribe" },
       { name: "file", filename, contentType: "image/png", data: new Uint8Array(arrayBuf) },
@@ -131,8 +120,6 @@ export class HandwritingOcrBackend implements OcrBackend {
       body,
       contentType,
     });
-
-    this.log(`upload response: status=${res.status}, body=${res.text?.slice(0, 500) ?? ""}`);
 
     if (res.status < 200 || res.status >= 300) {
       throw new Error(`Handwriting OCR upload failed: ${res.status} ${res.text?.slice(0, 200) ?? ""}`);
@@ -163,11 +150,10 @@ export class HandwritingOcrBackend implements OcrBackend {
       }
       const data = parseJson<PollResponse>(res);
       const status = (data.status ?? "").toLowerCase();
-      this.log(`poll ${documentId}: status=${status}, body=${res.text?.slice(0, 500) ?? ""}`);
 
       if (status === "processed" || status === "complete" || status === "done") {
         const transcript = concatPageTranscripts(data.pages);
-        this.log(`transcript for ${documentId} (${transcript.length} chars):`, transcript);
+        console.log(`[Paper OCR] backend returned ${transcript.length} chars for doc ${documentId}`);
         return transcript;
       }
       if (status === "failed" || status === "error") {

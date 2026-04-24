@@ -84,8 +84,6 @@ export interface PaperSettings {
   ocrMonthlyCap: number;          // Max pages OCR'd per calendar month (0 = no cap)
   ocrCallsThisMonth: number;      // Running count, reset automatically via ocrMonthKey.
   ocrMonthKey: string;            // "YYYY-MM" marker for when the counter was last reset.
-  /** Debug: log raw OCR request/response + save rasterized PNGs next to the source file. */
-  ocrDebugLogging: boolean;
 
   // Thumbnails
   thumbnailsEnabled: boolean;
@@ -198,7 +196,6 @@ export const DEFAULT_SETTINGS: PaperSettings = {
   ocrMonthlyCap: 5000,
   ocrCallsThisMonth: 0,
   ocrMonthKey: "",
-  ocrDebugLogging: false,
 
   thumbnailsEnabled: false,
   thumbnailFolder: "attachments",

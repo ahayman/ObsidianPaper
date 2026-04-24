@@ -356,6 +356,9 @@ export class PaperView extends TextFileView {
 
     const kind = classifyPaperFile(this.file?.name);
     if (kind === "md") {
+      console.log(
+        `[Paper] getViewData: serializing with transcript (${this.mdTranscript.length} chars) for ${this.file?.path}`,
+      );
       return serializePaperMd({
         document: this.document,
         ocr: this.mdOcr,
@@ -379,6 +382,10 @@ export class PaperView extends TextFileView {
   applyOcrResult(result: OcrResult | null): void {
     this.mdOcr = result;
     this.mdTranscript = buildTranscript(result);
+    const lineCount = result?.pages.reduce((n, p) => n + p.lines.length, 0) ?? 0;
+    console.log(
+      `[Paper] applyOcrResult: ${lineCount} lines → transcript (${this.mdTranscript.length} chars)`,
+    );
     this.requestSave();
   }
 
@@ -388,6 +395,9 @@ export class PaperView extends TextFileView {
     const kind = classifyPaperFile(this.file?.name) ?? detectFormatFromData(data);
     if (kind === "md") {
       const parsed = deserializePaperMd(data);
+      console.log(
+        `[Paper] setViewData: parsed transcript from file (${parsed.transcript.length} chars) for ${this.file?.path}`,
+      );
       this.document = parsed.document;
       this.mdFrontmatter = parsed.frontmatter;
       this.mdOcr = parsed.ocr;

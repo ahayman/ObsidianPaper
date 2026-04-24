@@ -102,7 +102,6 @@ describe("PaperSettings", () => {
         ocrMonthlyCap: 2000,
         ocrCallsThisMonth: 42,
         ocrMonthKey: "2026-04",
-        ocrDebugLogging: true,
         thumbnailsEnabled: true,
         thumbnailFolder: "_assets",
         thumbnailPropertyName: "cover",
