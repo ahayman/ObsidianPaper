@@ -1,7 +1,8 @@
-import type { PaperDocument, Stroke } from "../types";
+import type { PaperDocument, PenStyle, Stroke } from "../types";
 import { decodePoints } from "../document/PointEncoder";
 import { generateStrokePath } from "../stroke/OutlineGenerator";
 import { computePageLayout } from "../document/PageLayout";
+import { getPenConfig } from "../stroke/PenConfigs";
 
 /** DPI tuned for handwriting OCR. 150 is comfortable for cloud services that
  *  expect 100–300 DPI. Higher uses more bandwidth; lower loses detail. */
@@ -74,7 +75,7 @@ export async function rasterizePage(
   ctx.translate(-pageRect.x, -pageRect.y);
 
   for (const stroke of pageStrokes) {
-    renderStrokeForOcr(ctx, stroke);
+    renderStrokeForOcr(ctx, stroke, doc.styles);
   }
   ctx.restore();
 
@@ -82,18 +83,36 @@ export async function rasterizePage(
   return { pageIndex, blob, widthPx, heightPx };
 }
 
-function renderStrokeForOcr(ctx: CanvasRenderingContext2D, stroke: Stroke): void {
-  const points = decodePoints(stroke.pts);
-  // Ignore per-pen styling — force a single black outline for OCR contrast.
-  const path = generateStrokePath(points, {
+function renderStrokeForOcr(
+  ctx: CanvasRenderingContext2D,
+  stroke: Stroke,
+  styles: Record<string, PenStyle>,
+): void {
+  // Use the stroke's actual pen style so generateStrokePath produces the
+  // right outline shape (pencils, fountain pens, felt-tips differ). Color
+  // and opacity are then overridden for OCR contrast. Previously we
+  // forced a ballpoint style here which generated wrong-shaped paths
+  // for any non-ballpoint stroke.
+  const base: PenStyle = styles[stroke.style] ?? {
     pen: "ballpoint",
     color: "#000000",
-    width: 2.5,
+    width: 2,
     opacity: 1,
     smoothing: 0.5,
     pressureCurve: 1,
     tiltSensitivity: 0,
-  });
+  };
+  const style: PenStyle = stroke.styleOverrides
+    ? { ...base, ...stroke.styleOverrides }
+    : base;
+
+  // Highlighters are marking, not text — they'd just smear a big rectangle
+  // over whatever's underneath, hurting OCR. Skip them.
+  const penConfig = getPenConfig(style.pen);
+  if (penConfig.highlighterMode) return;
+
+  const points = decodePoints(stroke.pts);
+  const path = generateStrokePath(points, style);
   if (!path) return;
 
   ctx.save();
@@ -102,6 +121,7 @@ function renderStrokeForOcr(ctx: CanvasRenderingContext2D, stroke: Stroke): void
     ctx.transform(a, b, c, d, tx, ty);
   }
   ctx.fillStyle = "#000000";
+  ctx.globalAlpha = 1;
   ctx.fill(path);
   ctx.restore();
 }

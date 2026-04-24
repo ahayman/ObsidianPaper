@@ -769,6 +769,20 @@ export class PaperSettingsTab extends PluginSettingTab {
       : `Used this month: ${this.settings.ocrCallsThisMonth} / ${this.settings.ocrMonthlyCap} pages (${remaining} remaining).`;
     new Setting(container).setName("Usage").setDesc(statusDesc);
 
+    new Setting(container)
+      .setName("Debug logging")
+      .setDesc(
+        "Log request/response details to the console and save the rasterized PNG we send to OCR " +
+        "alongside the source file (suffix: .ocr-debug-page-N.png). Turn on if recognition returns empty.",
+      )
+      .addToggle((toggle) => {
+        toggle.setValue(this.settings.ocrDebugLogging);
+        toggle.onChange((value) => {
+          this.settings.ocrDebugLogging = value;
+          this.notifyChange();
+        });
+      });
+
     // --- Thumbnails ---
     new Setting(container).setName("Thumbnails").setHeading();
 

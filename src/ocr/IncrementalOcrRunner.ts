@@ -19,6 +19,9 @@ export interface IncrementalOcrRunInput {
   onProgress?: (status: OcrProgress & { pagesReused: number; pagesRecognizing: number }) => void;
   /** Optional override for tests. Defaults to PageRasterizer.rasterizePage. */
   rasterize?: PageRasterizer;
+  /** Invoked with each rasterized page right before it's sent to the backend.
+   *  Handy for debug sidecars (save the PNG the service is actually seeing). */
+  onRasterized?: (page: OcrPageBitmap) => void | Promise<void>;
 }
 
 export interface IncrementalOcrRunResult {
@@ -46,7 +49,7 @@ export interface IncrementalOcrRunResult {
 export async function runIncrementalOcr(
   input: IncrementalOcrRunInput,
 ): Promise<IncrementalOcrRunResult> {
-  const { document, previous, backend, onProgress, rasterize = defaultRasterizer } = input;
+  const { document, previous, backend, onProgress, onRasterized, rasterize = defaultRasterizer } = input;
 
   const prevByPage = indexPreviousResultByPageIndex(previous);
 
@@ -92,6 +95,7 @@ export async function runIncrementalOcr(
     dirtyIdx++;
     const rastered = await rasterize(document, plan.pageIndex);
     if (!rastered) continue;
+    if (onRasterized) await onRasterized(rastered);
 
     const result = await backend.recognizeDocument({
       pages: [rastered],
