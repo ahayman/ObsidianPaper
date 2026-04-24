@@ -417,14 +417,24 @@ export default class PaperPlugin extends Plugin {
    * markdown view. Otherwise swaps every leaf currently showing this file
    * to the Paper editor view.
    *
-   * `workspace.activeLeaf` is deprecated and unreliable during file-open,
-   * so we iterate all leaves and swap any that match the path.
+   * Two subtleties we learned the hard way:
+   *  - We preserve `leaf.getViewState().state` (not just `{ file }`); that
+   *    matches what Excalidraw does and gives Obsidian the existing state
+   *    fields (mode, source, etc.) so it doesn't reject the swap.
+   *  - We defer with a microtask so the markdown view finishes mounting
+   *    before we tear it down — otherwise the swap races Obsidian's own
+   *    rendering and silently no-ops.
    */
-  private async maybeSwapToPaperView(file: TFile): Promise<void> {
+  private maybeSwapToPaperView(file: TFile): void {
     const cache = this.app.metadataCache.getFileCache(file);
     const defaultView = cache?.frontmatter?.["paper-default-view"];
     if (defaultView === "markdown") return;
 
+    // Defer to next tick so the markdown view's own mount finishes first.
+    setTimeout(() => { void this.doSwapToPaperView(file); }, 0);
+  }
+
+  private async doSwapToPaperView(file: TFile): Promise<void> {
     const targets: WorkspaceLeaf[] = [];
     this.app.workspace.iterateAllLeaves((leaf) => {
       if (leaf.view.getViewType() === VIEW_TYPE_PAPER) return;
@@ -432,12 +442,20 @@ export default class PaperPlugin extends Plugin {
       if (leafFile?.path === file.path) targets.push(leaf);
     });
 
+    if (targets.length === 0) {
+      console.warn("[Paper] file-open fired for", file.path, "but no leaf was showing it");
+      return;
+    }
+
+    const activeLeaf = this.app.workspace.activeLeaf;
     for (const leaf of targets) {
       try {
+        const existing = leaf.getViewState();
         await leaf.setViewState({
+          ...existing,
           type: VIEW_TYPE_PAPER,
-          state: { file: file.path },
-          active: leaf === this.app.workspace.activeLeaf,
+          state: { ...(existing.state ?? {}), file: file.path },
+          active: leaf === activeLeaf,
         });
       } catch (e) {
         console.error("[Paper] Failed to switch leaf to Paper view:", e);

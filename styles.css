@@ -279,6 +279,13 @@
   color: var(--text-normal);
 }
 
+/* Inside a markdown code block preview, Obsidian renders its own edit-code
+ * button in the top-right. Move ours to the top-left so they don't stack. */
+.paper-codeblock-preview .paper-embed-expand-btn {
+  right: auto;
+  left: 6px;
+}
+
 /* Fullscreen modal */
 .paper-fullscreen-modal {
   /* Override Obsidian's default modal sizing */
