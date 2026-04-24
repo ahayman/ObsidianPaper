@@ -685,7 +685,12 @@ export default class PaperPlugin extends Plugin {
     if (mode === "both" || mode === "ocr") {
       const backend = this.getOcrBackend();
       if (backend && backend.isConfigured()) {
-        tasks.push(this.runOcrCommand({ force: false }));
+        // The button is a deliberate user action — always force, even
+        // when the incremental cache thinks everything's up to date.
+        // Otherwise a stale/bad prior result (e.g., empty transcript from
+        // a broken backend run) is impossible to recover from without
+        // editing the file first.
+        tasks.push(this.runOcrCommand({ force: true }));
       } else if (mode === "ocr") {
         new Notice("OCR backend not configured. Add an API token in settings.");
       }
