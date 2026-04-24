@@ -25,6 +25,7 @@ import { HandwritingOcrBackend } from "./ocr/HandwritingOcrBackend";
 import type { OcrBackend } from "./ocr/OcrBackend";
 import { runIncrementalOcr, countDirtyPages } from "./ocr/IncrementalOcrRunner";
 import { OcrStatusBar } from "./ocr/OcrStatusBar";
+import { ThumbnailManager } from "./thumbnail/ThumbnailManager";
 import { checkQuota, incrementCounter, resetMonthlyCounterIfNeeded } from "./ocr/OcrQuota";
 import { exportToSvg } from "./export/SvgExporter";
 import { NewPaperModal } from "./modal/NewPaperModal";
@@ -39,6 +40,7 @@ export default class PaperPlugin extends Plugin {
   private ocrStatusBar: OcrStatusBar | null = null;
   /** File paths currently being swapped to Paper view (dedup across events). */
   private pendingPaperSwaps = new Set<string>();
+  private thumbnailManager: ThumbnailManager | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -89,11 +91,17 @@ export default class PaperPlugin extends Plugin {
       )
     );
 
-    // Auto-refresh embeds when .paper or .paper.md files are modified
+    this.thumbnailManager = new ThumbnailManager(this.app, () => this.settings);
+
+    // Auto-refresh embeds (and schedule thumbnail regen) when .paper or
+    // .paper.md files are modified.
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
         if (file instanceof TFile && classifyPaperFile(file.name)) {
           this.refreshEmbedsFor(file.path);
+          if (classifyPaperFile(file.name) === "md") {
+            this.thumbnailManager?.schedule(file);
+          }
         }
       })
     );
@@ -278,6 +286,18 @@ export default class PaperPlugin extends Plugin {
       callback: () => void this.runReformatCommand(),
     });
 
+    this.addCommand({
+      id: "regenerate-thumbnail",
+      name: "Regenerate thumbnail for current file",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file || classifyPaperFile(file.name) !== "md") return false;
+        if (checking) return true;
+        void this.runRegenerateThumbnailCommand(file);
+        return true;
+      },
+    });
+
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu, file) => {
         if (!(file instanceof TFolder)) return;
@@ -296,6 +316,7 @@ export default class PaperPlugin extends Plugin {
     this.settingsListeners.clear();
     this.deviceSettingsListeners.clear();
     this.embedRegistry.length = 0;
+    this.thumbnailManager?.cancelAll();
   }
 
   onSettingsChange(listener: (settings: PaperSettings) => void): () => void {
@@ -674,6 +695,18 @@ export default class PaperPlugin extends Plugin {
       progress.hide();
       const message = e instanceof Error ? e.message : String(e);
       new Notice(`Migration aborted: ${message}`, 10000);
+    }
+  }
+
+  private async runRegenerateThumbnailCommand(file: TFile): Promise<void> {
+    if (!this.thumbnailManager) return;
+    try {
+      const wrote = await this.thumbnailManager.regenerateNow(file);
+      if (wrote) new Notice(`Thumbnail regenerated for ${file.name}.`);
+      else new Notice(`No thumbnail written — first page is empty.`, 5000);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      new Notice(`Thumbnail regen failed: ${message}`, 10000);
     }
   }
 

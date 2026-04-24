@@ -102,6 +102,10 @@ describe("PaperSettings", () => {
         ocrMonthlyCap: 2000,
         ocrCallsThisMonth: 42,
         ocrMonthKey: "2026-04",
+        thumbnailsEnabled: true,
+        thumbnailFolder: "_assets",
+        thumbnailPropertyName: "cover",
+        thumbnailMaxWidth: 300,
       };
       const result = mergeSettings(custom);
       expect(result).toEqual(custom);

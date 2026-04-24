@@ -87,8 +87,6 @@ export interface SerializePaperMdInput {
 const PAPER_FENCE = "paper";
 const PAPER_OCR_FENCE = "paper-ocr";
 const TRANSCRIPT_HEADING = "# Transcript";
-const TRANSCRIPT_AUTO_COMMENT =
-  "<!-- Auto-generated from handwriting. Manual edits may be overwritten on the next OCR run. -->";
 
 /**
  * Serialize a paper document (+ optional OCR and user markdown) to a .paper.md string.
@@ -144,7 +142,7 @@ export function serializePaperMd(input: SerializePaperMdInput): string {
     parts.push("", trimmedPrelude);
   }
 
-  parts.push("", TRANSCRIPT_HEADING, TRANSCRIPT_AUTO_COMMENT);
+  parts.push("", TRANSCRIPT_HEADING);
   const trimmedTranscript = transcript.trim();
   if (trimmedTranscript.length > 0) {
     parts.push("", trimmedTranscript);
@@ -282,7 +280,10 @@ function extractTranscriptSection(body: string): { transcript: string; prelude: 
   const transcriptLines: string[] = [];
   for (const line of afterHeading) {
     if (/^#\s+/.test(line)) break;
-    if (line.trim() === TRANSCRIPT_AUTO_COMMENT) continue;
+    // Strip the legacy auto-generated HTML comment that older versions
+    // injected under the heading. We no longer emit it, but existing
+    // files may still carry one from the OCR command.
+    if (/^<!--\s*Auto-generated from handwriting\..*-->\s*$/.test(line.trim())) continue;
     transcriptLines.push(line);
   }
 

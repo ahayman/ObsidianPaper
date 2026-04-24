@@ -768,6 +768,68 @@ export class PaperSettingsTab extends PluginSettingTab {
       ? `Used this month: ${this.settings.ocrCallsThisMonth} pages (no cap).`
       : `Used this month: ${this.settings.ocrCallsThisMonth} / ${this.settings.ocrMonthlyCap} pages (${remaining} remaining).`;
     new Setting(container).setName("Usage").setDesc(statusDesc);
+
+    // --- Thumbnails ---
+    new Setting(container).setName("Thumbnails").setHeading();
+
+    new Setting(container)
+      .setName("Generate thumbnails")
+      .setDesc(
+        "Render a PNG of the first page and link it from frontmatter. " +
+        "Useful for plugins like Notebook Navigator that show file previews. " +
+        "Thumbnails regenerate automatically when the first page changes.",
+      )
+      .addToggle((toggle) => {
+        toggle.setValue(this.settings.thumbnailsEnabled);
+        toggle.onChange((value) => {
+          this.settings.thumbnailsEnabled = value;
+          this.notifyChange();
+          this.display();
+        });
+      });
+
+    if (this.settings.thumbnailsEnabled) {
+      new Setting(container)
+        .setName("Thumbnail folder")
+        .setDesc("Subfolder (relative to the .paper.md file) where thumbnails are saved.")
+        .addText((text) => {
+          text.setPlaceholder("attachments");
+          text.setValue(this.settings.thumbnailFolder);
+          text.onChange((value) => {
+            this.settings.thumbnailFolder = value;
+            this.notifyChange();
+          });
+        });
+
+      new Setting(container)
+        .setName("Frontmatter property name")
+        .setDesc("The property the thumbnail wikilink is written to. Common choices: 'thumbnail', 'image', 'cover'.")
+        .addText((text) => {
+          text.setPlaceholder("thumbnail");
+          text.setValue(this.settings.thumbnailPropertyName);
+          text.onChange((value) => {
+            const trimmed = value.trim();
+            if (trimmed.length > 0) {
+              this.settings.thumbnailPropertyName = trimmed;
+              this.notifyChange();
+            }
+          });
+        });
+
+      new Setting(container)
+        .setName("Max width")
+        .setDesc("Maximum width of the thumbnail PNG in pixels (default 400).")
+        .addText((text) => {
+          text.setValue(String(this.settings.thumbnailMaxWidth));
+          text.onChange((value) => {
+            const num = parseInt(value, 10);
+            if (!isNaN(num) && num >= 100 && num <= 2000) {
+              this.settings.thumbnailMaxWidth = num;
+              this.notifyChange();
+            }
+          });
+        });
+    }
   }
 
   updateSettings(settings: PaperSettings): void {

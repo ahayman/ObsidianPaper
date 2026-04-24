@@ -97,9 +97,11 @@ export class App {
 export class Vault {
   getAbstractFileByPath = jest.fn();
   create = jest.fn();
+  createBinary = jest.fn(() => Promise.resolve());
   createFolder = jest.fn(() => Promise.resolve());
   read = jest.fn();
   modify = jest.fn();
+  modifyBinary = jest.fn(() => Promise.resolve());
   delete = jest.fn();
   rename = jest.fn();
   getMarkdownFiles = jest.fn(() => []);

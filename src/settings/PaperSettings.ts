@@ -84,6 +84,15 @@ export interface PaperSettings {
   ocrMonthlyCap: number;          // Max pages OCR'd per calendar month (0 = no cap)
   ocrCallsThisMonth: number;      // Running count, reset automatically via ocrMonthKey.
   ocrMonthKey: string;            // "YYYY-MM" marker for when the counter was last reset.
+
+  // Thumbnails
+  thumbnailsEnabled: boolean;
+  /** Folder (relative to the .paper.md file's folder) where thumbnails are stored. */
+  thumbnailFolder: string;
+  /** Frontmatter property name where the thumbnail wikilink is written. */
+  thumbnailPropertyName: string;
+  /** Max width of the generated thumbnail in px. */
+  thumbnailMaxWidth: number;
 }
 
 export type OcrBackendId = "handwriting-ocr";
@@ -187,6 +196,11 @@ export const DEFAULT_SETTINGS: PaperSettings = {
   ocrMonthlyCap: 5000,
   ocrCallsThisMonth: 0,
   ocrMonthKey: "",
+
+  thumbnailsEnabled: false,
+  thumbnailFolder: "attachments",
+  thumbnailPropertyName: "thumbnail",
+  thumbnailMaxWidth: 400,
 };
 
 /**
