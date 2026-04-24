@@ -32,7 +32,9 @@ interface PollResponse {
   id: string;
   status: string;
   page_count?: number;
-  pages?: Array<{ page_number: number; transcript: string }>;
+  /** Per-page transcripts, as of API v3. Keyed `results` in the response body —
+   *  not `pages` (which is a separate thumbnails array on the document). */
+  results?: Array<{ page_number: number; transcript: string }>;
   error?: string;
 }
 
@@ -152,15 +154,7 @@ export class HandwritingOcrBackend implements OcrBackend {
       const status = (data.status ?? "").toLowerCase();
 
       if (status === "processed" || status === "complete" || status === "done") {
-        const transcript = concatPageTranscripts(data.pages);
-        console.log(`[Paper OCR] backend returned ${transcript.length} chars for doc ${documentId}`);
-        if (transcript.length === 0) {
-          // When the service comes back empty, dump the full parsed response
-          // so we can see whether the shape is what we expect (pages[].transcript)
-          // or whether text is living under a different field.
-          console.log("[Paper OCR] full response body (empty transcript):", res.text);
-        }
-        return transcript;
+        return concatPageTranscripts(data.results);
       }
       if (status === "failed" || status === "error") {
         throw new Error(`Handwriting OCR failed: ${data.error ?? status}`);
@@ -255,9 +249,9 @@ function parseJson<T>(res: RequestUrlResponse): T {
   }
 }
 
-function concatPageTranscripts(pages: PollResponse["pages"]): string {
-  if (!pages || pages.length === 0) return "";
-  const sorted = [...pages].sort((a, b) => a.page_number - b.page_number);
+function concatPageTranscripts(results: PollResponse["results"]): string {
+  if (!results || results.length === 0) return "";
+  const sorted = [...results].sort((a, b) => a.page_number - b.page_number);
   return sorted.map((p) => p.transcript ?? "").join("\n");
 }
 

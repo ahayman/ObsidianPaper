@@ -90,7 +90,7 @@ describe("HandwritingOcrBackend", () => {
       mockResponse(200, {
         id: "doc-0",
         status: "processed",
-        pages: [{ page_number: 1, transcript: "hello world\ntwo lines" }],
+        results: [{ page_number: 1, transcript: "hello world\ntwo lines" }],
       });
 
       const b = new HandwritingOcrBackend(() => ({
@@ -113,7 +113,7 @@ describe("HandwritingOcrBackend", () => {
 
     it("reports progress through each phase", async () => {
       mockResponse(201, { id: "doc-0" });
-      mockResponse(200, { id: "doc-0", status: "processed", pages: [{ page_number: 1, transcript: "x" }] });
+      mockResponse(200, { id: "doc-0", status: "processed", results: [{ page_number: 1, transcript: "x" }] });
 
       const b = new HandwritingOcrBackend(() => ({ apiToken: "abc", pollIntervalMs: 1 }));
       const blob = new Blob([new Uint8Array([0])], { type: "image/png" });

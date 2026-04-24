@@ -599,30 +599,6 @@ export default class PaperPlugin extends Plugin {
     return null;
   }
 
-  /**
-   * Write the last rasterized OCR page next to the source file as
-   * `<basename>.last-ocr-input.png`. Always overwritten on each run.
-   * Lets us visually verify what the service is actually receiving.
-   */
-  private async saveLastOcrInputPng(sourceFile: TFile, page: { pageIndex: number; blob: Blob }): Promise<void> {
-    try {
-      const lastSlash = sourceFile.path.lastIndexOf("/");
-      const folder = lastSlash === -1 ? "" : sourceFile.path.slice(0, lastSlash);
-      const base = sourceFile.name.replace(/\.paper\.md$/i, "");
-      const path = `${folder ? folder + "/" : ""}${base}.last-ocr-input.png`;
-      const buf = await page.blob.arrayBuffer();
-      const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof TFile) {
-        await this.app.vault.modifyBinary(existing, buf);
-      } else {
-        await this.app.vault.createBinary(path, buf);
-      }
-      console.log(`[Paper OCR] wrote rasterized page-${page.pageIndex} PNG to ${path} (${buf.byteLength} bytes)`);
-    } catch (e) {
-      console.error("[Paper OCR] failed to write OCR-input PNG:", e);
-    }
-  }
-
   private async runOcrCommand(): Promise<void> {
     const view = this.getActivePaperView();
     if (!view || !view.file || classifyPaperFile(view.file.name) !== "md") {
@@ -672,7 +648,6 @@ export default class PaperPlugin extends Plugin {
           progress.setMessage(`OCR: ${msg} (${p.pagesReused} reused, ${p.pagesRecognizing} new)`);
           this.ocrStatusBar?.setStatus({ kind: "running", message: msg });
         },
-        onRasterized: (page) => this.saveLastOcrInputPng(view.file!, page),
       });
 
       view.applyOcrResult(runResult.ocr);
