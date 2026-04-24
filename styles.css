@@ -1815,3 +1815,9 @@
 .paper-ocr-status.is-error {
   color: var(--text-error, #e03e3e);
 }
+.paper-ocr-status.is-clickable {
+  cursor: pointer;
+}
+.paper-ocr-status.is-clickable:hover {
+  color: var(--text-normal);
+}

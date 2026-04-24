@@ -121,8 +121,10 @@ export default class PaperPlugin extends Plugin {
     this.registerEvent(this.app.workspace.on("active-leaf-change", considerSwap));
 
     // Status-bar OCR indicator. updateOcrStatusBar is idempotent so we
-    // can call it on every file-open or vault modify.
+    // can call it on every file-open or vault modify. Clicking it when
+    // there's work to do runs the same thing as the command palette.
     this.ocrStatusBar = new OcrStatusBar(this.addStatusBarItem());
+    this.ocrStatusBar.setOnActivate(() => void this.runOcrCommand());
     this.updateOcrStatusBar();
     this.registerEvent(
       this.app.workspace.on("file-open", () => this.updateOcrStatusBar()),

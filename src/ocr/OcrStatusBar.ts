@@ -16,10 +16,25 @@ export type OcrStatus =
  */
 export class OcrStatusBar {
   private status: OcrStatus = { kind: "hidden" };
+  private onActivate: (() => void) | null = null;
 
   constructor(private readonly el: HTMLElement) {
     el.classList.add("paper-ocr-status");
+    el.addEventListener("click", () => {
+      if (this.isActionable()) this.onActivate?.();
+    });
     this.render();
+  }
+
+  /** Wire a click handler for when the user activates the status bar. */
+  setOnActivate(fn: () => void): void {
+    this.onActivate = fn;
+    this.render();
+  }
+
+  /** True when the status represents a state where clicking should run OCR. */
+  private isActionable(): boolean {
+    return this.status.kind === "dirty" || this.status.kind === "up-to-date";
   }
 
   setStatus(status: OcrStatus): void {
@@ -49,6 +64,7 @@ export class OcrStatusBar {
       return;
     }
     el.style.display = "";
+    el.classList.toggle("is-clickable", this.isActionable() && !!this.onActivate);
 
     switch (status.kind) {
       case "off":
@@ -58,12 +74,12 @@ export class OcrStatusBar {
         break;
       case "up-to-date":
         el.textContent = "OCR ✓";
-        el.setAttribute("aria-label", "OCR is up to date for this file.");
+        el.setAttribute("aria-label", "OCR up to date. Click to re-run.");
         el.classList.remove("is-dirty", "is-running", "is-error");
         break;
       case "dirty":
-        el.textContent = `OCR: ${status.pages} page${status.pages === 1 ? "" : "s"} dirty`;
-        el.setAttribute("aria-label", "Run the 'Recognize handwriting' command to update.");
+        el.textContent = `OCR: ${status.pages} page${status.pages === 1 ? "" : "s"} dirty — click to run`;
+        el.setAttribute("aria-label", "Click to run handwriting recognition.");
         el.classList.add("is-dirty");
         el.classList.remove("is-running", "is-error");
         break;
