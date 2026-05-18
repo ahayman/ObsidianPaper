@@ -12,10 +12,8 @@ import { serializeDocument, deserializeDocument, precompressStroke, clearCompres
 import {
   serializePaperMd,
   deserializePaperMd,
-  type OcrResult,
   type PaperMdFrontmatter,
 } from "../document/PaperMdSerializer";
-import { buildTranscript } from "../ocr/TranscriptBuilder";
 import { getPenConfig } from "../stroke/PenConfigs";
 import { findHitStrokes } from "../eraser/StrokeEraser";
 import { ThemeDetector } from "../color/ThemeDetector";
@@ -108,9 +106,11 @@ export class PaperView extends TextFileView {
   private precompressTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
   // .paper.md extras — preserved across load/save so user frontmatter,
-  // transcript, OCR data, and prelude markdown round-trip cleanly.
+  // transcript text, and prelude markdown round-trip cleanly. The
+  // transcript is updated externally (by main.ts after an OCR run writes
+  // to disk and the file-modify event reloads us); we don't track an
+  // OcrResult in memory anymore.
   private mdFrontmatter: PaperMdFrontmatter | null = null;
-  private mdOcr: OcrResult | null = null;
   private mdTranscript: string = "";
   private mdPrelude: string = "";
 
@@ -173,7 +173,12 @@ export class PaperView extends TextFileView {
    * long-press menu is used. The plugin runs OCR and/or regenerates the
    * thumbnail for the current file based on `mode`.
    */
-  onProcessFile: ((mode: "both" | "ocr" | "thumbnail") => Promise<void> | void) | null = null;
+  onProcessFile:
+    | ((
+        mode: "both" | "ocr" | "thumbnail",
+        options?: { forceOcr?: boolean; forceThumbnail?: boolean },
+      ) => Promise<void> | void)
+    | null = null;
 
   /**
    * Invoked when the user chooses "View raw" in the document-settings
@@ -376,28 +381,12 @@ export class PaperView extends TextFileView {
     if (kind === "md") {
       return serializePaperMd({
         document: this.document,
-        ocr: this.mdOcr,
         frontmatter: this.mdFrontmatter ?? undefined,
         transcript: this.mdTranscript,
         prelude: this.mdPrelude,
       });
     }
     return serializeDocument(this.document);
-  }
-
-  /** Current OCR result for the loaded file, or null if none has been run. */
-  getMdOcr(): OcrResult | null {
-    return this.mdOcr;
-  }
-
-  /**
-   * Replace the stored OCR result and regenerate the transcript, then
-   * schedule a save. Only meaningful for `.paper.md` files.
-   */
-  applyOcrResult(result: OcrResult | null): void {
-    this.mdOcr = result;
-    this.mdTranscript = buildTranscript(result);
-    this.requestSave();
   }
 
   setViewData(data: string, clear: boolean): void {
@@ -408,13 +397,11 @@ export class PaperView extends TextFileView {
       const parsed = deserializePaperMd(data);
       this.document = parsed.document;
       this.mdFrontmatter = parsed.frontmatter;
-      this.mdOcr = parsed.ocr;
       this.mdTranscript = parsed.transcript;
       this.mdPrelude = parsed.prelude;
     } else {
       this.document = deserializeDocument(data);
       this.mdFrontmatter = null;
-      this.mdOcr = null;
       this.mdTranscript = "";
       this.mdPrelude = "";
     }
@@ -441,7 +428,6 @@ export class PaperView extends TextFileView {
     this.renderer?.flushFinalizations();
     this.document = createEmptyDocument();
     this.mdFrontmatter = null;
-    this.mdOcr = null;
     this.mdTranscript = "";
     this.mdPrelude = "";
     // Reset the existing camera — do NOT replace with `new Camera()`.
@@ -555,6 +541,7 @@ export class PaperView extends TextFileView {
         );
         this.document.strokes.splice(insertIdx, 0, action.stroke);
         this.spatialIndex.insert(action.stroke, insertIdx);
+        this.renderer?.invalidateCacheBBox(action.stroke.bbox);
         break;
       }
       case "remove-strokes": {
@@ -566,6 +553,7 @@ export class PaperView extends TextFileView {
           );
           this.document.strokes.splice(insertIdx, 0, entry.stroke);
           this.spatialIndex.insert(entry.stroke, insertIdx);
+          this.renderer?.invalidateCacheBBox(entry.stroke.bbox);
         }
         break;
       }
@@ -601,12 +589,14 @@ export class PaperView extends TextFileView {
       case "add-stroke": {
         this.document.strokes.push(action.stroke);
         this.spatialIndex.insert(action.stroke, this.document.strokes.length - 1);
+        this.renderer?.invalidateCacheBBox(action.stroke.bbox);
         break;
       }
       case "add-strokes": {
         for (const stroke of action.strokes) {
           this.document.strokes.push(stroke);
           this.spatialIndex.insert(stroke, this.document.strokes.length - 1);
+          this.renderer?.invalidateCacheBBox(stroke.bbox);
         }
         break;
       }
@@ -1360,8 +1350,8 @@ export class PaperView extends TextFileView {
       onOpenDocumentSettings: () => {
         this.openDocumentSettings();
       },
-      onProcessFile: (mode) => {
-        return this.onProcessFile?.(mode);
+      onProcessFile: (mode, options) => {
+        return this.onProcessFile?.(mode, options);
       },
       onPresetSave: (presets, activePresetId) => {
         this.settings.penPresets = presets;

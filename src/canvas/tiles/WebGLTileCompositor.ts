@@ -164,7 +164,7 @@ export class WebGLTileCompositor {
         const ry3 = sin * (x0 - cx) + cos * (y1 - cy) + cy;
 
         // FBO-rendered tiles have Y-inverted content → flip V coords
-        const isFBO = entry.fbo !== null || entry.msaa !== null;
+        const isFBO = entry.fboRendered;
         const v0t = isFBO ? 1 : 0;
         const v1t = isFBO ? 0 : 1;
 
@@ -174,7 +174,7 @@ export class WebGLTileCompositor {
         v[12] = rx3; v[13] = ry3; v[14] = 0; v[15] = v1t;
       } else {
         // FBO-rendered tiles have Y-inverted content → flip V coords
-        const isFBO = entry.fbo !== null || entry.msaa !== null;
+        const isFBO = entry.fboRendered;
         const v0t = isFBO ? 1 : 0;
         const v1t = isFBO ? 0 : 1;
 

@@ -32,6 +32,12 @@ export type ImageSource =
   | ImageBitmap;
 
 export interface RenderEngine {
+  /** Discriminator for the actual implementation. Use this (not the
+   *  requested `RenderEngineType`) when displaying the active engine to
+   *  the user — `createRenderEngine("webgl", canvas)` may transparently
+   *  return a Canvas2DEngine if the WebGL2 context can't be created. */
+  readonly kind: "webgl2" | "canvas2d";
+
   // --- Lifecycle ---
   readonly width: number;
   readonly height: number;

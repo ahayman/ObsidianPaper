@@ -2,8 +2,8 @@ import type { App, TFile } from "obsidian";
 import { TFile as TFileClass } from "obsidian";
 import type { PaperSettings } from "../settings/PaperSettings";
 import { deserializePaperMd } from "../document/PaperMdSerializer";
+import { pageFingerprint } from "../ocr/PageFingerprint";
 import {
-  firstPageHash,
   renderFirstPageThumbnail,
   shortHash,
   thumbnailFrontmatterValue,
@@ -12,20 +12,11 @@ import {
 
 const DEBOUNCE_MS = 2500;
 
-/** Storage interface for thumbnail cache keys. Kept out of frontmatter so
- *  the on-disk file stays clean. Implementations typically persist into
- *  plugin data (via loadData/saveData). */
-export interface ThumbnailHashStore {
-  get(filePath: string): string | undefined;
-  set(filePath: string, hash: string): Promise<void>;
-  delete(filePath: string): Promise<void>;
-}
-
 /**
- * Manages thumbnail regeneration for .paper.md files. A vault-modify event
- * schedules a debounced regen; when it fires, we parse the file, diff the
- * first-page hash against the cached one, and only render + write if the
- * visual content actually changed. Keeps API cost and vault churn low.
+ * Manages thumbnail regeneration for .paper.md files. Page-1 stroke-set
+ * fingerprint (folded with the active theme) lives in the file's frontmatter
+ * as `paper-thumbnail-page-1-fp`; on each call we compare the current
+ * fingerprint to the stored one and regenerate only if they differ.
  */
 export class ThumbnailManager {
   private pending = new Map<string, ReturnType<typeof setTimeout>>();
@@ -33,7 +24,6 @@ export class ThumbnailManager {
   constructor(
     private readonly app: App,
     private readonly getSettings: () => PaperSettings,
-    private readonly hashStore: ThumbnailHashStore,
     private readonly isDarkMode: () => boolean = () =>
       typeof document !== "undefined" &&
       document.body.classList.contains("theme-dark"),
@@ -65,6 +55,33 @@ export class ThumbnailManager {
     return this.regenerate(file, true);
   }
 
+  /**
+   * True if the page-1 fingerprint differs from what's stored in the file's
+   * frontmatter — i.e., regenerating now would actually change the thumbnail.
+   * Returns false for blank-page docs (we never write thumbnails for those).
+   */
+  async isDirty(file: TFile): Promise<boolean> {
+    const settings = this.getSettings();
+    if (!settings.thumbnailsEnabled) return false;
+    let raw: string;
+    try {
+      raw = await this.app.vault.read(file);
+    } catch {
+      return false;
+    }
+    const parsed = deserializePaperMd(raw);
+    const currentFp = this.computeFingerprint(parsed.document, this.isDarkMode());
+    if (currentFp === "") return false; // no strokes on page 1
+    const stored = parsed.frontmatter["paper-thumbnail-page-1-fp"];
+    return stored !== currentFp;
+  }
+
+  private computeFingerprint(doc: import("../types").PaperDocument, dark: boolean): string {
+    const pageFp = pageFingerprint(doc, 0);
+    if (pageFp === "") return "";
+    return shortHash(`${dark ? "dark" : "light"}:${pageFp}`);
+  }
+
   private async regenerate(file: TFile, force: boolean): Promise<boolean> {
     const settings = this.getSettings();
     if (!settings.thumbnailsEnabled && !force) return false;
@@ -76,21 +93,22 @@ export class ThumbnailManager {
       return false;
     }
     const parsed = deserializePaperMd(raw);
-    const pageHash = firstPageHash(parsed.document);
-    if (pageHash === "blank" || pageHash === "empty") return false;
-
-    // Fold the theme in so a light→dark swap regenerates, then compact
-    // to 8 hex chars — it's a cache key, not document metadata.
     const dark = this.isDarkMode();
-    const hash = shortHash(`${dark ? "dark" : "light"}:${pageHash}`);
+    const fp = this.computeFingerprint(parsed.document, dark);
+    if (fp === "") return false; // blank page → no thumbnail
 
     const thumbPath = thumbnailPathFor(file.path, settings.thumbnailFolder);
     const existingThumbnailFile = this.app.vault.getAbstractFileByPath(thumbPath);
-    const storedHash = this.hashStore.get(file.path);
+    const storedFp = parsed.frontmatter["paper-thumbnail-page-1-fp"];
 
-    // Skip only if we have a cached hash AND the PNG is still on disk. If
-    // the user deleted it manually, regen even when the hash matches.
-    if (!force && storedHash === hash && existingThumbnailFile instanceof TFileClass) {
+    // Skip when the stored fp matches AND the PNG still exists. Either the
+    // user manually deleted the PNG, or a content change moved the fp —
+    // both call for a regen.
+    if (!force && storedFp === fp && existingThumbnailFile instanceof TFileClass) {
+      // Bump last-gen so the (timestamp-based) dirty indicator clears.
+      await this.app.fileManager.processFrontMatter(file, (fm) => {
+        fm["paper-thumbnail-last-gen"] = new Date().toISOString();
+      });
       return false;
     }
 
@@ -120,14 +138,14 @@ export class ThumbnailManager {
       await this.app.vault.createBinary(thumbPath, buf);
     }
 
-    // Strip the legacy per-file hash entry if it's still sitting in
-    // frontmatter from an earlier plugin version.
     await this.app.fileManager.processFrontMatter(file, (fm) => {
       fm[settings.thumbnailPropertyName] = thumbnailFrontmatterValue(thumbPath);
+      fm["paper-thumbnail-page-1-fp"] = fp;
+      fm["paper-thumbnail-last-gen"] = new Date().toISOString();
+      // Strip any leftover legacy fields from earlier plugin versions.
       if ("paper-thumbnail-hash" in fm) delete fm["paper-thumbnail-hash"];
     });
 
-    await this.hashStore.set(file.path, hash);
     return true;
   }
 }

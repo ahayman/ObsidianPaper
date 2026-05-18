@@ -34,6 +34,7 @@ class RecordingOffscreenTarget implements OffscreenTarget {
 }
 
 export class RecordingEngine implements RenderEngine {
+  readonly kind = "canvas2d" as const;
   readonly calls: RecordedCall[] = [];
 
   private _width: number;

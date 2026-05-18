@@ -102,9 +102,6 @@ describe("PaperSettings", () => {
         ocrMonthlyCap: 2000,
         ocrCallsThisMonth: 42,
         ocrMonthKey: "2026-04",
-        myscriptApplicationKey: "app-key",
-        myscriptHmacKey: "hmac-key",
-        myscriptLanguage: "fr_FR",
         thumbnailsEnabled: true,
         thumbnailFolder: "_assets",
         thumbnailPropertyName: "cover",
@@ -153,6 +150,22 @@ describe("PaperSettings", () => {
       const result = mergeSettings(input);
       result.defaultWidth = 99;
       expect(input.defaultWidth).toBe(10);
+    });
+
+    it("should coerce legacy ocrBackend='myscript' to 'none' and strip its credentials", () => {
+      // Simulates loading settings saved when MyScript was a backend option.
+      const legacy = {
+        ocrBackend: "myscript",
+        myscriptApplicationKey: "leftover-app",
+        myscriptHmacKey: "leftover-hmac",
+        myscriptLanguage: "fr_FR",
+      } as unknown as Partial<PaperSettings>;
+      const result = mergeSettings(legacy);
+      expect(result.ocrBackend).toBe("none");
+      const raw = result as unknown as Record<string, unknown>;
+      expect(raw["myscriptApplicationKey"]).toBeUndefined();
+      expect(raw["myscriptHmacKey"]).toBeUndefined();
+      expect(raw["myscriptLanguage"]).toBeUndefined();
     });
   });
 

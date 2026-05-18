@@ -54,6 +54,7 @@ const BLEND_MODE_MAP: Record<BlendMode, GlobalCompositeOperation> = {
 // --- Canvas2DEngine ---
 
 export class Canvas2DEngine implements RenderEngine {
+  readonly kind = "canvas2d" as const;
   private ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
   private mainCanvas: HTMLCanvasElement | OffscreenCanvas;
   private offscreens = new Map<string, Canvas2DOffscreenTarget>();

@@ -6,17 +6,13 @@
  */
 
 import { WebGLTileCache } from "./WebGLTileCache";
-import type { GLTileEntry } from "./WebGLTileCache";
 import type { TileKey, TileGridConfig } from "./TileTypes";
 import { tileKeyString, tileSizePhysicalForBand } from "./TileTypes";
 import * as GLTextures from "../engine/GLTextures";
-import type { GLOffscreenTarget, GLMSAAOffscreenTarget } from "../engine/GLTextures";
 
 // ─── Mock WebGL2 ────────────────────────────────────────────────
 
 let textureIdCounter = 0;
-let fboIdCounter = 0;
-let rbIdCounter = 0;
 
 function createMockGL(): WebGL2RenderingContext {
   const gl = {
@@ -25,18 +21,12 @@ function createMockGL(): WebGL2RenderingContext {
     TEXTURE_MAG_FILTER: 0x2800,
     TEXTURE_WRAP_S: 0x2802,
     TEXTURE_WRAP_T: 0x2803,
-    LINEAR: 0x2601,
+    NEAREST: 0x2600,
     CLAMP_TO_EDGE: 0x812F,
     RGBA: 0x1908,
     UNSIGNED_BYTE: 0x1401,
     UNPACK_PREMULTIPLY_ALPHA_WEBGL: 0x9241,
     UNPACK_FLIP_Y_WEBGL: 0x9240,
-    FRAMEBUFFER: 0x8D40,
-    COLOR_ATTACHMENT0: 0x8CE0,
-    STENCIL_ATTACHMENT: 0x8D20,
-    RENDERBUFFER: 0x8D41,
-    STENCIL_INDEX8: 0x8D48,
-    RGBA8: 0x8058,
 
     createTexture: jest.fn(() => ({ _id: ++textureIdCounter })),
     deleteTexture: jest.fn(),
@@ -44,44 +34,20 @@ function createMockGL(): WebGL2RenderingContext {
     texImage2D: jest.fn(),
     texParameteri: jest.fn(),
     pixelStorei: jest.fn(),
-
-    createFramebuffer: jest.fn(() => ({ _id: ++fboIdCounter })),
-    deleteFramebuffer: jest.fn(),
-    bindFramebuffer: jest.fn(),
-    framebufferTexture2D: jest.fn(),
-
-    createRenderbuffer: jest.fn(() => ({ _id: ++rbIdCounter })),
-    deleteRenderbuffer: jest.fn(),
-    bindRenderbuffer: jest.fn(),
-    renderbufferStorage: jest.fn(),
-    framebufferRenderbuffer: jest.fn(),
   } as unknown as WebGL2RenderingContext;
   return gl;
 }
 
 // ─── Mock GLTextures ────────────────────────────────────────────
+// The cache only depends on createColorTexture; render targets live in the
+// engine (MSAAResolver), not per tile.
 
-jest.mock("../engine/GLTextures", () => ({
-  createOffscreenTarget: jest.fn((_gl: unknown, w: number, h: number): GLOffscreenTarget => ({
-    fbo: { _id: ++fboIdCounter } as unknown as WebGLFramebuffer,
-    colorTexture: { _id: ++textureIdCounter } as unknown as WebGLTexture,
-    stencilRB: { _id: ++rbIdCounter } as unknown as WebGLRenderbuffer,
-    width: w,
-    height: h,
-  })),
-  destroyOffscreenTarget: jest.fn(),
-  createMSAAOffscreenTarget: jest.fn((_gl: unknown, w: number, h: number, _samples: number): GLMSAAOffscreenTarget => ({
-    resolveFBO: { _id: ++fboIdCounter } as unknown as WebGLFramebuffer,
-    colorTexture: { _id: ++textureIdCounter } as unknown as WebGLTexture,
-    msaaFBO: { _id: ++fboIdCounter } as unknown as WebGLFramebuffer,
-    msaaColorRB: { _id: ++rbIdCounter } as unknown as WebGLRenderbuffer,
-    msaaStencilRB: { _id: ++rbIdCounter } as unknown as WebGLRenderbuffer,
-    samples: 4,
-    width: w,
-    height: h,
-  })),
-  destroyMSAAOffscreenTarget: jest.fn(),
-}));
+jest.mock("../engine/GLTextures", () => {
+  let id = 0;
+  return {
+    createColorTexture: jest.fn(() => ({ _id: ++id } as unknown as WebGLTexture)),
+  };
+});
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -102,6 +68,11 @@ function makeBounds(col: number, row: number, size = 512): [number, number, numb
   return [col * size, row * size, (col + 1) * size, (row + 1) * size];
 }
 
+/** Real memory for a tile: one RGBA8 colour texture. */
+function tileMem(size: number): number {
+  return size * size * 4;
+}
+
 // ─── Tests ──────────────────────────────────────────────────────
 
 describe("WebGLTileCache", () => {
@@ -109,14 +80,12 @@ describe("WebGLTileCache", () => {
 
   beforeEach(() => {
     textureIdCounter = 0;
-    fboIdCounter = 0;
-    rbIdCounter = 0;
     gl = createMockGL();
     jest.clearAllMocks();
   });
 
   describe("allocate and get", () => {
-    it("allocates a new tile entry with MSAA target", () => {
+    it("allocates a new FBO-render tile entry", () => {
       const cache = new WebGLTileCache(gl, makeConfig());
       const key: TileKey = { col: 0, row: 0 };
       const bounds = makeBounds(0, 0);
@@ -126,22 +95,14 @@ describe("WebGLTileCache", () => {
       expect(entry.key).toEqual(key);
       expect(entry.worldBounds).toEqual(bounds);
       expect(entry.dirty).toBe(true);
-      expect(entry.msaa).not.toBeNull();
+      expect(entry.fboRendered).toBe(true);
       expect(entry.texture).toBeDefined();
       expect(entry.renderedAtBand).toBe(0);
       expect(entry.strokeIds.size).toBe(0);
       expect(cache.size).toBe(1);
       expect(cache.memoryUsage).toBeGreaterThan(0);
 
-      expect(GLTextures.createMSAAOffscreenTarget).toHaveBeenCalledTimes(1);
-    });
-
-    it("MSAA resolve texture IS the entry texture (zero-copy)", () => {
-      const cache = new WebGLTileCache(gl, makeConfig());
-      const key: TileKey = { col: 0, row: 0 };
-      const entry = cache.allocate(key, makeBounds(0, 0), 0);
-
-      expect(entry.texture).toBe(entry.msaa!.colorTexture);
+      expect(GLTextures.createColorTexture).toHaveBeenCalledTimes(1);
     });
 
     it("get() returns undefined for dirty tiles", () => {
@@ -189,38 +150,36 @@ describe("WebGLTileCache", () => {
       expect(entry2.strokeIds.size).toBe(0); // Cleared
       expect(cache.size).toBe(1);
 
-      // createMSAAOffscreenTarget called only once (for initial allocate)
-      expect(GLTextures.createMSAAOffscreenTarget).toHaveBeenCalledTimes(1);
+      // Texture reused — createColorTexture called only once (initial allocate)
+      expect(GLTextures.createColorTexture).toHaveBeenCalledTimes(1);
     });
 
-    it("recreates MSAA target on re-allocate at different band (different size)", () => {
+    it("recreates the texture on re-allocate at a different band (different size)", () => {
       const cache = new WebGLTileCache(gl, makeConfig());
       const key: TileKey = { col: 0, row: 0 };
 
       const entry1 = cache.allocate(key, makeBounds(0, 0), 0);
-      const oldMsaa = entry1.msaa;
+      const oldTexture = entry1.texture;
       cache.markClean(key);
 
-      // Band 2 → 2048px vs band 0 → 1024px
+      // Band 2 → larger tile than band 0
       const entry2 = cache.allocate(key, makeBounds(0, 0), 2);
 
       expect(entry2).toBe(entry1); // Same entry object mutated
-      expect(entry2.msaa).not.toBe(oldMsaa); // New MSAA target
+      expect(entry2.texture).not.toBe(oldTexture); // New texture
       expect(entry2.renderedAtBand).toBe(2);
-      expect(GLTextures.destroyMSAAOffscreenTarget).toHaveBeenCalledTimes(1);
-      expect(GLTextures.createMSAAOffscreenTarget).toHaveBeenCalledTimes(2);
+      expect(gl.deleteTexture).toHaveBeenCalledWith(oldTexture);
+      expect(GLTextures.createColorTexture).toHaveBeenCalledTimes(2);
     });
 
-    it("computes correct memory bytes (tilePhysical² × 4)", () => {
+    it("computes memory bytes for a single colour texture", () => {
       const config = makeConfig();
       const cache = new WebGLTileCache(gl, config);
-      const key: TileKey = { col: 0, row: 0 };
 
-      cache.allocate(key, makeBounds(0, 0), 0);
+      cache.allocate({ col: 0, row: 0 }, makeBounds(0, 0), 0);
 
-      const tilePhysical = tileSizePhysicalForBand(config, 0); // 1024
-      const expectedMem = tilePhysical * tilePhysical * 4;
-      expect(cache.memoryUsage).toBe(expectedMem);
+      const tilePhysical = tileSizePhysicalForBand(config, 0);
+      expect(cache.memoryUsage).toBe(tileMem(tilePhysical));
     });
 
     it("updates lastAccess on get() and getStale()", () => {
@@ -244,7 +203,7 @@ describe("WebGLTileCache", () => {
       return { width: w, height: h } as unknown as ImageBitmap;
     }
 
-    it("uploads bitmap as texture without FBO", () => {
+    it("uploads bitmap as a non-FBO texture", () => {
       const cache = new WebGLTileCache(gl, makeConfig());
       const key: TileKey = { col: 0, row: 0 };
       const bitmap = makeMockBitmap(1024, 1024);
@@ -253,7 +212,7 @@ describe("WebGLTileCache", () => {
 
       const entry = cache.getStale(key)!;
       expect(entry).toBeDefined();
-      expect(entry.fbo).toBeNull(); // Bitmap tiles have no FBO
+      expect(entry.fboRendered).toBe(false); // Bitmap tiles aren't FBO-rendered
       expect(entry.dirty).toBe(false); // Bitmap uploads are clean
       expect(entry.strokeIds.has("s1")).toBe(true);
       expect(entry.textureWidth).toBe(1024);
@@ -267,22 +226,21 @@ describe("WebGLTileCache", () => {
       expect(gl.pixelStorei).toHaveBeenCalledWith(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
     });
 
-    it("replaces existing MSAA entry with bitmap entry", () => {
+    it("replaces an existing FBO entry with a bitmap entry", () => {
       const cache = new WebGLTileCache(gl, makeConfig());
       const key: TileKey = { col: 0, row: 0 };
 
-      // First: allocate with MSAA
-      cache.allocate(key, makeBounds(0, 0), 0);
-      expect(cache.getStale(key)!.msaa).not.toBeNull();
+      // First: allocate an FBO-render tile
+      const fboEntry = cache.allocate(key, makeBounds(0, 0), 0);
+      const fboTexture = fboEntry.texture;
+      expect(cache.getStale(key)!.fboRendered).toBe(true);
 
       // Then: replace with bitmap
-      const bitmap = makeMockBitmap(1024, 1024);
-      cache.uploadFromBitmap(key, bitmap, makeBounds(0, 0), 0, new Set());
+      cache.uploadFromBitmap(key, makeMockBitmap(1024, 1024), makeBounds(0, 0), 0, new Set());
 
       const entry = cache.getStale(key)!;
-      expect(entry.fbo).toBeNull();
-      expect(entry.msaa).toBeNull();
-      expect(GLTextures.destroyMSAAOffscreenTarget).toHaveBeenCalledTimes(1);
+      expect(entry.fboRendered).toBe(false);
+      expect(gl.deleteTexture).toHaveBeenCalledWith(fboTexture);
     });
 
     it("replaces existing bitmap entry with new bitmap", () => {
@@ -436,8 +394,8 @@ describe("WebGLTileCache", () => {
   describe("LRU eviction", () => {
     it("evicts oldest unprotected tile when memory budget exceeded", () => {
       const config = makeConfig();
-      const tilePhysical = tileSizePhysicalForBand(config, 0); // 1024
-      const tileMemory = tilePhysical * tilePhysical * 4;
+      const tilePhysical = tileSizePhysicalForBand(config, 0);
+      const tileMemory = tileMem(tilePhysical);
 
       const cache = new WebGLTileCache(gl, makeConfig({
         maxMemoryBytes: tileMemory * 2,
@@ -464,7 +422,7 @@ describe("WebGLTileCache", () => {
     it("does not evict protected tiles", () => {
       const config = makeConfig();
       const tilePhysical = tileSizePhysicalForBand(config, 0);
-      const tileMemory = tilePhysical * tilePhysical * 4;
+      const tileMemory = tileMem(tilePhysical);
 
       const cache = new WebGLTileCache(gl, makeConfig({
         maxMemoryBytes: tileMemory * 2,
@@ -492,7 +450,7 @@ describe("WebGLTileCache", () => {
     it("stops evicting when only protected tiles remain", () => {
       const config = makeConfig();
       const tilePhysical = tileSizePhysicalForBand(config, 0);
-      const tileMemory = tilePhysical * tilePhysical * 4;
+      const tileMemory = tileMem(tilePhysical);
 
       const cache = new WebGLTileCache(gl, makeConfig({
         maxMemoryBytes: tileMemory * 2,
@@ -514,10 +472,10 @@ describe("WebGLTileCache", () => {
       cache.unprotect();
     });
 
-    it("destroys FBO resources on eviction", () => {
+    it("destroys the texture on eviction", () => {
       const config = makeConfig();
       const tilePhysical = tileSizePhysicalForBand(config, 0);
-      const tileMemory = tilePhysical * tilePhysical * 4;
+      const tileMemory = tileMem(tilePhysical);
 
       const cache = new WebGLTileCache(gl, makeConfig({
         maxMemoryBytes: tileMemory * 2,
@@ -529,25 +487,23 @@ describe("WebGLTileCache", () => {
       const key2: TileKey = { col: 1, row: 0 };
       cache.allocate(key2, makeBounds(1, 0), 0);
 
-      // Clear mock call count
-      (GLTextures.destroyMSAAOffscreenTarget as jest.Mock).mockClear();
+      (gl.deleteTexture as jest.Mock).mockClear();
 
       const key3: TileKey = { col: 2, row: 0 };
       cache.allocate(key3, makeBounds(2, 0), 0);
 
-      expect(GLTextures.destroyMSAAOffscreenTarget).toHaveBeenCalledTimes(1);
+      expect(gl.deleteTexture).toHaveBeenCalledTimes(1);
     });
 
     it("calls gl.deleteTexture for bitmap-uploaded tile on eviction", () => {
       const config = makeConfig();
       const tilePhysical = tileSizePhysicalForBand(config, 0);
-      const tileMemory = tilePhysical * tilePhysical * 4;
+      const tileMemory = tileMem(tilePhysical);
 
       const cache = new WebGLTileCache(gl, makeConfig({
         maxMemoryBytes: tileMemory * 2,
       }));
 
-      // Upload bitmap tile (no FBO)
       const key1: TileKey = { col: 0, row: 0 };
       const bitmap = { width: tilePhysical, height: tilePhysical } as unknown as ImageBitmap;
       cache.uploadFromBitmap(key1, bitmap, makeBounds(0, 0), 0, new Set());
@@ -556,21 +512,18 @@ describe("WebGLTileCache", () => {
       cache.allocate(key2, makeBounds(1, 0), 0);
 
       (gl.deleteTexture as jest.Mock).mockClear();
-      (GLTextures.destroyMSAAOffscreenTarget as jest.Mock).mockClear();
 
       // Evict key1 (bitmap tile)
       const key3: TileKey = { col: 2, row: 0 };
       cache.allocate(key3, makeBounds(2, 0), 0);
 
-      // Bitmap tile → deleteTexture, not destroyMSAAOffscreenTarget
       expect(gl.deleteTexture).toHaveBeenCalledTimes(1);
-      expect(GLTextures.destroyMSAAOffscreenTarget).not.toHaveBeenCalled();
     });
 
     it("eviction happens during uploadFromBitmap too", () => {
       const config = makeConfig();
       const tilePhysical = tileSizePhysicalForBand(config, 0);
-      const tileMemory = tilePhysical * tilePhysical * 4;
+      const tileMemory = tileMem(tilePhysical);
 
       const cache = new WebGLTileCache(gl, makeConfig({
         maxMemoryBytes: tileMemory * 2,
@@ -593,7 +546,7 @@ describe("WebGLTileCache", () => {
       const config = makeConfig();
       const cache = new WebGLTileCache(gl, config);
       const tilePhysical = tileSizePhysicalForBand(config, 0);
-      const expectedPerTile = tilePhysical * tilePhysical * 4;
+      const expectedPerTile = tileMem(tilePhysical);
 
       cache.allocate({ col: 0, row: 0 }, makeBounds(0, 0), 0);
       expect(cache.memoryUsage).toBe(expectedPerTile);
@@ -629,16 +582,16 @@ describe("WebGLTileCache", () => {
   });
 
   describe("clear", () => {
-    it("destroys all MSAA resources", () => {
+    it("destroys all tile textures", () => {
       const cache = new WebGLTileCache(gl, makeConfig());
       cache.allocate({ col: 0, row: 0 }, makeBounds(0, 0), 0);
       cache.allocate({ col: 1, row: 0 }, makeBounds(1, 0), 0);
 
-      (GLTextures.destroyMSAAOffscreenTarget as jest.Mock).mockClear();
+      (gl.deleteTexture as jest.Mock).mockClear();
 
       cache.clear();
 
-      expect(GLTextures.destroyMSAAOffscreenTarget).toHaveBeenCalledTimes(2);
+      expect(gl.deleteTexture).toHaveBeenCalledTimes(2);
     });
 
     it("calls deleteTexture for bitmap tiles", () => {
@@ -666,7 +619,7 @@ describe("WebGLTileCache", () => {
     it("protect replaces previous protected set", () => {
       const config = makeConfig();
       const tilePhysical = tileSizePhysicalForBand(config, 0);
-      const tileMemory = tilePhysical * tilePhysical * 4;
+      const tileMemory = tileMem(tilePhysical);
 
       const cache = new WebGLTileCache(gl, makeConfig({
         maxMemoryBytes: tileMemory * 2,
@@ -696,7 +649,7 @@ describe("WebGLTileCache", () => {
     it("unprotect makes all tiles evictable", () => {
       const config = makeConfig();
       const tilePhysical = tileSizePhysicalForBand(config, 0);
-      const tileMemory = tilePhysical * tilePhysical * 4;
+      const tileMemory = tileMem(tilePhysical);
 
       const cache = new WebGLTileCache(gl, makeConfig({
         maxMemoryBytes: tileMemory * 2,
@@ -789,7 +742,7 @@ describe("WebGLTileCache", () => {
 
       // Allocate FBO tile
       cache.allocate(key, makeBounds(0, 0), 0);
-      expect(cache.memoryUsage).toBe(tilePhysical * tilePhysical * 4);
+      expect(cache.memoryUsage).toBe(tileMem(tilePhysical));
 
       // Replace with bitmap
       cache.uploadFromBitmap(key, makeBitmap(512, 512), makeBounds(0, 0), 0, new Set());
@@ -802,15 +755,15 @@ describe("WebGLTileCache", () => {
       const cache = new WebGLTileCache(gl, config);
       const key: TileKey = { col: 0, row: 0 };
 
-      // Band 0 → 1024px
+      // Band 0
       cache.allocate(key, makeBounds(0, 0), 0);
       const mem0 = tileSizePhysicalForBand(config, 0);
-      expect(cache.memoryUsage).toBe(mem0 * mem0 * 4);
+      expect(cache.memoryUsage).toBe(tileMem(mem0));
 
-      // Band 2 → 2048px
+      // Band 2 → larger tile
       cache.allocate(key, makeBounds(0, 0), 2);
       const mem2 = tileSizePhysicalForBand(config, 2);
-      expect(cache.memoryUsage).toBe(mem2 * mem2 * 4);
+      expect(cache.memoryUsage).toBe(tileMem(mem2));
 
       expect(cache.size).toBe(1);
     });
@@ -843,7 +796,7 @@ describe("WebGLTileCache", () => {
     it("eviction after many operations keeps memory accurate", () => {
       const config = makeConfig();
       const tilePhysical = tileSizePhysicalForBand(config, 0);
-      const tileMemory = tilePhysical * tilePhysical * 4;
+      const tileMemory = tileMem(tilePhysical);
 
       const cache = new WebGLTileCache(gl, makeConfig({
         maxMemoryBytes: tileMemory * 3,

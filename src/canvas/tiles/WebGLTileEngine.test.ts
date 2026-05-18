@@ -12,7 +12,6 @@
 import { WebGLTileEngine } from "./WebGLTileEngine";
 import type { TileGridConfig } from "./TileTypes";
 import type { GLTileEntry } from "./WebGLTileCache";
-import type { GLOffscreenTarget } from "../engine/GLTextures";
 import { StrokePathCache } from "../../stroke/OutlineGenerator";
 
 // ─── Mock dependencies ──────────────────────────────────────────
@@ -35,8 +34,19 @@ const mockEngine = {
   resetState: jest.fn(),
 };
 
+// Mock MSAAResolver — WebGLTileEngine renders every tile through it.
+const mockResolver = {
+  beginTile: jest.fn(),
+  endTile: jest.fn(),
+  destroy: jest.fn(),
+};
+
 jest.mock("../engine/WebGL2Engine", () => ({
   WebGL2Engine: jest.fn().mockImplementation(() => mockEngine),
+}));
+
+jest.mock("../engine/MSAAResolver", () => ({
+  MSAAResolver: jest.fn().mockImplementation(() => mockResolver),
 }));
 
 // Mock rendering functions
@@ -106,17 +116,9 @@ function makeMockCanvas(): HTMLCanvasElement & { _triggerEvent: (event: string, 
 }
 
 function makeFboEntry(tilePhysical = 1024): GLTileEntry {
-  const fbo: GLOffscreenTarget = {
-    fbo: { _id: "fbo" } as unknown as WebGLFramebuffer,
-    colorTexture: { _id: "color-tex" } as unknown as WebGLTexture,
-    stencilRB: { _id: "stencil-rb" } as unknown as WebGLRenderbuffer,
-    width: tilePhysical,
-    height: tilePhysical,
-  };
-
   return {
     key: { col: 0, row: 0 },
-    texture: fbo.colorTexture,
+    texture: { _id: "color-tex" } as unknown as WebGLTexture,
     textureWidth: tilePhysical,
     textureHeight: tilePhysical,
     worldBounds: [0, 0, 512, 512] as [number, number, number, number],
@@ -125,8 +127,7 @@ function makeFboEntry(tilePhysical = 1024): GLTileEntry {
     lastAccess: 0,
     memoryBytes: tilePhysical * tilePhysical * 4,
     renderedAtBand: 0,
-    fbo,
-    msaa: null,
+    fboRendered: true,
   };
 }
 
@@ -220,18 +221,16 @@ describe("WebGLTileEngine", () => {
   });
 
   describe("renderTile", () => {
-    it("binds FBO, sets viewport, renders, then unbinds", () => {
+    it("renders a tile through the MSAA resolver, then unbinds", () => {
       const engine = new WebGLTileEngine(canvas, makeConfig(), new StrokePathCache());
       const entry = makeFboEntry(1024);
       const gl = engine.getGL() as any;
 
       engine.renderTile(entry, makeDoc(), makePageLayout(), makeSpatialIndex(), false);
 
-      // Should bind tile FBO
-      expect(gl.bindFramebuffer).toHaveBeenCalledWith(
-        gl.FRAMEBUFFER,
-        entry.fbo!.fbo,
-      );
+      // Renders into, then resolves out of, the shared MSAA scratch
+      expect(mockResolver.beginTile).toHaveBeenCalledWith(entry.texture, 1024, 1024);
+      expect(mockResolver.endTile).toHaveBeenCalledWith(entry.texture, 1024, 1024);
 
       // Should set viewport to tile size
       expect(mockEngine.setViewport).toHaveBeenCalledWith(1024, 1024);
@@ -266,14 +265,15 @@ describe("WebGLTileEngine", () => {
       engine.destroy();
     });
 
-    it("skips render when entry has no FBO (bitmap tile)", () => {
+    it("skips render for a bitmap tile (not FBO-rendered)", () => {
       const engine = new WebGLTileEngine(canvas, makeConfig(), new StrokePathCache());
       const entry = makeFboEntry();
-      entry.fbo = null; // bitmap tile
+      entry.fboRendered = false; // bitmap tile
 
       engine.renderTile(entry, makeDoc(), makePageLayout(), makeSpatialIndex(), false);
 
       expect(mockEngine.clear).not.toHaveBeenCalled();
+      expect(mockResolver.beginTile).not.toHaveBeenCalled();
 
       engine.destroy();
     });

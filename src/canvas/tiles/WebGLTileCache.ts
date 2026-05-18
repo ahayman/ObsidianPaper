@@ -2,19 +2,14 @@
  * GPU tile texture storage with LRU eviction.
  *
  * Parallel to TileCache but stores WebGL textures instead of OffscreenCanvases.
- * FBO-rendered tiles store their FBO (whose color attachment IS the tile texture).
- * Worker-produced tiles upload ImageBitmaps directly to textures (no FBO needed).
+ * FBO-rendered tiles hold a plain colour texture that WebGLTileEngine renders
+ * into through a shared MSAA scratch (see MSAAResolver). Worker-produced tiles
+ * upload ImageBitmaps directly to textures.
  */
 
 import type { TileKey, TileGridConfig } from "./TileTypes";
 import { tileKeyString, tileSizePhysicalForBand } from "./TileTypes";
-import {
-  createOffscreenTarget,
-  destroyOffscreenTarget,
-  createMSAAOffscreenTarget,
-  destroyMSAAOffscreenTarget,
-} from "../engine/GLTextures";
-import type { GLOffscreenTarget, GLMSAAOffscreenTarget } from "../engine/GLTextures";
+import { createColorTexture } from "../engine/GLTextures";
 
 export interface GLTileEntry {
   key: TileKey;
@@ -27,10 +22,8 @@ export interface GLTileEntry {
   lastAccess: number;
   memoryBytes: number;
   renderedAtBand: number;
-  /** Non-null = FBO-rendered (Y-flipped); null = bitmap-uploaded */
-  fbo: GLOffscreenTarget | null;
-  /** MSAA render target — render here, then resolve to fbo/texture */
-  msaa: GLMSAAOffscreenTarget | null;
+  /** true = rendered via WebGLTileEngine (Y-flipped); false = worker bitmap upload */
+  fboRendered: boolean;
 }
 
 export class WebGLTileCache {
@@ -39,12 +32,19 @@ export class WebGLTileCache {
   private totalMemory = 0;
   private config: TileGridConfig;
   private protectedKeys = new Set<string>();
-  private msaaSamples: number;
 
-  constructor(gl: WebGL2RenderingContext, config: TileGridConfig, msaaSamples = 4) {
+  constructor(gl: WebGL2RenderingContext, config: TileGridConfig) {
     this.gl = gl;
     this.config = config;
-    this.msaaSamples = msaaSamples;
+  }
+
+  /**
+   * Real GPU bytes per tile: one RGBA8 colour texture. Tiles render through a
+   * shared MSAA scratch (MSAAResolver) and keep only the resolved texture — no
+   * per-tile multisampled renderbuffers.
+   */
+  private memoryBytesFor(tilePhysical: number): number {
+    return tilePhysical * tilePhysical * 4;
   }
 
   protect(keys: Set<string>): void {
@@ -73,9 +73,9 @@ export class WebGLTileCache {
   }
 
   /**
-   * Allocate a tile entry with FBO at the given zoom band's resolution.
-   * The FBO's color attachment IS the tile texture — zero-copy rendering.
-   * Reuses existing entry if size matches.
+   * Allocate a tile entry with a colour texture at the given zoom band's
+   * resolution. WebGLTileEngine.renderTile() renders into this texture via the
+   * shared MSAA scratch. Reuses the existing texture if size matches.
    */
   allocate(
     key: TileKey,
@@ -88,18 +88,23 @@ export class WebGLTileCache {
     let entry = this.tiles.get(keyStr);
 
     if (entry) {
-      if (entry.textureWidth !== tilePhysical || entry.textureHeight !== tilePhysical) {
-        // Size changed — destroy old resources and recreate
+      const sizeChanged =
+        entry.textureWidth !== tilePhysical || entry.textureHeight !== tilePhysical;
+
+      if (sizeChanged || !entry.fboRendered) {
+        // Size changed, or the entry holds a bitmap-uploaded texture — destroy
+        // the old texture and allocate a fresh FBO-render texture.
         this.totalMemory -= entry.memoryBytes;
         this.destroyEntry(entry);
 
-        const newMemory = tilePhysical * tilePhysical * 4;
+        const newMemory = this.memoryBytesFor(tilePhysical);
         this.evictIfNeeded(newMemory);
 
-        this.allocateEntryTarget(entry, tilePhysical);
+        entry.texture = createColorTexture(gl, tilePhysical, tilePhysical);
         entry.textureWidth = tilePhysical;
         entry.textureHeight = tilePhysical;
         entry.memoryBytes = newMemory;
+        entry.fboRendered = true;
         this.totalMemory += newMemory;
       }
 
@@ -111,42 +116,22 @@ export class WebGLTileCache {
       return entry;
     }
 
-    const newMemory = tilePhysical * tilePhysical * 4;
+    const newMemory = this.memoryBytesFor(tilePhysical);
     this.evictIfNeeded(newMemory);
 
-    if (this.msaaSamples > 0) {
-      const msaaTarget = createMSAAOffscreenTarget(gl, tilePhysical, tilePhysical, this.msaaSamples);
-      entry = {
-        key,
-        texture: msaaTarget.colorTexture,
-        textureWidth: tilePhysical,
-        textureHeight: tilePhysical,
-        worldBounds,
-        strokeIds: new Set(),
-        dirty: true,
-        lastAccess: performance.now(),
-        memoryBytes: newMemory,
-        renderedAtBand: zoomBand,
-        fbo: null,
-        msaa: msaaTarget,
-      };
-    } else {
-      const target = createOffscreenTarget(gl, tilePhysical, tilePhysical);
-      entry = {
-        key,
-        texture: target.colorTexture,
-        textureWidth: tilePhysical,
-        textureHeight: tilePhysical,
-        worldBounds,
-        strokeIds: new Set(),
-        dirty: true,
-        lastAccess: performance.now(),
-        memoryBytes: newMemory,
-        renderedAtBand: zoomBand,
-        fbo: target,
-        msaa: null,
-      };
-    }
+    entry = {
+      key,
+      texture: createColorTexture(gl, tilePhysical, tilePhysical),
+      textureWidth: tilePhysical,
+      textureHeight: tilePhysical,
+      worldBounds,
+      strokeIds: new Set(),
+      dirty: true,
+      lastAccess: performance.now(),
+      memoryBytes: newMemory,
+      renderedAtBand: zoomBand,
+      fboRendered: true,
+    };
 
     this.tiles.set(keyStr, entry);
     this.totalMemory += newMemory;
@@ -155,7 +140,7 @@ export class WebGLTileCache {
 
   /**
    * Upload a worker-produced ImageBitmap as a tile texture.
-   * No FBO needed — bitmap tiles aren't re-rendered via WebGL.
+   * Bitmap tiles aren't re-rendered via WebGL.
    */
   uploadFromBitmap(
     key: TileKey,
@@ -176,14 +161,12 @@ export class WebGLTileCache {
       // Destroy old resources
       this.totalMemory -= entry.memoryBytes;
       this.destroyEntry(entry);
-      entry.fbo = null;
-      entry.msaa = null;
     }
 
     this.evictIfNeeded(newMemory);
 
     // Create texture from ImageBitmap
-    const tex = gl.createTexture()!;
+    const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
@@ -203,8 +186,7 @@ export class WebGLTileCache {
       entry.lastAccess = performance.now();
       entry.memoryBytes = newMemory;
       entry.renderedAtBand = zoomBand;
-      entry.fbo = null;
-      entry.msaa = null;
+      entry.fboRendered = false;
     } else {
       entry = {
         key,
@@ -217,8 +199,7 @@ export class WebGLTileCache {
         lastAccess: performance.now(),
         memoryBytes: newMemory,
         renderedAtBand: zoomBand,
-        fbo: null,
-        msaa: null,
+        fboRendered: false,
       };
       this.tiles.set(keyStr, entry);
     }
@@ -238,32 +219,9 @@ export class WebGLTileCache {
     }
   }
 
-  /** Allocate render target (MSAA or non-MSAA) into an existing entry. */
-  private allocateEntryTarget(entry: GLTileEntry, size: number): void {
-    const gl = this.gl;
-    if (this.msaaSamples > 0) {
-      const msaaTarget = createMSAAOffscreenTarget(gl, size, size, this.msaaSamples);
-      entry.fbo = null;
-      entry.msaa = msaaTarget;
-      entry.texture = msaaTarget.colorTexture;
-    } else {
-      const target = createOffscreenTarget(gl, size, size);
-      entry.fbo = target;
-      entry.msaa = null;
-      entry.texture = target.colorTexture;
-    }
-  }
-
-  /** Destroy GPU resources for a tile entry (FBO/MSAA/texture). */
+  /** Destroy GPU resources for a tile entry. */
   private destroyEntry(entry: GLTileEntry): void {
-    const gl = this.gl;
-    if (entry.msaa) {
-      destroyMSAAOffscreenTarget(gl, entry.msaa);
-    } else if (entry.fbo) {
-      destroyOffscreenTarget(gl, entry.fbo);
-    } else {
-      gl.deleteTexture(entry.texture);
-    }
+    this.gl.deleteTexture(entry.texture);
   }
 
   invalidateAll(): void {
@@ -297,7 +255,6 @@ export class WebGLTileCache {
   }
 
   private evictIfNeeded(additionalBytes: number): void {
-    const gl = this.gl;
     while (this.totalMemory + additionalBytes > this.config.maxMemoryBytes && this.tiles.size > 0) {
       let oldest: string | null = null;
       let oldestTime = Infinity;

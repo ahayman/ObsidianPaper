@@ -87,12 +87,6 @@ export interface PaperSettings {
   ocrCallsThisMonth: number;      // Running count, reset automatically via ocrMonthKey.
   ocrMonthKey: string;            // "YYYY-MM" marker for when the counter was last reset.
 
-  // MyScript iink Cloud credentials — only used when ocrBackend === "myscript".
-  myscriptApplicationKey: string;
-  myscriptHmacKey: string;
-  /** Language code passed to MyScript, e.g. "en_US", "fr_FR". Default "en_US". */
-  myscriptLanguage: string;
-
   // Thumbnails
   thumbnailsEnabled: boolean;
   /** Folder (relative to the .paper.md file's folder) where thumbnails are stored. */
@@ -203,9 +197,6 @@ export const DEFAULT_SETTINGS: PaperSettings = {
   ocrMonthlyCap: 5000,
   ocrCallsThisMonth: 0,
   ocrMonthKey: "",
-  myscriptApplicationKey: "",
-  myscriptHmacKey: "",
-  myscriptLanguage: "en_US",
 
   thumbnailsEnabled: false,
   thumbnailFolder: "attachments",
@@ -276,14 +267,20 @@ export function formatSpacingDisplay(wu: number, unit: SpacingUnit): string {
  */
 export function mergeSettings(loaded: Partial<PaperSettings> | null): PaperSettings {
   if (!loaded) return { ...DEFAULT_SETTINGS };
-  // Strip legacy fields (device settings moved to localStorage, barrel rotation moved to per-preset)
+  // Strip legacy fields (device settings moved to localStorage, barrel rotation moved to per-preset,
+  // MyScript credentials removed alongside the backend itself).
   const {
     defaultRenderPipeline: _rp, defaultRenderEngine: _re,
     palmRejection: _pr, fingerAction: _fa, toolbarPosition: _tp,
     useBarrelRotation: _br,
+    myscriptApplicationKey: _ma, myscriptHmacKey: _mh, myscriptLanguage: _ml,
     ...rest
   } = loaded as Record<string, unknown>;
   const merged = { ...DEFAULT_SETTINGS, ...rest } as PaperSettings;
+  // Old setting value coerces to "none" so the user explicitly re-picks Handwriting OCR.
+  if ((merged.ocrBackend as string) === "myscript") {
+    merged.ocrBackend = "none";
+  }
 
   // Migrate legacy strokeScaling values: "fixed" → "paper", "scaled" → "screen"
   // Migrate legacy colorId → linkedColorId (presets no longer bundle color by default)

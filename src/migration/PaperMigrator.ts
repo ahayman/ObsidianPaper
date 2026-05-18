@@ -235,7 +235,6 @@ export async function reformatAllPaperMd(
       const parsed = deserializePaperMd(before);
       const after = serializePaperMd({
         document: parsed.document,
-        ocr: parsed.ocr,
         frontmatter: parsed.frontmatter,
         transcript: parsed.transcript,
         prelude: parsed.prelude,

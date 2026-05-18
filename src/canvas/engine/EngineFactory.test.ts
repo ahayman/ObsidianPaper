@@ -1,4 +1,4 @@
-import { createRenderEngine, isWebGL2Available } from "./EngineFactory";
+import { createRenderEngine, isWebGL2Available, _resetWebGL2ProbeCache } from "./EngineFactory";
 import { Canvas2DEngine } from "./Canvas2DEngine";
 
 // Mock Path2D for jsdom
@@ -52,12 +52,15 @@ describe("EngineFactory", () => {
       const engine = createRenderEngine("webgl", makeCanvas());
       expect(engine).toBeInstanceOf(Canvas2DEngine);
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Falling back"),
+        expect.stringContaining("Canvas 2D fallback"),
+        expect.anything(),
       );
     });
   });
 
   describe("isWebGL2Available", () => {
+    beforeEach(() => _resetWebGL2ProbeCache());
+
     it("returns a boolean", () => {
       const result = isWebGL2Available();
       expect(typeof result).toBe("boolean");
@@ -66,6 +69,12 @@ describe("EngineFactory", () => {
     // jsdom does not support WebGL, so this should return false
     it("returns false in jsdom (no WebGL support)", () => {
       expect(isWebGL2Available()).toBe(false);
+    });
+
+    it("caches its result across calls", () => {
+      const first = isWebGL2Available();
+      const second = isWebGL2Available();
+      expect(first).toBe(second);
     });
   });
 });

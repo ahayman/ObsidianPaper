@@ -225,19 +225,27 @@ export class Toolbar {
 
   // ─── Process Button ─────────────────────────────────────────
 
-  private async runProcess(mode: "both" | "ocr" | "thumbnail"): Promise<void> {
+  private async runProcess(
+    mode: "both" | "ocr" | "thumbnail",
+    options?: { forceOcr?: boolean; forceThumbnail?: boolean },
+  ): Promise<void> {
     if (this.processBtnBusy) return;
     this.processBtnBusy = true;
     this.processBtn?.setDisabled(true);
     try {
-      await this.callbacks.onProcessFile(mode);
+      await this.callbacks.onProcessFile(mode, options);
     } finally {
       this.processBtnBusy = false;
       this.processBtn?.setDisabled(false);
     }
   }
 
-  /** Show the per-action menu at the button anchor. */
+  /** Show the per-action menu at the button anchor.
+   *
+   * Top half: incremental variants (only re-OCR / re-render dirty pages).
+   * Bottom half: forced variants that bypass the per-page fp dirty check —
+   * useful when a prior run wrote a bad transcript or to refresh against
+   * a backend that's improved since the last run. */
   private showProcessMenu(x: number, y: number): void {
     const menu = new Menu();
     menu.addItem((item) => {
@@ -245,7 +253,6 @@ export class Toolbar {
         .setIcon("sparkles")
         .onClick(() => void this.runProcess("both"));
     });
-    menu.addSeparator();
     menu.addItem((item) => {
       item.setTitle("Update transcript only (OCR)")
         .setIcon("text")
@@ -255,6 +262,22 @@ export class Toolbar {
       item.setTitle("Update thumbnail only")
         .setIcon("image")
         .onClick(() => void this.runProcess("thumbnail"));
+    });
+    menu.addSeparator();
+    menu.addItem((item) => {
+      item.setTitle("Force re-run all OCR")
+        .setIcon("refresh-ccw")
+        .onClick(() => void this.runProcess("ocr", { forceOcr: true }));
+    });
+    menu.addItem((item) => {
+      item.setTitle("Force regenerate thumbnail")
+        .setIcon("refresh-ccw")
+        .onClick(() => void this.runProcess("thumbnail", { forceThumbnail: true }));
+    });
+    menu.addItem((item) => {
+      item.setTitle("Force re-run everything")
+        .setIcon("refresh-ccw")
+        .onClick(() => void this.runProcess("both", { forceOcr: true, forceThumbnail: true }));
     });
     menu.showAtPosition({ x, y });
   }

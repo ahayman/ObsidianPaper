@@ -4,8 +4,6 @@ import {
   deserializePaperMd,
   serializePaperMd,
   PAPER_MD_VERSION,
-  OCR_RESULT_VERSION,
-  type OcrResult,
 } from "./PaperMdSerializer";
 
 function makeStroke(overrides: Partial<Stroke> = {}): Stroke {
@@ -20,31 +18,6 @@ function makeStroke(overrides: Partial<Stroke> = {}): Stroke {
   };
 }
 
-function makeOcr(): OcrResult {
-  return {
-    v: OCR_RESULT_VERSION,
-    backend: "handwriting-ocr",
-    pages: [
-      {
-        pageIndex: 0,
-        lines: [
-          {
-            id: "L-0-0",
-            text: "first line of handwriting",
-            bbox: [10, 20, 200, 30],
-            confidence: 0.94,
-            strokeIds: ["s12345"],
-            words: [
-              { text: "first", bbox: [10, 20, 40, 30] },
-              { text: "line", bbox: [55, 20, 30, 30] },
-            ],
-          },
-        ],
-      },
-    ],
-  };
-}
-
 describe("PaperMdSerializer", () => {
   describe("round-trip", () => {
     it("round-trips an empty document", () => {
@@ -55,7 +28,6 @@ describe("PaperMdSerializer", () => {
       expect(parsed.document.pages[0].size.width).toBe(doc.pages[0].size.width);
       expect(parsed.document.pages[0].size.height).toBe(doc.pages[0].size.height);
       expect(parsed.document.strokes).toEqual([]);
-      expect(parsed.ocr).toBeNull();
       expect(parsed.transcript).toBe("");
       expect(parsed.prelude).toBe("");
       expect(parsed.frontmatter["paper-version"]).toBe(PAPER_MD_VERSION);
@@ -95,20 +67,31 @@ describe("PaperMdSerializer", () => {
       expect(parsed.document.styles["my-blue"].width).toBe(8);
     });
 
-    it("round-trips an OCR result", () => {
+    it("round-trips per-page OCR fingerprints in frontmatter", () => {
       const doc = createEmptyDocument();
       doc.strokes.push(makeStroke());
-      const ocr = makeOcr();
 
-      const md = serializePaperMd({ document: doc, ocr });
+      const md = serializePaperMd({
+        document: doc,
+        frontmatter: {
+          "paper-ocr-pages-fp": ["a1b2c3d4", "", "9c0d1e2f"],
+          "paper-ocr": { backend: "handwriting-ocr", "last-run": "2026-04-24T12:00:00.000Z" },
+        },
+      });
       const parsed = deserializePaperMd(md);
 
-      expect(parsed.ocr).not.toBeNull();
-      expect(parsed.ocr?.backend).toBe("handwriting-ocr");
-      expect(parsed.ocr?.pages).toHaveLength(1);
-      expect(parsed.ocr?.pages[0].lines[0].text).toBe("first line of handwriting");
-      expect(parsed.ocr?.pages[0].lines[0].strokeIds).toEqual(["s12345"]);
-      expect(parsed.ocr?.pages[0].lines[0].words).toHaveLength(2);
+      expect(parsed.frontmatter["paper-ocr-pages-fp"]).toEqual(["a1b2c3d4", "", "9c0d1e2f"]);
+      expect(parsed.frontmatter["paper-ocr"]?.backend).toBe("handwriting-ocr");
+    });
+
+    it("round-trips the thumbnail page-1 fingerprint", () => {
+      const doc = createEmptyDocument();
+      const md = serializePaperMd({
+        document: doc,
+        frontmatter: { "paper-thumbnail-page-1-fp": "deadbeef" },
+      });
+      const parsed = deserializePaperMd(md);
+      expect(parsed.frontmatter["paper-thumbnail-page-1-fp"]).toBe("deadbeef");
     });
 
     it("round-trips transcript text", () => {
@@ -173,23 +156,12 @@ describe("PaperMdSerializer", () => {
       expect(parsed.frontmatter["paper-created"]).toBe(new Date(created).toISOString());
     });
 
-    it("records backend + last-run in paper-ocr frontmatter", () => {
-      const doc = createEmptyDocument();
-      const ocr = makeOcr();
-
-      const md = serializePaperMd({ document: doc, ocr });
-      const parsed = deserializePaperMd(md);
-
-      expect(parsed.frontmatter["paper-ocr"]?.backend).toBe("handwriting-ocr");
-      expect(typeof parsed.frontmatter["paper-ocr"]?.["last-run"]).toBe("string");
-    });
   });
 
   describe("decoder resilience", () => {
     it("returns an empty document for empty input", () => {
       const parsed = deserializePaperMd("");
       expect(parsed.document.strokes).toEqual([]);
-      expect(parsed.ocr).toBeNull();
       expect(parsed.transcript).toBe("");
     });
 
@@ -224,36 +196,26 @@ describe("PaperMdSerializer", () => {
       const doc = createEmptyDocument();
       const md = serializePaperMd({ document: doc });
       const parsed = deserializePaperMd(md);
-      expect(parsed.ocr).toBeNull();
+      expect(parsed.frontmatter["paper-ocr-pages-fp"]).toBeUndefined();
     });
 
-    it("returns null OCR when the paper-ocr block is corrupt", () => {
-      const doc = createEmptyDocument();
-      const md = serializePaperMd({ document: doc });
-      const corrupted = md.replace(/```paper-ocr[\s\S]*?```/, "```paper-ocr\nnot-base64!!!\n```");
-      const parsed = deserializePaperMd(corrupted);
-      expect(parsed.ocr).toBeNull();
-    });
-
-    it("handles ocr block appearing before paper block", () => {
-      const doc = createEmptyDocument();
-      doc.strokes.push(makeStroke());
-      const ocr = makeOcr();
-      const md = serializePaperMd({ document: doc, ocr });
-
-      // Swap the two blocks
-      const paperMatch = /```paper\n[\s\S]*?\n```/.exec(md);
-      const ocrMatch = /```paper-ocr\n[\s\S]*?\n```/.exec(md);
-      expect(paperMatch).not.toBeNull();
-      expect(ocrMatch).not.toBeNull();
-      const swapped = md
-        .replace(paperMatch![0], " PAPER ")
-        .replace(ocrMatch![0], paperMatch![0])
-        .replace(" PAPER ", ocrMatch![0]);
-
-      const parsed = deserializePaperMd(swapped);
-      expect(parsed.document.strokes).toHaveLength(1);
-      expect(parsed.ocr?.backend).toBe("handwriting-ocr");
+    it("strips a legacy paper-ocr block from the body", () => {
+      const legacy = [
+        "---",
+        "paper-version: 4",
+        "---",
+        "",
+        "# Transcript",
+        "",
+        "actual transcript text",
+        "",
+        "```paper-ocr",
+        '{"v":1,"backend":"handwriting-ocr","pages":[]}',
+        "```",
+        "",
+      ].join("\n");
+      const parsed = deserializePaperMd(legacy);
+      expect(parsed.transcript).toBe("actual transcript text");
     });
 
     it("ignores unclosed code fences gracefully", () => {
@@ -281,8 +243,11 @@ describe("PaperMdSerializer", () => {
       expect(md).toContain("```paper\n");
     });
 
-    it("omits paper-ocr block when no ocr passed", () => {
-      const md = serializePaperMd({ document: createEmptyDocument() });
+    it("never emits a paper-ocr block (the JSON sidecar was retired)", () => {
+      const md = serializePaperMd({
+        document: createEmptyDocument(),
+        frontmatter: { "paper-ocr-pages-fp": ["a1b2c3d4"] },
+      });
       expect(md).not.toContain("```paper-ocr");
     });
 

@@ -1,8 +1,9 @@
 import type { PaperDocument, Stroke } from "../types";
 import { createEmptyDocument } from "../document/Document";
-import { OCR_RESULT_VERSION, type OcrResult } from "../document/PaperMdSerializer";
-import { runIncrementalOcr, attachStrokeIdsToLines, type PageRasterizer } from "./IncrementalOcrRunner";
+import { OCR_RESULT_VERSION, type OcrResult } from "./OcrBackend";
+import { runIncrementalOcr, countDirtyPages, type PageRasterizer } from "./IncrementalOcrRunner";
 import type { OcrBackend, OcrDocumentInput } from "./OcrBackend";
+import { documentPageFingerprints } from "./PageFingerprint";
 
 /** Stub rasterizer — returns a 1x1 PNG blob. Lets us skip jsdom canvas. */
 const fakeRasterize: PageRasterizer = async (doc, pageIndex) => {
@@ -24,12 +25,8 @@ function mkStroke(id: string, pageIndex: number, minY: number = 100, maxY: numbe
 
 function mkDoc(pages: number, strokes: Stroke[]): PaperDocument {
   const doc = createEmptyDocument();
-  // Ensure `pages` pages exist
   while (doc.pages.length < pages) {
-    doc.pages.push({
-      ...doc.pages[0],
-      id: `p${doc.pages.length}`,
-    });
+    doc.pages.push({ ...doc.pages[0], id: `p${doc.pages.length}` });
   }
   doc.strokes = strokes;
   return doc;
@@ -67,19 +64,15 @@ describe("runIncrementalOcr", () => {
     const doc = mkDoc(2, [mkStroke("s1", 0), mkStroke("s2", 1)]);
     const backend = new FakeBackend();
 
-    const { ocr, pagesRecognized, pagesReused, pagesEmpty } = await runIncrementalOcr({
-      document: doc,
-      previous: null,
-      backend,
-      rasterize: fakeRasterize,
-    });
+    const { transcript, pageFingerprints, pagesRecognized, pagesReused, pagesEmpty } =
+      await runIncrementalOcr({ document: doc, backend, rasterize: fakeRasterize });
 
     expect(pagesRecognized).toBe(2);
     expect(pagesReused).toBe(0);
     expect(pagesEmpty).toBe(0);
-    expect(ocr.pages).toHaveLength(2);
-    expect(ocr.pages[0].pageStrokeIds).toEqual(["s1"]);
-    expect(ocr.pages[1].pageStrokeIds).toEqual(["s2"]);
+    expect(transcript).toContain("## Page 1");
+    expect(transcript).toContain("## Page 2");
+    expect(pageFingerprints).toHaveLength(2);
     expect(backend.calls).toHaveLength(2);
   });
 
@@ -87,116 +80,148 @@ describe("runIncrementalOcr", () => {
     const doc = mkDoc(3, [mkStroke("s1", 1)]);
     const backend = new FakeBackend();
 
-    const { pagesRecognized, pagesEmpty } = await runIncrementalOcr({
+    const { pagesRecognized, pagesEmpty, transcript } = await runIncrementalOcr({
       document: doc,
-      previous: null,
       backend,
       rasterize: fakeRasterize,
     });
 
     expect(pagesRecognized).toBe(1);
     expect(pagesEmpty).toBe(2);
+    expect(transcript).toContain("## Page 2");
+    expect(transcript).not.toContain("## Page 1");
+    expect(transcript).not.toContain("## Page 3");
     expect(backend.calls).toHaveLength(1);
   });
 
-  it("reuses pages with identical stroke sets", async () => {
+  it("reuses pages with identical fingerprints", async () => {
     const doc = mkDoc(2, [mkStroke("s1", 0), mkStroke("s2", 1)]);
     const backend = new FakeBackend();
-    const firstRun = await runIncrementalOcr({ document: doc, previous: null, backend, rasterize: fakeRasterize });
+    const first = await runIncrementalOcr({ document: doc, backend, rasterize: fakeRasterize });
 
     backend.calls = [];
-
-    // Run again with no changes.
-    const secondRun = await runIncrementalOcr({
+    const second = await runIncrementalOcr({
       document: doc,
-      previous: firstRun.ocr,
+      previousPageFingerprints: first.pageFingerprints,
+      previousTranscript: first.transcript,
       backend,
     });
 
-    expect(secondRun.pagesRecognized).toBe(0);
-    expect(secondRun.pagesReused).toBe(2);
+    expect(second.pagesRecognized).toBe(0);
+    expect(second.pagesReused).toBe(2);
     expect(backend.calls).toHaveLength(0);
-    // Text should match what the first run produced.
-    expect(secondRun.ocr.pages[0].lines[0].text).toBe(firstRun.ocr.pages[0].lines[0].text);
+    // Reused text matches what the first run produced.
+    expect(second.transcript).toBe(first.transcript);
   });
 
-  it("re-recognizes pages with changed stroke sets", async () => {
+  it("re-recognizes only the page whose fingerprint changed", async () => {
     const doc = mkDoc(2, [mkStroke("s1", 0), mkStroke("s2", 1)]);
     const backend = new FakeBackend();
-    const firstRun = await runIncrementalOcr({ document: doc, previous: null, backend, rasterize: fakeRasterize });
+    const first = await runIncrementalOcr({ document: doc, backend, rasterize: fakeRasterize });
     backend.calls = [];
 
-    // Add a stroke to page 1.
+    // Add a stroke to page 1 — page 0's fp is unchanged.
     doc.strokes.push(mkStroke("s3", 1, 200, 220));
 
-    const secondRun = await runIncrementalOcr({
+    const second = await runIncrementalOcr({
       document: doc,
-      previous: firstRun.ocr,
+      previousPageFingerprints: first.pageFingerprints,
+      previousTranscript: first.transcript,
       backend,
       rasterize: fakeRasterize,
     });
 
-    expect(secondRun.pagesRecognized).toBe(1);
-    expect(secondRun.pagesReused).toBe(1);
+    expect(second.pagesRecognized).toBe(1);
+    expect(second.pagesReused).toBe(1);
     expect(backend.calls).toHaveLength(1);
     expect(backend.calls[0].pages[0].pageIndex).toBe(1);
-    // Page 1's stroke IDs should now include s3.
-    const page1 = secondRun.ocr.pages.find((p) => p.pageIndex === 1);
-    expect(page1?.pageStrokeIds).toEqual(["s2", "s3"]);
+  });
+
+  it("force=true ignores fingerprints and re-recognizes everything", async () => {
+    const doc = mkDoc(2, [mkStroke("s1", 0), mkStroke("s2", 1)]);
+    const backend = new FakeBackend();
+    const first = await runIncrementalOcr({ document: doc, backend, rasterize: fakeRasterize });
+    backend.calls = [];
+
+    const second = await runIncrementalOcr({
+      document: doc,
+      previousPageFingerprints: first.pageFingerprints,
+      previousTranscript: first.transcript,
+      backend,
+      force: true,
+      rasterize: fakeRasterize,
+    });
+
+    expect(second.pagesRecognized).toBe(2);
+    expect(second.pagesReused).toBe(0);
+    expect(backend.calls).toHaveLength(2);
   });
 
   it("recognizes a newly non-empty page (previously empty)", async () => {
     const doc = mkDoc(2, [mkStroke("s1", 0)]);
     const backend = new FakeBackend();
-    const firstRun = await runIncrementalOcr({ document: doc, previous: null, backend, rasterize: fakeRasterize });
+    const first = await runIncrementalOcr({ document: doc, backend, rasterize: fakeRasterize });
     backend.calls = [];
 
     doc.strokes.push(mkStroke("s2", 1));
 
-    const secondRun = await runIncrementalOcr({
+    const second = await runIncrementalOcr({
       document: doc,
-      previous: firstRun.ocr,
+      previousPageFingerprints: first.pageFingerprints,
+      previousTranscript: first.transcript,
       backend,
       rasterize: fakeRasterize,
     });
 
-    expect(secondRun.pagesRecognized).toBe(1);
-    expect(secondRun.pagesReused).toBe(1);
+    expect(second.pagesRecognized).toBe(1);
+    expect(second.pagesReused).toBe(1);
   });
 
-  it("orders output pages by pageIndex", async () => {
-    // Force out-of-order by recognizing page 1 fresh while page 0 is reused.
-    const doc = mkDoc(2, [mkStroke("s1", 0), mkStroke("s2", 1)]);
+  it("emits transcript sections sorted by page index", async () => {
+    const doc = mkDoc(3, [mkStroke("s1", 0), mkStroke("s2", 2)]);
     const backend = new FakeBackend();
-    const first = await runIncrementalOcr({ document: doc, previous: null, backend, rasterize: fakeRasterize });
+    backend.textPerPageIndex.set(0, ["zero text"]);
+    backend.textPerPageIndex.set(2, ["two text"]);
 
-    doc.strokes = [mkStroke("s1", 0), mkStroke("s3", 1, 400, 420)];
-    const second = await runIncrementalOcr({ document: doc, previous: first.ocr, backend, rasterize: fakeRasterize });
+    const { transcript } = await runIncrementalOcr({
+      document: doc,
+      backend,
+      rasterize: fakeRasterize,
+    });
 
-    expect(second.ocr.pages.map((p) => p.pageIndex)).toEqual([0, 1]);
+    const idx1 = transcript.indexOf("## Page 1");
+    const idx3 = transcript.indexOf("## Page 3");
+    expect(idx1).toBeGreaterThanOrEqual(0);
+    expect(idx3).toBeGreaterThan(idx1);
+  });
+
+  it("returns fingerprints aligned with documentPageFingerprints", async () => {
+    const doc = mkDoc(2, [mkStroke("s1", 0)]);
+    const backend = new FakeBackend();
+    const { pageFingerprints } = await runIncrementalOcr({
+      document: doc,
+      backend,
+      rasterize: fakeRasterize,
+    });
+    expect(pageFingerprints).toEqual(documentPageFingerprints(doc));
   });
 });
 
-describe("attachStrokeIdsToLines", () => {
-  it("zips strokeIds per line when counts match", () => {
-    const strokes = [mkStroke("a", 0, 100, 120), mkStroke("b", 0, 200, 220)];
-    const lines = [
-      { id: "L-0-0", text: "line one" },
-      { id: "L-0-1", text: "line two" },
-    ];
-    const result = attachStrokeIdsToLines(lines, strokes);
-    expect(result[0].strokeIds).toEqual(["a"]);
-    expect(result[1].strokeIds).toEqual(["b"]);
+describe("countDirtyPages", () => {
+  it("counts every non-empty page when there's no previous record", () => {
+    const doc = mkDoc(3, [mkStroke("a", 0), mkStroke("b", 2)]);
+    expect(countDirtyPages(doc, undefined)).toBe(2);
   });
 
-  it("leaves strokeIds undefined when cluster count doesn't match line count", () => {
-    const strokes = [mkStroke("a", 0, 100, 120)];
-    const lines = [
-      { id: "L-0-0", text: "one" },
-      { id: "L-0-1", text: "two" },
-    ];
-    const result = attachStrokeIdsToLines(lines, strokes);
-    expect(result[0].strokeIds).toBeUndefined();
-    expect(result[1].strokeIds).toBeUndefined();
+  it("returns 0 when fingerprints match exactly", () => {
+    const doc = mkDoc(2, [mkStroke("a", 0), mkStroke("b", 1)]);
+    const fps = documentPageFingerprints(doc);
+    expect(countDirtyPages(doc, fps)).toBe(0);
+  });
+
+  it("counts only the pages whose fp differs", () => {
+    const doc = mkDoc(2, [mkStroke("a", 0), mkStroke("b", 1)]);
+    const fps = documentPageFingerprints(doc);
+    expect(countDirtyPages(doc, [fps[0], "stale"])).toBe(1);
   });
 });

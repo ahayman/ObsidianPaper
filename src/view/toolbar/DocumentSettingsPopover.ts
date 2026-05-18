@@ -145,8 +145,13 @@ export class DocumentSettingsPopover {
       text: "View raw (markdown)",
     });
     btn.addEventListener("click", () => {
-      this.callbacks.onViewAsMarkdown?.();
+      // Dismiss first so the popover (and its backdrop) is fully torn
+      // down before the async toggle starts. Removing the click target
+      // mid-event was racing with `setViewState` and causing the first
+      // click to silently no-op — the second click then succeeded
+      // because the popover had been freshly opened.
       this.callbacks.onDismiss();
+      this.callbacks.onViewAsMarkdown?.();
     });
   }
 

@@ -9,8 +9,7 @@ import type {
   OcrLine,
   OcrTestResult,
 } from "./OcrBackend";
-import { makeLineId } from "./OcrBackend";
-import { OCR_RESULT_VERSION } from "../document/PaperMdSerializer";
+import { makeLineId, OCR_RESULT_VERSION } from "./OcrBackend";
 
 const API_BASE = "https://www.handwritingocr.com/api/v3";
 

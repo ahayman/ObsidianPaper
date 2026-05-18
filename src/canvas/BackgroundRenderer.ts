@@ -26,6 +26,16 @@ const DOT_COLORS = {
   dark: "#4a4f57",
 };
 
+// Pattern lines/dots are rendered into tile textures and then sampled
+// (NEAREST) when composited to screen. A 1-tile-texel-wide line lands
+// reliably only when the source texel maps cleanly to a destination
+// pixel; at non-1:1 scales (sub-pixel zoom-out, deep-zoom upscale) the
+// line can drop or appear partially. Render at 2× width with 0.5 alpha
+// — equivalent perceived weight, but two source texels means at least
+// one survives sampling at every scale.
+const PATTERN_WIDTH_MULTIPLIER = 2;
+const PATTERN_ALPHA = 0.5;
+
 // Page shadow settings
 const SHADOW_OFFSET_X = 0;
 const SHADOW_OFFSET_Y = 2;
@@ -122,8 +132,10 @@ function renderLines(
   lineScale: number,
   minX: number, minY: number, maxX: number, maxY: number,
 ): void {
+  ctx.save();
+  ctx.globalAlpha = PATTERN_ALPHA;
   ctx.strokeStyle = LINE_COLORS[patternTheme];
-  ctx.lineWidth = lineScale;
+  ctx.lineWidth = lineScale * PATTERN_WIDTH_MULTIPLIER;
   const startY = Math.ceil(minY / lineSpacing) * lineSpacing;
   ctx.beginPath();
   for (let y = startY; y <= maxY; y += lineSpacing) {
@@ -131,6 +143,7 @@ function renderLines(
     ctx.lineTo(maxX, y);
   }
   ctx.stroke();
+  ctx.restore();
 }
 
 function renderGrid(
@@ -140,8 +153,10 @@ function renderGrid(
   lineScale: number,
   minX: number, minY: number, maxX: number, maxY: number,
 ): void {
+  ctx.save();
+  ctx.globalAlpha = PATTERN_ALPHA;
   ctx.strokeStyle = LINE_COLORS[patternTheme];
-  ctx.lineWidth = lineScale;
+  ctx.lineWidth = lineScale * PATTERN_WIDTH_MULTIPLIER;
   const startX = Math.ceil(minX / gridSize) * gridSize;
   const startY = Math.ceil(minY / gridSize) * gridSize;
   ctx.beginPath();
@@ -154,6 +169,7 @@ function renderGrid(
     ctx.lineTo(maxX, y);
   }
   ctx.stroke();
+  ctx.restore();
 }
 
 function renderDotGrid(
@@ -163,8 +179,10 @@ function renderDotGrid(
   lineScale: number,
   minX: number, minY: number, maxX: number, maxY: number,
 ): void {
+  ctx.save();
+  ctx.globalAlpha = PATTERN_ALPHA;
   ctx.fillStyle = DOT_COLORS[patternTheme];
-  const dotRadius = 1.5 * lineScale;
+  const dotRadius = lineScale * PATTERN_WIDTH_MULTIPLIER;
   const startX = Math.ceil(minX / gridSize) * gridSize;
   const startY = Math.ceil(minY / gridSize) * gridSize;
   for (let x = startX; x <= maxX; x += gridSize) {
@@ -174,6 +192,7 @@ function renderDotGrid(
       ctx.fill();
     }
   }
+  ctx.restore();
 }
 
 // ─── RenderEngine-aware standalone helpers ──────────────────────────
@@ -272,7 +291,10 @@ function renderLinesEngine(
     data[idx++] = maxX;
     data[idx++] = y;
   }
-  engine.drawLines(data.subarray(0, idx), LINE_COLORS[patternTheme], lineScale * 2);
+  engine.save();
+  engine.setAlpha(PATTERN_ALPHA);
+  engine.drawLines(data.subarray(0, idx), LINE_COLORS[patternTheme], lineScale * PATTERN_WIDTH_MULTIPLIER);
+  engine.restore();
 }
 
 /**
@@ -306,7 +328,10 @@ function renderGridEngine(
     data[idx++] = maxX;
     data[idx++] = y;
   }
-  engine.drawLines(data.subarray(0, idx), LINE_COLORS[patternTheme], lineScale * 2);
+  engine.save();
+  engine.setAlpha(PATTERN_ALPHA);
+  engine.drawLines(data.subarray(0, idx), LINE_COLORS[patternTheme], lineScale * PATTERN_WIDTH_MULTIPLIER);
+  engine.restore();
 }
 
 /**
@@ -319,7 +344,7 @@ function renderDotGridEngine(
   lineScale: number,
   minX: number, minY: number, maxX: number, maxY: number,
 ): void {
-  const dotRadius = 2.5 * lineScale;
+  const dotRadius = lineScale * PATTERN_WIDTH_MULTIPLIER;
   const startX = Math.ceil(minX / gridSize) * gridSize;
   const startY = Math.ceil(minY / gridSize) * gridSize;
   const colCount = Math.max(0, Math.floor((maxX - startX) / gridSize) + 1);
@@ -336,7 +361,10 @@ function renderDotGridEngine(
       data[idx++] = dotRadius;
     }
   }
+  engine.save();
+  engine.setAlpha(PATTERN_ALPHA);
   engine.drawCircles(data.subarray(0, idx), DOT_COLORS[patternTheme]);
+  engine.restore();
 }
 
 /**

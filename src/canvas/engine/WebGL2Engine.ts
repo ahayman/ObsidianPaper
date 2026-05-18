@@ -103,6 +103,7 @@ function mat3FromTransform(a: number, b: number, c: number, d: number, e: number
 // ─── WebGL2Engine ───────────────────────────────────────────────
 
 export class WebGL2Engine implements RenderEngine {
+  readonly kind = "webgl2" as const;
   private gl: WebGL2RenderingContext;
   private canvas: HTMLCanvasElement;
   private state: GLState;
@@ -157,14 +158,28 @@ export class WebGL2Engine implements RenderEngine {
 
   constructor(canvas: HTMLCanvasElement, options?: { preserveDrawingBuffer?: boolean }) {
     this.canvas = canvas;
-    const gl = canvas.getContext("webgl2", {
+    // iOS Safari (and some Mac configurations) sometimes refuse
+    // `stencil: true, antialias: true` together — getContext returns
+    // null and we get pushed to the Canvas 2D fallback even though
+    // WebGL2 is otherwise supported. Try the ideal combo first; if
+    // that fails, drop the backbuffer MSAA (per-tile FBOs are MSAA'd
+    // separately, so we lose AA only on the active-stroke layer); if
+    // that also fails, we genuinely don't have WebGL2 here.
+    const baseOpts = {
       alpha: true,
       premultipliedAlpha: true,
-      antialias: true,
-      stencil: true,
       depth: false,
       preserveDrawingBuffer: options?.preserveDrawingBuffer ?? false,
-    });
+    };
+    const optionAttempts: WebGLContextAttributes[] = [
+      { ...baseOpts, antialias: true, stencil: true },
+      { ...baseOpts, antialias: false, stencil: true },
+    ];
+    let gl: WebGL2RenderingContext | null = null;
+    for (const opts of optionAttempts) {
+      gl = canvas.getContext("webgl2", opts);
+      if (gl) break;
+    }
     if (!gl) throw new Error("WebGL2 not available");
     this.gl = gl;
     this.state = new GLState(gl);

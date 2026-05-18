@@ -40,8 +40,6 @@ import {
   DEFAULT_TILE_CONFIG,
 } from "./tiles/TileTypes";
 import type { TileGridConfig, TileKey } from "./tiles/TileTypes";
-import type { RenderEngine } from "./engine/RenderEngine";
-import { createRenderEngine } from "./engine/EngineFactory";
 import { WebGLTileEngine } from "./tiles/WebGLTileEngine";
 import { WebGLTileCache } from "./tiles/WebGLTileCache";
 import { WebGLTileCompositor } from "./tiles/WebGLTileCompositor";
@@ -73,9 +71,10 @@ export class Renderer {
   private cssHeight = 0;
   isDarkMode = false;
 
-  // Engine-based rendering (Phase 8)
+  // Tile compositing pipeline (heavy GPU work). Active-stroke / overlay /
+  // selection drawing always uses Canvas 2D via the *Ctx fields above —
+  // there's no per-stroke engine plug-in.
   private engineType: RenderEngineType;
-  private activeEngine: RenderEngine | null = null;
   private engineOverlay: HTMLElement | null = null;
 
   // WebGL tile compositing canvases (when engineType === "webgl")
@@ -149,20 +148,29 @@ export class Renderer {
     this.activeCtx = this.getContext(this.activeCanvas);
     this.predictionCtx = this.getContext(this.predictionCanvas);
 
-    // Create engine for active canvas (used for engine-based rendering path)
-    if (engineType === "webgl") {
-      try {
-        this.activeEngine = createRenderEngine(engineType, this.activeCanvas);
-      } catch {
-        // Fall back silently — Canvas 2D path will be used
-        this.activeEngine = null;
-      }
-    }
+    // The "active stroke" layer always renders via activeCtx (Canvas 2D);
+    // historical `activeEngine` field was unused at runtime and has been
+    // removed. The heavy GPU work — committed-stroke compositing across
+    // tiles — happens on `webglStaticCanvas` (set up in `enableTiling`)
+    // when engineType is "webgl". The indicator below reflects that.
 
-    // Engine indicator overlay
+    // Engine indicator overlay. Reflects whether tile rendering uses
+    // WebGL2 — that's the path that benefits from the GPU. The indicator
+    // is provisional at construction time and is finalized when tiling is
+    // initialized (see updateEngineIndicator).
     this.engineOverlay = container.createEl("div", { cls: "paper-engine-overlay" });
-    const actualEngine = this.activeEngine ? "WebGL 2" : "Canvas 2D";
-    this.engineOverlay.setText(actualEngine);
+    this.updateEngineIndicator();
+  }
+
+  /**
+   * Sync the engine indicator with the actual rendering path. Called from
+   * the constructor and from `enableTiling` once the tile context has
+   * actually been created — only then do we know whether WebGL2 was
+   * granted on the static canvas. */
+  private updateEngineIndicator(): void {
+    if (!this.engineOverlay) return;
+    const tilesOnWebGL = this.engineType === "webgl" && this.webglGL !== null;
+    this.engineOverlay.setText(tilesOnWebGL ? "WebGL 2" : "Canvas 2D");
   }
 
   private createCanvasLayer(className: string): HTMLCanvasElement {
@@ -912,6 +920,15 @@ export class Renderer {
   }
 
   /**
+   * Invalidate every tile overlapping the bbox. Used when restoring a stroke
+   * (undo erase, redo add) where strokeId-based invalidation can't find the
+   * affected tiles because the tiles' strokeIds sets no longer reference it.
+   */
+  invalidateCacheBBox(bbox: [number, number, number, number]): void {
+    this.tiledLayer?.invalidateBBox(bbox);
+  }
+
+  /**
    * Initialize the grain texture generator.
    */
   initGrain(): void {
@@ -991,8 +1008,6 @@ export class Renderer {
     this.markerStampManager?.clear();
     this.markerStampManager = null;
     this.activeStampCount = 0;
-    this.activeEngine?.destroy();
-    this.activeEngine = null;
     this.engineOverlay?.remove();
     this.engineOverlay = null;
     this.backgroundCanvas.remove();
@@ -1112,9 +1127,27 @@ export class Renderer {
 
     const dpr = getEffectiveDPR(this.isMobile);
     const useWebGL = this.engineType !== "canvas2d";
+
+    // Derive tileWorldSize so the deepest zoom we want sharp keeps tiles within
+    // maxTilePhysical. The shared MSAA scratch (MSAAResolver) is sized to
+    // maxTilePhysical, and iPad WebKit refuses large MSAA renderbuffers: 1024²
+    // is reliable, 2048² is where context-loss / crash starts. Desktop has
+    // plenty of headroom and keeps the larger 128-world tile (fewer entries).
+    const SAFE_RENDERBUFFER_SIZE = this.isMobile ? 1024 : 4096;
+    const MAX_SHARP_ZOOM = 8;
+    const derivedTileWorldSize = Math.max(
+      32,
+      Math.floor(SAFE_RENDERBUFFER_SIZE / (MAX_SHARP_ZOOM * dpr)),
+    );
+
     const tileConfig: TileGridConfig = {
       ...DEFAULT_TILE_CONFIG,
       dpr,
+      tileWorldSize: derivedTileWorldSize,
+      // Hard-cap tile size on iPad. The shared MSAA scratch is sized to
+      // maxTilePhysical, and a 4×MSAA renderbuffer larger than 1024² can be
+      // refused by WebKit. Tiles above the cap soften via texture upscaling.
+      ...(this.isMobile ? { maxTilePhysical: 1024 } : {}),
       ...config,
     };
 
@@ -1156,6 +1189,9 @@ export class Renderer {
       this.webglGL = this.webglStaticCanvas.getContext("webgl2");
       this.tiledLayer.setAfterCompositeCallback(() => this.webglGL?.flush());
     }
+    // Now that we know whether WebGL was actually granted for tiles, the
+    // indicator can show the truth instead of the constructor's guess.
+    this.updateEngineIndicator();
 
     // Share all rendering resources with tile renderers via single call
     this.syncResourcesToTiledLayer();
@@ -1536,7 +1572,7 @@ class TiledStaticLayer {
         const webglEngine = new WebGLTileEngine(webglCanvas, config, pathCache);
         const gl = webglEngine.getGL();
         this.webglTileEngine = webglEngine;
-        this.glCache = new WebGLTileCache(gl, config, 4);
+        this.glCache = new WebGLTileCache(gl, config);
         this.glCompositor = new WebGLTileCompositor(gl, this.grid, config);
         this.useWebGLTiles = true;
       } catch (e) {
@@ -1587,7 +1623,7 @@ class TiledStaticLayer {
           const gl = newEngine.getGL();
           this.webglTileEngine?.destroy();
           this.webglTileEngine = newEngine;
-          this.glCache = new WebGLTileCache(gl, config, 4);
+          this.glCache = new WebGLTileCache(gl, config);
           this.glCompositor?.destroy();
           this.glCompositor = new WebGLTileCompositor(gl, this.grid, config);
 
@@ -1645,11 +1681,12 @@ class TiledStaticLayer {
     const existing = this.glCache.getStale(key);
 
     // Never overwrite an FBO tile with a worker bitmap. FBO tiles can be
-    // re-rendered synchronously by WebGLTileEngine.renderTile() at any time,
-    // while uploadFromBitmap() would destroy the FBO — making the tile
-    // permanently unable to be FBO-rendered (renderTile bails on fbo===null).
-    // If the tile is dirty, renderVisible() will FBO-render it on the next frame.
-    if (existing?.fbo) {
+    // re-rendered synchronously by WebGLTileEngine.renderTile() at any time;
+    // uploadFromBitmap() would replace the texture with a non-FBO bitmap,
+    // making the tile unable to be FBO-rendered (renderTile bails when
+    // fboRendered is false). If the tile is dirty, renderVisible() will
+    // FBO-render it on the next frame.
+    if (existing?.fboRendered) {
       bitmap.close();
       return;
     }
@@ -2063,6 +2100,19 @@ class TiledStaticLayer {
   invalidateStroke(strokeId: string): void {
     this.cache.invalidateStroke(strokeId);
     this.glCache?.invalidateStroke(strokeId);
+  }
+
+  /**
+   * Invalidate every tile whose world bounds overlap the bbox. Use this when
+   * a stroke is restored (undo of erase, redo of add) and its id can't be
+   * found in any tile's strokeIds set — the previously-rendered tiles dropped
+   * the stroke when they last re-rendered, so strokeId-based invalidation
+   * would mark nothing dirty.
+   */
+  invalidateBBox(bbox: [number, number, number, number]): void {
+    const keys = this.grid.getTilesForWorldBBox(bbox);
+    this.cache.invalidate(keys);
+    this.glCache?.invalidate(keys);
   }
 
   invalidateAll(): void {

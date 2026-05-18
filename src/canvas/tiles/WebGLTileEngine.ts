@@ -23,7 +23,7 @@ import { InkStampTextureManager } from "../../stamp/InkStampTextureManager";
 import { MarkerStampTextureManager } from "../../stamp/MarkerStampTextureManager";
 import { renderDeskFillEngine, renderPageBackgroundEngine } from "../BackgroundRenderer";
 import type { TextureHandle } from "../engine/RenderEngine";
-import { resolveMSAA } from "../engine/GLTextures";
+import { MSAAResolver } from "../engine/MSAAResolver";
 import { WebGL2Engine } from "../engine/WebGL2Engine";
 import type { RenderResources } from "../../rendering/RenderResources";
 
@@ -40,6 +40,9 @@ export class WebGLTileEngine {
   private config: TileGridConfig;
   private pathCache: StrokePathCache;
   private valid = true;
+
+  /** Shared MSAA scratch — every tile renders through this and resolves to its texture. */
+  private resolver: MSAAResolver;
 
   // Grain texture handle for engine-based rendering
   private engineGrainTexture: TextureHandle | null = null;
@@ -58,6 +61,7 @@ export class WebGLTileEngine {
     this.engine = new WebGL2Engine(canvas, { preserveDrawingBuffer: true });
     // Cache the GL context — browsers return the same object for the same canvas
     this.gl = canvas.getContext("webgl2")!;
+    this.resolver = new MSAAResolver(this.gl, config.maxTilePhysical);
     this.resources = {
       grainGenerator: null,
       grainStrengthOverrides: new Map(),
@@ -94,12 +98,12 @@ export class WebGLTileEngine {
     isDarkMode: boolean,
   ): void {
     if (!this.valid || !this.engine.isValid()) return;
-    if (!entry.fbo && !entry.msaa) return; // Bitmap-uploaded tiles can't be FBO-rendered
+    if (!entry.fboRendered) return; // Bitmap-uploaded tiles can't be FBO-rendered
 
-    // Reset GLState caches — createOffscreenTarget (called by WebGLTileCache.allocate)
-    // binds textures/FBOs via raw gl.* calls that bypass GLState tracking.
-    // Without this, drawStamps() may skip its texture bind (stale cache hit)
-    // and sample the tile's own color attachment instead of the stamp texture.
+    // Reset GLState caches — WebGLTileCache.allocate and MSAAResolver bind
+    // textures/FBOs via raw gl.* calls that bypass GLState tracking. Without
+    // this, drawStamps() may skip its texture bind (stale cache hit) and sample
+    // the tile's own color attachment instead of the stamp texture.
     this.engine.resetState();
 
     const engine = this.engine;
@@ -108,12 +112,8 @@ export class WebGLTileEngine {
     const baseZoom = zoomBandBaseZoom(entry.renderedAtBand);
     const lod = selectLodLevel(baseZoom);
 
-    // Bind the render FBO (MSAA if available, else regular) and set viewport.
-    // We bypass engine.beginOffscreen() because we're using the tile entry's
-    // own FBO (not one managed by the engine's offscreen map).
-    const renderFBO = entry.msaa ? entry.msaa.msaaFBO : entry.fbo!.fbo;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, renderFBO);
-    gl.viewport(0, 0, tilePhysical, tilePhysical);
+    // Render into the shared MSAA scratch; endTile() resolves into entry.texture.
+    this.resolver.beginTile(entry.texture, tilePhysical, tilePhysical);
     engine.setViewport(tilePhysical, tilePhysical);
 
     engine.setTransform(1, 0, 0, 1, 0, 0);
@@ -190,10 +190,8 @@ export class WebGLTileEngine {
     // iPad TBDR optimization: discard stencil to avoid store-back to VRAM
     engine.invalidateFramebuffer();
 
-    // Resolve MSAA → texture (blit multisampled renderbuffer to resolve FBO)
-    if (entry.msaa) {
-      resolveMSAA(gl, entry.msaa);
-    }
+    // Resolve the shared MSAA scratch into the tile texture.
+    this.resolver.endTile(entry.texture, tilePhysical, tilePhysical);
 
     // Restore default framebuffer and canvas viewport
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -323,12 +321,14 @@ export class WebGLTileEngine {
 
     canvas.addEventListener("webglcontextrestored", () => {
       this.valid = true;
+      this.resolver = new MSAAResolver(this.gl, this.config.maxTilePhysical);
       this.syncGrainTexture();
     });
   }
 
   destroy(): void {
     this.clearStampTextureCache();
+    this.resolver.destroy();
     if (this.engineGrainTexture && this.engine.isValid()) {
       this.engine.deleteTexture(this.engineGrainTexture);
       this.engineGrainTexture = null;

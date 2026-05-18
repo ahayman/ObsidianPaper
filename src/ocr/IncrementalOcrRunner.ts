@@ -1,10 +1,15 @@
-import type { PaperDocument, Stroke } from "../types";
-import { OCR_RESULT_VERSION, type OcrResult, type OcrPageResult, type OcrLine } from "../document/PaperMdSerializer";
-import type { OcrBackend, OcrPageBitmap, OcrProgress } from "./OcrBackend";
+import type { PaperDocument } from "../types";
+import type { OcrBackend, OcrPageInput, OcrProgress } from "./OcrBackend";
 import { rasterizePage } from "./PageRasterizer";
-import { clusterStrokesIntoLines } from "./LineClusterer";
+import { documentPageFingerprints, dirtyPageIndices } from "./PageFingerprint";
+import { parseTranscriptSections, buildTranscriptSections, demoteMarkdownHeadings } from "./TranscriptSections";
 
-export type PageRasterizer = (doc: PaperDocument, pageIndex: number) => Promise<OcrPageBitmap | null>;
+/** Levels to push every OCR-emitted ATX heading down by. The transcript
+ *  uses `#` and `##` for its own structure, so anything from the backend
+ *  needs to start at `###` or deeper. */
+const OCR_HEADING_DEMOTION = 2;
+
+export type PageRasterizer = (doc: PaperDocument, pageIndex: number) => Promise<OcrPageInput | null>;
 
 const defaultRasterizer: PageRasterizer = async (doc, pageIndex) => {
   const r = await rasterizePage(doc, pageIndex);
@@ -14,94 +19,99 @@ const defaultRasterizer: PageRasterizer = async (doc, pageIndex) => {
 
 export interface IncrementalOcrRunInput {
   document: PaperDocument;
-  previous: OcrResult | null;
+  /** Per-page fingerprints captured at the previous OCR run (length = doc.pages.length;
+   *  blank pages are `""`). Pass `undefined` if no prior run; every non-empty page
+   *  becomes dirty. */
+  previousPageFingerprints?: readonly string[];
+  /** Existing `# Transcript` body. Reused verbatim for clean pages, replaced
+   *  for dirty pages. Pass `""` if no prior transcript. */
+  previousTranscript?: string;
   backend: OcrBackend;
+  /** Skip the fp comparison and recognize every non-empty page. */
+  force?: boolean;
   onProgress?: (status: OcrProgress & { pagesReused: number; pagesRecognizing: number }) => void;
   /** Optional override for tests. Defaults to PageRasterizer.rasterizePage. */
   rasterize?: PageRasterizer;
   /** Invoked with each rasterized page right before it's sent to the backend.
    *  Handy for debug sidecars (save the PNG the service is actually seeing). */
-  onRasterized?: (page: OcrPageBitmap) => void | Promise<void>;
+  onRasterized?: (page: OcrPageInput) => void | Promise<void>;
 }
 
 export interface IncrementalOcrRunResult {
-  ocr: OcrResult;
-  /** Pages that were re-OCR'd (cost paid to the backend). */
+  /** Updated transcript body to write back into the # Transcript section. */
+  transcript: string;
+  /** Updated per-page fingerprints to store in `paper-ocr-pages-fp` frontmatter. */
+  pageFingerprints: string[];
+  /** Pages re-recognized this run (cost paid to backend). */
   pagesRecognized: number;
-  /** Pages reused from the previous OCR result (no cost). */
+  /** Pages whose transcript section was reused without re-recognition. */
   pagesReused: number;
-  /** Pages skipped entirely because they had no strokes. */
+  /** Pages with no strokes (always skipped). */
   pagesEmpty: number;
 }
 
 /**
- * Run OCR with page-level incremental skipping.
+ * Run OCR with per-page fingerprint-based incremental skipping.
  *
  * For each page:
- *  - If there are no strokes: omit from the result (don't pay to recognize
- *    blank pages).
- *  - If the stroke IDs match a previous page exactly: reuse the old lines.
- *  - Otherwise: rasterize and send to the backend.
+ *  - Blank pages (no strokes): omitted from the result.
+ *  - Fingerprint matches the previous run AND `force === false`: reuse the
+ *    existing `## Page N` section from the prior transcript verbatim.
+ *  - Otherwise: rasterize (image backends) or pass strokes through (stroke
+ *    backends), send to the backend, replace that page's section.
  *
- * The returned result has stable stroke-to-line mapping where possible
- * (assigned by Y-order when OCR line count matches cluster count).
+ * Returns the merged transcript (in 0-indexed page order) plus the fresh
+ * fingerprint array to persist in frontmatter.
  */
 export async function runIncrementalOcr(
   input: IncrementalOcrRunInput,
 ): Promise<IncrementalOcrRunResult> {
-  const { document, previous, backend, onProgress, onRasterized, rasterize = defaultRasterizer } = input;
+  const {
+    document,
+    previousPageFingerprints,
+    previousTranscript = "",
+    backend,
+    force = false,
+    onProgress,
+    onRasterized,
+    rasterize = defaultRasterizer,
+  } = input;
 
-  const prevByPage = indexPreviousResultByPageIndex(previous);
+  const currentFps = documentPageFingerprints(document);
+  const previousByPage = parseTranscriptSections(previousTranscript);
 
-  interface PagePlan {
-    pageIndex: number;
-    strokes: Stroke[];
-    strokeIdsSorted: string[];
-    reusePrev?: OcrPageResult;
+  // Determine which pages need recognition this run.
+  const dirty = force
+    ? currentFps.map((fp, i) => (fp !== "" ? i : -1)).filter((i) => i >= 0)
+    : dirtyPageIndices(currentFps, previousPageFingerprints);
+
+  const totalNonEmpty = currentFps.filter((fp) => fp !== "").length;
+  const pagesRecognizing = dirty.length;
+  const pagesReused = totalNonEmpty - pagesRecognizing;
+  const pagesEmpty = currentFps.length - totalNonEmpty;
+
+  const sections = new Map<number, string>();
+
+  // Carry forward clean pages' existing transcripts. A page is "clean" if it
+  // has strokes (fp != "") and isn't in the dirty set.
+  for (let i = 0; i < currentFps.length; i++) {
+    if (currentFps[i] === "") continue;
+    if (dirty.includes(i)) continue;
+    const text = previousByPage.get(i);
+    if (text) sections.set(i, text);
   }
 
-  const plans: PagePlan[] = [];
-  for (let pageIndex = 0; pageIndex < document.pages.length; pageIndex++) {
-    const strokes = document.strokes.filter((s) => s.pageIndex === pageIndex);
-    if (strokes.length === 0) continue;
+  // Recognize dirty pages.
+  for (let n = 0; n < dirty.length; n++) {
+    input.onProgress?.bind(input);
+    const pageIndex = dirty[n];
+    const pageStrokes = document.strokes.filter((s) => s.pageIndex === pageIndex);
 
-    const strokeIdsSorted = [...strokes.map((s) => s.id)].sort();
-    const prev = prevByPage.get(pageIndex);
-    const canReuse = !!prev && arraysEqual(prev.pageStrokeIds ?? [], strokeIdsSorted);
-
-    plans.push({
-      pageIndex,
-      strokes,
-      strokeIdsSorted,
-      reusePrev: canReuse ? prev : undefined,
-    });
-  }
-
-  const recognizingCount = plans.filter((p) => !p.reusePrev).length;
-  const reusedCount = plans.length - recognizingCount;
-
-  const pages: OcrPageResult[] = [];
-  let dirtyIdx = 0;
-
-  for (const plan of plans) {
-    if (plan.reusePrev) {
-      pages.push({
-        ...plan.reusePrev,
-        pageStrokeIds: plan.strokeIdsSorted,
-      });
-      continue;
-    }
-
-    dirtyIdx++;
-
-    // Stroke-based backends (MyScript) consume the raw strokes directly;
-    // image-based backends (Handwriting OCR) take a rasterized PNG blob.
-    // The backend declares which it wants via inputType.
-    let pageInput: OcrPageBitmap;
+    let pageInput: OcrPageInput;
     if (backend.inputType === "strokes") {
-      pageInput = { pageIndex: plan.pageIndex, strokes: plan.strokes };
+      pageInput = { pageIndex, strokes: pageStrokes };
     } else {
-      const rastered = await rasterize(document, plan.pageIndex);
+      const rastered = await rasterize(document, pageIndex);
       if (!rastered) continue;
       if (onRasterized) await onRasterized(rastered);
       pageInput = rastered;
@@ -110,86 +120,36 @@ export async function runIncrementalOcr(
     const result = await backend.recognizeDocument({
       pages: [pageInput],
       onProgress: onProgress
-        ? (p) => onProgress({ ...p, pagesReused: reusedCount, pagesRecognizing: recognizingCount })
+        ? (p) => onProgress({ ...p, pagesReused, pagesRecognizing })
         : undefined,
     });
 
     const backendPage = result.pages[0];
     if (!backendPage) continue;
-
-    pages.push({
-      pageIndex: plan.pageIndex,
-      lines: attachStrokeIdsToLines(backendPage.lines, plan.strokes),
-      pageStrokeIds: plan.strokeIdsSorted,
-    });
+    const rawText = backendPage.lines
+      .map((l) => l.text.trim())
+      .filter((t) => t.length > 0)
+      .join("\n");
+    const text = demoteMarkdownHeadings(rawText, OCR_HEADING_DEMOTION);
+    if (text.length > 0) sections.set(pageIndex, text);
   }
 
-  pages.sort((a, b) => a.pageIndex - b.pageIndex);
-
   return {
-    ocr: {
-      v: OCR_RESULT_VERSION,
-      backend: backend.id,
-      pages,
-    },
-    pagesRecognized: recognizingCount,
-    pagesReused: reusedCount,
-    pagesEmpty: document.pages.length - plans.length,
+    transcript: buildTranscriptSections(sections),
+    pageFingerprints: currentFps,
+    pagesRecognized: pagesRecognizing,
+    pagesReused,
+    pagesEmpty,
   };
 }
 
-function indexPreviousResultByPageIndex(
-  prev: OcrResult | null,
-): Map<number, OcrPageResult> {
-  const map = new Map<number, OcrPageResult>();
-  if (!prev) return map;
-  for (const page of prev.pages) map.set(page.pageIndex, page);
-  return map;
-}
-
 /**
- * Count how many pages would be sent to the backend if we ran incremental
- * OCR right now (does not perform any I/O). Used by quota checks.
+ * Count how many pages would be re-recognized if we ran incremental OCR
+ * right now (used by the quota check + dirty indicator). Pure — no I/O.
  */
-export function countDirtyPages(doc: PaperDocument, previous: OcrResult | null): number {
-  const prevByPage = indexPreviousResultByPageIndex(previous);
-  let count = 0;
-  for (let pageIndex = 0; pageIndex < doc.pages.length; pageIndex++) {
-    const strokes = doc.strokes.filter((s) => s.pageIndex === pageIndex);
-    if (strokes.length === 0) continue;
-    const strokeIdsSorted = [...strokes.map((s) => s.id)].sort();
-    const prev = prevByPage.get(pageIndex);
-    const canReuse = !!prev && arraysEqual(prev.pageStrokeIds ?? [], strokeIdsSorted);
-    if (!canReuse) count++;
-  }
-  return count;
-}
-
-function arraysEqual(a: readonly string[], b: readonly string[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
-}
-
-/**
- * Best-effort assignment of stroke IDs to OCR lines based on Y-cluster order.
- * Only attached when the cluster count matches the OCR line count (otherwise
- * we can't be confident which strokes belong to which line and the field
- * stays undefined).
- */
-export function attachStrokeIdsToLines(
-  lines: OcrLine[],
-  strokes: readonly Stroke[],
-): OcrLine[] {
-  if (lines.length === 0) return lines;
-  const clusters = clusterStrokesIntoLines(strokes);
-  if (clusters.length !== lines.length) return lines;
-
-  return lines.map((line, i) => ({
-    ...line,
-    strokeIds: clusters[i].strokeIds,
-    bbox: line.bbox ?? clusters[i].bbox,
-  }));
+export function countDirtyPages(
+  doc: PaperDocument,
+  previousPageFingerprints: readonly string[] | undefined,
+): number {
+  return dirtyPageIndices(documentPageFingerprints(doc), previousPageFingerprints).length;
 }

@@ -47,9 +47,14 @@ export interface ToolbarCallbacks {
   onOpenDocumentSettings: () => void;
   /** Invoked by the "Process" toolbar button. `"both"` runs OCR +
    *  thumbnail (the tap-and-release action); `"ocr"` and `"thumbnail"`
-   *  are exposed via long-press / right-click. Plugin supplies the
-   *  work; the button disables itself while the promise is pending. */
-  onProcessFile: (mode: "both" | "ocr" | "thumbnail") => Promise<void> | void;
+   *  are exposed via long-press / right-click. The optional `options`
+   *  object lets the menu request a force-regen variant that bypasses
+   *  the per-page fp dirty check. Plugin supplies the work; the button
+   *  disables itself while the promise is pending. */
+  onProcessFile: (
+    mode: "both" | "ocr" | "thumbnail",
+    options?: { forceOcr?: boolean; forceThumbnail?: boolean },
+  ) => Promise<void> | void;
   onPresetSave: (presets: PenPreset[], activePresetId: string | null) => void;
   onPositionChange: (position: ToolbarPosition) => void;
   onRecentColorsChange: (savedColors: string[], recentColors: string[], collapsed: boolean) => void;

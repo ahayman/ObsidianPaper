@@ -2,7 +2,7 @@ import { Notice, Plugin, TFile, TFolder, normalizePath, WorkspaceLeaf } from "ob
 import { PaperView, VIEW_TYPE_PAPER, PAPER_EXTENSION, classifyPaperFile } from "./view/PaperView";
 import { createEmptyDocument } from "./document/Document";
 import { deserializeDocument } from "./document/Serializer";
-import { serializePaperMd, deserializePaperMd, PAPER_MD_VERSION, type OcrResult } from "./document/PaperMdSerializer";
+import { serializePaperMd, deserializePaperMd, PAPER_MD_VERSION } from "./document/PaperMdSerializer";
 import { DEFAULT_SETTINGS, mergeSettings, resolvePageSize, resolveMargins } from "./settings/PaperSettings";
 import type { PaperSettings } from "./settings/PaperSettings";
 import { ClipboardQueue } from "./selection/Clipboard";
@@ -22,12 +22,11 @@ import {
 } from "./migration/PaperMigrator";
 import { MigrationConfirmModal, BackupCleanupModal } from "./migration/MigrationModal";
 import { HandwritingOcrBackend } from "./ocr/HandwritingOcrBackend";
-import { MyScriptBackend } from "./ocr/MyScriptBackend";
 import type { OcrBackend } from "./ocr/OcrBackend";
 import { runIncrementalOcr, countDirtyPages } from "./ocr/IncrementalOcrRunner";
-import { ThumbnailManager, type ThumbnailHashStore } from "./thumbnail/ThumbnailManager";
-import { firstPageHash, shortHash } from "./thumbnail/ThumbnailGenerator";
-import { buildTranscript } from "./ocr/TranscriptBuilder";
+import { ThumbnailManager } from "./thumbnail/ThumbnailManager";
+import { shortHash } from "./thumbnail/ThumbnailGenerator";
+import { documentPageFingerprints } from "./ocr/PageFingerprint";
 import { checkQuota, incrementCounter, resetMonthlyCounterIfNeeded } from "./ocr/OcrQuota";
 import { exportToSvg } from "./export/SvgExporter";
 import { NewPaperModal } from "./modal/NewPaperModal";
@@ -41,9 +40,15 @@ export default class PaperPlugin extends Plugin {
   private clipboard = new ClipboardQueue(DEFAULT_SETTINGS.clipboardQueueSize);
   /** File paths currently being swapped to Paper view (dedup across events). */
   private pendingPaperSwaps = new Set<string>();
+  /**
+   * File paths the user has explicitly toggled to markdown view this session.
+   * Bypasses the auto-swap-to-Paper logic until cleared. Frontmatter
+   * (`paper-default-view: markdown`) is the persistent source of truth across
+   * reloads; this set just bridges the metadataCache update lag right after
+   * the toggle write.
+   */
+  private userRequestedMarkdown = new Set<string>();
   private thumbnailManager: ThumbnailManager | null = null;
-  /** Per-file thumbnail cache keys, persisted alongside settings in plugin data. */
-  private thumbnailHashes: Record<string, string> = {};
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -63,7 +68,7 @@ export default class PaperPlugin extends Plugin {
         this.saveDeviceSettingsLocal();
         this.notifyDeviceSettingsListeners();
       };
-      view.onProcessFile = (mode) => this.processCurrentFile(view, mode);
+      view.onProcessFile = (mode, options) => this.processCurrentFile(view, mode, options);
       view.onRequestMarkdownView = () => {
         if (view.file) void this.togglePaperView(view.file);
       };
@@ -98,19 +103,7 @@ export default class PaperPlugin extends Plugin {
       )
     );
 
-    const hashStore: ThumbnailHashStore = {
-      get: (path) => this.thumbnailHashes[path],
-      set: async (path, hash) => {
-        this.thumbnailHashes[path] = hash;
-        await this.saveSettings();
-      },
-      delete: async (path) => {
-        if (!(path in this.thumbnailHashes)) return;
-        delete this.thumbnailHashes[path];
-        await this.saveSettings();
-      },
-    };
-    this.thumbnailManager = new ThumbnailManager(this.app, () => this.settings, hashStore);
+    this.thumbnailManager = new ThumbnailManager(this.app, () => this.settings);
 
     // Auto-refresh embeds when .paper or .paper.md files are modified.
     // Thumbnail regeneration is explicitly NOT auto-triggered here — it
@@ -121,8 +114,10 @@ export default class PaperPlugin extends Plugin {
       this.app.vault.on("modify", (file) => {
         if (file instanceof TFile && classifyPaperFile(file.name)) {
           this.refreshEmbedsFor(file.path);
-          // If the modified file is the active paper doc, the dirty
-          // indicator may have just changed — update it.
+          // Cheap O(1) timestamp check inside isProcessDirty — no debounce
+          // needed. Earlier per-page fingerprinting was measurable on iPad
+          // during sustained drawing; switching to a `paper-modified` vs.
+          // `paper-ocr.last-run` comparison made the work negligible.
           const activeView = this.getActivePaperView();
           if (activeView?.file?.path === file.path) {
             this.refreshProcessDirty(activeView);
@@ -172,6 +167,10 @@ export default class PaperPlugin extends Plugin {
       id: "create-paper",
       name: "Create new handwriting note",
       callback: () => this.createNewPaper(),
+    });
+
+    this.addRibbonIcon("pen-tool", "New handwriting note", () => {
+      void this.createNewPaper();
     });
 
     this.addCommand({
@@ -377,16 +376,15 @@ export default class PaperPlugin extends Plugin {
     const data = await this.loadData() as Record<string, unknown> | null;
 
     // Plugin data is either the legacy flat shape (the whole object is
-    // the settings map) or the current wrapped shape ({ settings, ... }).
-    // Detect by looking for the `settings` marker key.
+    // the settings map) or the wrapped shape ({ settings, ... }) used by
+    // older versions that bundled a thumbnailHashes sidecar. Detect by
+    // looking for the `settings` marker key. The thumbnailHashes blob is
+    // ignored — page-1 fingerprints now live in each file's frontmatter.
     const wrapped = data && typeof data === "object" && "settings" in data;
     const rawSettings = wrapped
       ? (data as { settings?: unknown }).settings as Partial<PaperSettings> | null
       : data as Partial<PaperSettings> | null;
     this.settings = mergeSettings(rawSettings);
-    this.thumbnailHashes = wrapped
-      ? ((data as { thumbnailHashes?: Record<string, string> }).thumbnailHashes ?? {})
-      : {};
     this.clipboard.maxSize = this.settings.clipboardQueueSize;
 
     // Load device settings from localStorage
@@ -432,10 +430,7 @@ export default class PaperPlugin extends Plugin {
 
   private async saveSettings(): Promise<void> {
     this.clipboard.maxSize = this.settings.clipboardQueueSize;
-    await this.saveData({
-      settings: this.settings,
-      thumbnailHashes: this.thumbnailHashes,
-    });
+    await this.saveData({ settings: this.settings });
   }
 
   /**
@@ -443,6 +438,7 @@ export default class PaperPlugin extends Plugin {
    * forces the leaf to switch from the default markdown view to our view.
    */
   private async openInPaperView(file: TFile): Promise<void> {
+    this.userRequestedMarkdown.delete(file.path);
     const leaf = this.app.workspace.getLeaf(false);
     await leaf.openFile(file);
     const kind = classifyPaperFile(file.name);
@@ -459,24 +455,47 @@ export default class PaperPlugin extends Plugin {
    * frontmatter, then swap the active leaf to match.
    */
   private async togglePaperView(file: TFile): Promise<void> {
+    // Treat anything-not-explicitly-"markdown" as currently-paper. Files
+    // open as Paper view by default (no frontmatter required), so a missing
+    // value means the user is currently in Paper and wants to flip out.
+    const cache = this.app.metadataCache.getFileCache(file);
+    const currentlyMarkdown = cache?.frontmatter?.["paper-default-view"] === "markdown";
+    const nextView: "paper" | "markdown" = currentlyMarkdown ? "paper" : "markdown";
+
+    // Set the bypass BEFORE any async work so any incidental file-open or
+    // active-leaf-change events fired during save / processFrontMatter /
+    // setViewState don't trigger the auto-swap-back-to-Paper logic.
+    if (nextView === "markdown") {
+      this.userRequestedMarkdown.add(file.path);
+    } else {
+      this.userRequestedMarkdown.delete(file.path);
+    }
+
     // Persist any unsaved canvas state before we yank the view out.
     const paperView = this.app.workspace.getActiveViewOfType(PaperView);
     if (paperView && paperView.file === file) {
       await paperView.save();
     }
 
-    let nextView: "paper" | "markdown" = "paper";
     await this.app.fileManager.processFrontMatter(file, (fm) => {
-      const current = fm["paper-default-view"];
-      nextView = current === "paper" ? "markdown" : "paper";
       fm["paper-default-view"] = nextView;
     });
 
-    const leaf = this.app.workspace.activeLeaf;
-    if (!leaf) return;
-    await leaf.setViewState({
+    // Target the specific leaf showing this file rather than activeLeaf —
+    // popover dismissal could in theory shift focus, and we want to flip
+    // the leaf that actually has the document.
+    let targetLeaf: WorkspaceLeaf | null = null;
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const leafFile = (leaf.view as { file?: TFile }).file;
+      if (leafFile?.path === file.path) targetLeaf = leaf;
+    });
+    if (!targetLeaf) targetLeaf = this.app.workspace.activeLeaf;
+    if (!targetLeaf) return;
+
+    await (targetLeaf as WorkspaceLeaf).setViewState({
       type: nextView === "paper" ? VIEW_TYPE_PAPER : "markdown",
       state: { file: file.path },
+      active: true,
     });
   }
 
@@ -495,6 +514,7 @@ export default class PaperPlugin extends Plugin {
    *    rendering and silently no-ops.
    */
   private maybeSwapToPaperView(file: TFile): void {
+    if (this.userRequestedMarkdown.has(file.path)) return;
     const cache = this.app.metadataCache.getFileCache(file);
     const defaultView = cache?.frontmatter?.["paper-default-view"];
     if (defaultView === "markdown") return;
@@ -551,10 +571,13 @@ export default class PaperPlugin extends Plugin {
     });
 
     if (targets.length === 0) {
-      // No leaf is showing this file yet — retry a few times before giving
-      // up, in case the leaf is still mounting.
-      if (attempt < 2) {
-        setTimeout(() => { void this.doSwapToPaperView(file, attempt + 1); }, 50);
+      // No leaf is showing this file yet — retry while it mounts. iPad
+      // takes longer to stand up the markdown leaf when switching files,
+      // so the budget is generous (8 attempts with exponential backoff,
+      // ~1.5 s total). Mac usually succeeds on attempt 0 anyway.
+      if (attempt < 8) {
+        const delay = 50 * Math.pow(1.4, attempt);
+        setTimeout(() => { void this.doSwapToPaperView(file, attempt + 1); }, delay);
         return;
       }
       this.pendingPaperSwaps.delete(file.path);
@@ -594,50 +617,27 @@ export default class PaperPlugin extends Plugin {
         apiToken: this.settings.handwritingOcrApiToken,
       }));
     }
-    if (this.settings.ocrBackend === "myscript") {
-      return new MyScriptBackend(() => ({
-        applicationKey: this.settings.myscriptApplicationKey,
-        hmacKey: this.settings.myscriptHmacKey,
-        language: this.settings.myscriptLanguage || "en_US",
-      }));
-    }
     return null;
   }
 
   /**
-   * Write an OCR result to a file bypassing the view pipeline. Re-reads
-   * the current on-disk content first so any edits made after the OCR
-   * started (strokes added, frontmatter updated) are preserved — we only
-   * replace the ocr + transcript sections.
+   * Run incremental OCR over a file. Reads the file from disk so any
+   * in-memory edits in the calling view should be flushed first.
+   * Returns true if any work was done; false if everything was clean
+   * (and `notifyEmpty` already showed a Notice or stayed silent).
    */
-  private async writeOcrToDisk(file: TFile, ocr: OcrResult): Promise<void> {
-    const raw = await this.app.vault.read(file);
-    const parsed = deserializePaperMd(raw);
-    const updated = serializePaperMd({
-      document: parsed.document,
-      ocr,
-      frontmatter: parsed.frontmatter,
-      transcript: buildTranscript(ocr),
-      prelude: parsed.prelude,
-    });
-    await this.app.vault.modify(file, updated);
-  }
-
-  private async runOcrCommand(options: { force: boolean } = { force: false }): Promise<void> {
-    const view = this.getActivePaperView();
-    if (!view || !view.file || classifyPaperFile(view.file.name) !== "md") {
-      new Notice("Open a .paper.md file first.");
-      return;
-    }
-
+  private async runOcrForFile(
+    file: TFile,
+    options: { force: boolean; notifyEmpty: boolean },
+  ): Promise<boolean> {
     const backend = this.getOcrBackend();
     if (!backend) {
       new Notice("OCR disabled. Pick a backend in settings.");
-      return;
+      return false;
     }
     if (!backend.isConfigured()) {
       new Notice("OCR backend not configured. Add an API token in settings.");
-      return;
+      return false;
     }
 
     // Reset the monthly counter if we've rolled into a new month.
@@ -647,147 +647,232 @@ export default class PaperPlugin extends Plugin {
       await this.saveSettings();
     }
 
-    // Capture the file path at start so a post-resolution view switch doesn't
-    // cause us to apply this run's result to the wrong file.
-    const startingFilePath = view.file.path;
-    const doc = view.getDocument();
-    // Force mode ignores the previous result so every page with strokes
-    // counts as dirty and gets re-recognized.
-    const previous = options.force ? null : view.getMdOcr();
-    const dirtyPages = countDirtyPages(doc, previous);
-    if (dirtyPages === 0) {
-      new Notice("OCR already up to date for this document.");
-      return;
+    const raw = await this.app.vault.read(file);
+    const parsed = deserializePaperMd(raw);
+    const previousFps = parsed.frontmatter["paper-ocr-pages-fp"];
+    const dirtyCount = countDirtyPages(parsed.document, options.force ? undefined : previousFps);
+    if (dirtyCount === 0 && !options.force) {
+      // Bump `last-run` so the (timestamp-based) dirty indicator clears
+      // even when no pages were actually re-recognized — otherwise an
+      // indicator-triggered tap-and-no-op leaves the indicator stuck on.
+      await this.app.fileManager.processFrontMatter(file, (fm) => {
+        fm["paper-ocr"] = {
+          ...(fm["paper-ocr"] ?? {}),
+          "last-run": new Date().toISOString(),
+        };
+      });
+      if (options.notifyEmpty) new Notice("OCR already up to date for this document.");
+      return false;
     }
-    const quota = checkQuota(this.settings, dirtyPages);
+
+    const effectiveDirty = options.force
+      ? documentPageFingerprints(parsed.document).filter((fp) => fp !== "").length
+      : dirtyCount;
+    const quota = checkQuota(this.settings, effectiveDirty);
     if (!quota.ok) {
       new Notice(`OCR paused: ${quota.reason} Raise the cap in settings or wait until next month.`, 10000);
-      return;
+      return false;
     }
 
     const progress = new Notice("Preparing OCR…", 0);
     try {
       const runResult = await runIncrementalOcr({
-        document: doc,
-        previous,
+        document: parsed.document,
+        previousPageFingerprints: previousFps,
+        previousTranscript: parsed.transcript,
         backend,
+        force: options.force,
         onProgress: (p) => {
           const msg = `page ${p.currentPage}/${p.totalPages} ${p.phase}`;
           progress.setMessage(`OCR: ${msg} (${p.pagesReused} reused, ${p.pagesRecognizing} new)`);
         },
       });
 
-      // If the view is still showing the file we started with, use the
-      // normal apply path (in-memory + requestSave). If the user navigated
-      // away mid-run, the view's state now belongs to a different file —
-      // mutating it would corrupt *that* file. Write directly to disk in
-      // that case so the OCR work isn't wasted.
-      const stillOnSameFile = view.file?.path === startingFilePath;
-      if (stillOnSameFile) {
-        view.applyOcrResult(runResult.ocr);
-      } else {
-        const target = this.app.vault.getAbstractFileByPath(startingFilePath);
-        if (target instanceof TFile) {
-          await this.writeOcrToDisk(target, runResult.ocr);
-          new Notice(`OCR finished for ${target.name} in the background.`, 6000);
-        }
-      }
+      // Re-read in case the view (or anyone else) modified the file mid-run.
+      const currentRaw = await this.app.vault.read(file);
+      const currentParsed = deserializePaperMd(currentRaw);
+      const updatedFm = {
+        ...currentParsed.frontmatter,
+        "paper-ocr-pages-fp": runResult.pageFingerprints,
+        "paper-ocr": {
+          ...(currentParsed.frontmatter["paper-ocr"] ?? {}),
+          backend: backend.id,
+          "last-run": new Date().toISOString(),
+        },
+      };
+      const updated = serializePaperMd({
+        document: currentParsed.document,
+        frontmatter: updatedFm,
+        transcript: runResult.transcript,
+        prelude: currentParsed.prelude,
+      });
+      await this.app.vault.modify(file, updated);
 
-      // Only charge quota for pages we actually sent to the backend.
       if (runResult.pagesRecognized > 0) {
         Object.assign(this.settings, incrementCounter(this.settings, runResult.pagesRecognized));
         await this.saveSettings();
       }
 
       progress.hide();
-      if (!stillOnSameFile) return;  // background completion notice already shown
-      const lineTotal = runResult.ocr.pages.reduce((n, p) => n + p.lines.length, 0);
       if (runResult.pagesRecognized === 0 && runResult.pagesReused > 0) {
         new Notice(`OCR up to date — reused all ${runResult.pagesReused} pages.`, 5000);
       } else {
         new Notice(
-          `OCR complete: ${lineTotal} lines, ${runResult.pagesRecognized} page(s) recognized, ${runResult.pagesReused} reused.`,
+          `OCR: ${runResult.pagesRecognized} page(s) recognized, ${runResult.pagesReused} reused.`,
           6000,
         );
       }
+      return true;
     } catch (e) {
       progress.hide();
       const message = e instanceof Error ? e.message : String(e);
       new Notice(`OCR failed: ${message}`, 10000);
       console.error("[Paper OCR]", e);
+      return false;
     }
   }
 
+  private async runOcrCommand(options: { force: boolean } = { force: false }): Promise<void> {
+    const view = this.getActivePaperView();
+    if (!view || !view.file || classifyPaperFile(view.file.name) !== "md") {
+      new Notice("Open a .paper.md file first.");
+      return;
+    }
+    // Flush in-memory edits before we read from disk.
+    await view.save();
+    await this.runOcrForFile(view.file, { force: options.force, notifyEmpty: true });
+  }
+
   /**
-   * Process button handler — runs OCR and/or thumbnail for the file the
-   * given view is showing. `mode` decides which subset; unconfigured or
-   * disabled features are skipped silently.
+   * Process button handler. Each mode is incremental by default — only
+   * dirty pages get re-OCR'd, and the thumbnail is regenerated only if
+   * page-1's fingerprint moved. Force flags bypass the dirty check; used
+   * by the long-press menu's "Force …" entries.
    */
-  private async processCurrentFile(view: PaperView, mode: "both" | "ocr" | "thumbnail"): Promise<void> {
+  private async processCurrentFile(
+    view: PaperView,
+    mode: "both" | "ocr" | "thumbnail",
+    options: { forceOcr?: boolean; forceThumbnail?: boolean } = {},
+  ): Promise<void> {
     const file = view.file;
     if (!file || classifyPaperFile(file.name) !== "md") {
       new Notice("This file isn't a .paper.md.");
       return;
     }
+    await view.save();
 
-    const tasks: Promise<unknown>[] = [];
-    if (mode === "both" || mode === "ocr") {
-      const backend = this.getOcrBackend();
-      if (backend && backend.isConfigured()) {
-        // The button is a deliberate user action — always force, even
-        // when the incremental cache thinks everything's up to date.
-        // Otherwise a stale/bad prior result (e.g., empty transcript from
-        // a broken backend run) is impossible to recover from without
-        // editing the file first.
-        tasks.push(this.runOcrCommand({ force: true }));
-      } else if (mode === "ocr") {
-        new Notice("OCR backend not configured. Add an API token in settings.");
-      }
-    }
-    if (mode === "both" || mode === "thumbnail") {
-      if (this.settings.thumbnailsEnabled && this.thumbnailManager) {
-        // Force a regen so the button always does something visible when
-        // the user explicitly picks it; the hash check would otherwise
-        // silently skip a no-op.
-        tasks.push(this.thumbnailManager.regenerateNow(file));
-      } else if (mode === "thumbnail") {
-        new Notice("Thumbnails disabled. Enable them in settings.");
-      }
-    }
+    const wantsOcr = mode === "both" || mode === "ocr";
+    const wantsThumbnail = mode === "both" || mode === "thumbnail";
+    const ocrConfigured =
+      wantsOcr && this.settings.ocrBackend !== "none" && (this.getOcrBackend()?.isConfigured() ?? false);
+    const thumbnailEnabled = wantsThumbnail && this.settings.thumbnailsEnabled && this.thumbnailManager !== null;
 
-    if (tasks.length === 0) {
-      if (mode === "both") {
-        new Notice("Nothing to update — enable OCR or thumbnails in settings.", 6000);
-      }
+    if (!ocrConfigured && !thumbnailEnabled) {
+      new Notice(
+        wantsOcr && wantsThumbnail
+          ? "Nothing to update — enable OCR or thumbnails in settings."
+          : wantsOcr
+            ? "OCR backend not configured. Add an API token in settings."
+            : "Thumbnails disabled. Enable them in settings.",
+        6000,
+      );
       return;
     }
 
-    await Promise.all(tasks);
+    // Pre-check dirtiness when neither force flag is set, so we can short-circuit
+    // with the "everything up to date" Notice instead of running silent no-ops.
+    if (!options.forceOcr && !options.forceThumbnail) {
+      const ocrDirty = ocrConfigured ? await this.isOcrDirty(file) : false;
+      const thumbDirty = thumbnailEnabled
+        ? await (this.thumbnailManager as ThumbnailManager).isDirty(file)
+        : false;
+      if (!ocrDirty && !thumbDirty) {
+        new Notice("Everything up to date.", 4000);
+        return;
+      }
+    }
+
+    if (ocrConfigured) {
+      await this.runOcrForFile(file, { force: options.forceOcr ?? false, notifyEmpty: false });
+    }
+    if (thumbnailEnabled && this.thumbnailManager) {
+      if (options.forceThumbnail) {
+        await this.thumbnailManager.regenerateNow(file);
+      } else {
+        // Non-force path uses the manager's internal fp comparison; same
+        // outcome as regenerateNow when dirty, no-op when clean.
+        const wrote = await this.thumbnailManager.regenerateNow(file);
+        if (!wrote && !ocrConfigured) {
+          // Only OCR was disabled and the thumbnail was already current —
+          // the pre-check above caught this, so this branch is rare.
+        }
+      }
+    }
     this.refreshProcessDirty(view);
+  }
+
+  /**
+   * Is OCR dirty for `file` (i.e. would running incremental do work)?
+   * Reads the file's frontmatter via metadataCache, falling back to a disk
+   * read so we don't miss recent writes.
+   */
+  private async isOcrDirty(file: TFile): Promise<boolean> {
+    const cache = this.app.metadataCache.getFileCache(file);
+    const cachedFps = (cache?.frontmatter as { "paper-ocr-pages-fp"?: string[] } | undefined)?.["paper-ocr-pages-fp"];
+
+    let raw: string;
+    try {
+      raw = await this.app.vault.read(file);
+    } catch {
+      return false;
+    }
+    const parsed = deserializePaperMd(raw);
+    const stored = cachedFps ?? parsed.frontmatter["paper-ocr-pages-fp"];
+    return countDirtyPages(parsed.document, stored) > 0;
   }
 
   /**
    * True if the given view has pending OCR or thumbnail work. Called to
    * drive the toolbar button's dirty indicator.
+   *
+   * Cheap timestamp comparison rather than recomputing per-page
+   * fingerprints — fingerprinting was measurable on iPad during sustained
+   * drawing, and the indicator only needs to answer "is anything stale?",
+   * not "exactly which pages are stale". The OCR runner still uses
+   * fingerprints internally when it actually runs (manual trigger only)
+   * for cost-efficient per-page incremental.
+   *
+   * Trade-off: any save (even one that doesn't touch text content, e.g.
+   * a viewport pan auto-save) will mark the file dirty until OCR/thumbnail
+   * is re-run. In practice users only save by drawing, and a slight
+   * over-trigger is invisible since they'd just tap Process anyway.
    */
   private isProcessDirty(view: PaperView): boolean {
     const file = view.file;
     if (!file || classifyPaperFile(file.name) !== "md") return false;
     const doc = view.getDocument();
+    const cache = this.app.metadataCache.getFileCache(file);
+    const fm = cache?.frontmatter as
+      | {
+          "paper-ocr"?: { "last-run"?: string };
+          "paper-thumbnail-last-gen"?: string;
+        }
+      | undefined;
+
+    const docModified = doc.meta.modified;
 
     if (this.settings.ocrBackend !== "none") {
-      if (countDirtyPages(doc, view.getMdOcr()) > 0) return true;
+      const lastRun = fm?.["paper-ocr"]?.["last-run"];
+      const lastRunMs = lastRun ? Date.parse(lastRun) : 0;
+      // Page-0-has-strokes guard so a brand-new empty file isn't dirty.
+      const hasAnyStrokes = doc.strokes.length > 0;
+      if (hasAnyStrokes && docModified > lastRunMs) return true;
     }
     if (this.settings.thumbnailsEnabled) {
-      // Compare the current first-page hash (folding in theme) against
-      // the stored one — catches both "never rendered" and "content
-      // changed since last render".
-      const page0Strokes = doc.strokes.some((s) => s.pageIndex === 0);
-      if (page0Strokes) {
-        const isDark = document.body.classList.contains("theme-dark");
-        const current = shortHash(`${isDark ? "dark" : "light"}:${firstPageHash(doc)}`);
-        if (this.thumbnailHashes[file.path] !== current) return true;
-      }
+      const lastGen = fm?.["paper-thumbnail-last-gen"];
+      const lastGenMs = lastGen ? Date.parse(lastGen) : 0;
+      const page0HasStrokes = doc.strokes.some((s) => s.pageIndex === 0);
+      if (page0HasStrokes && docModified > lastGenMs) return true;
     }
     return false;
   }

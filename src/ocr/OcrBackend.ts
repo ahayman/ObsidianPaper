@@ -1,10 +1,30 @@
-import type { OcrBackendId, OcrResult } from "../document/PaperMdSerializer";
+import type { OcrBackendId } from "../document/PaperMdSerializer";
 import type { Stroke } from "../types";
 
-export type { OcrBackendId, OcrResult, OcrPageResult, OcrLine, OcrWord } from "../document/PaperMdSerializer";
+export type { OcrBackendId } from "../document/PaperMdSerializer";
 
-/** Legacy alias for image backends — kept so call sites don't break. */
-export type OcrPageBitmap = OcrPageInput;
+/**
+ * Recognized line as returned by a backend. Purely in-memory — these used
+ * to be persisted in an embedded JSON block, but the durable storage of
+ * OCR text is now the `# Transcript` markdown body.
+ */
+export interface OcrLine {
+  id: string;
+  text: string;
+}
+
+export interface OcrPageResult {
+  pageIndex: number;
+  lines: OcrLine[];
+}
+
+export interface OcrResult {
+  v: number;
+  backend: OcrBackendId;
+  pages: OcrPageResult[];
+}
+
+export const OCR_RESULT_VERSION = 1;
 
 /**
  * One page's worth of input to the backend. Exactly one of `blob` or
@@ -50,8 +70,7 @@ export interface OcrBackend {
 }
 
 /** Simple integer ID generator for transient line IDs. Stable across a single
- *  backend run, but not stable across runs — Phase 5 will introduce a clusterer
- *  that assigns stable IDs keyed on stroke geometry. */
+ *  backend run, but not stable across runs. */
 export function makeLineId(pageIndex: number, lineIndex: number): string {
   return `L-${pageIndex}-${lineIndex}`;
 }

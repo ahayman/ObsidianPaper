@@ -14,7 +14,6 @@ import { TileGrid } from "./TileGrid";
 import type { TileGridConfig, TileKey } from "./TileTypes";
 import { tileKeyString } from "./TileTypes";
 import type { GLTileEntry } from "./WebGLTileCache";
-import type { GLOffscreenTarget } from "../engine/GLTextures";
 import type { Camera } from "../Camera";
 
 // ─── Mock dependencies ──────────────────────────────────────────
@@ -142,22 +141,14 @@ function makeFboEntry(col: number, row: number): GLTileEntry {
     lastAccess: 0,
     memoryBytes: 1024 * 1024 * 4,
     renderedAtBand: 0,
-    fbo: {
-      fbo: {} as WebGLFramebuffer,
-      colorTexture: {} as WebGLTexture,
-      stencilRB: {} as WebGLRenderbuffer,
-      width: 1024,
-      height: 1024,
-    },
-    msaa: null,
+    fboRendered: true,
   };
 }
 
 function makeBitmapEntry(col: number, row: number): GLTileEntry {
   return {
     ...makeFboEntry(col, row),
-    fbo: null, // bitmap-uploaded tiles have no FBO
-    msaa: null,
+    fboRendered: false, // bitmap-uploaded tiles aren't FBO-rendered
   };
 }
 
@@ -306,7 +297,7 @@ describe("WebGLTileCompositor", () => {
   });
 
   describe("Y-flip handling", () => {
-    it("uses flipped V coords for FBO-rendered tiles (fbo !== null)", () => {
+    it("uses flipped V coords for FBO-rendered tiles", () => {
       const entries = new Map<string, GLTileEntry>();
       entries.set("0,0", makeFboEntry(0, 0));
 
@@ -330,7 +321,7 @@ describe("WebGLTileCompositor", () => {
       compositor.destroy();
     });
 
-    it("uses normal V coords for bitmap-uploaded tiles (fbo === null)", () => {
+    it("uses normal V coords for bitmap-uploaded tiles", () => {
       const entries = new Map<string, GLTileEntry>();
       entries.set("0,0", makeBitmapEntry(0, 0));
 
