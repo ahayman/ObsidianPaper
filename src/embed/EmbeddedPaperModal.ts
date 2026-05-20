@@ -1138,6 +1138,13 @@ export class EmbeddedPaperModal extends Modal {
         this.requestSave();
       },
 
+      onPinchRebase: () => {
+        // InputManager re-anchored the pinch baseline mid-gesture; drop our
+        // cached base so the next onPinchMove re-anchors at the current camera.
+        this.pinchBaseZoom = null;
+        this.pinchBaseRotation = null;
+      },
+
       onTwoFingerTap: () => this.undo(),
       onThreeFingerTap: () => this.redo(),
 

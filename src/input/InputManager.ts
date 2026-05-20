@@ -8,6 +8,15 @@ const TAP_MOVE_THRESHOLD_SQ = 10 * 10; // 10px
 // Minimum pinch distance or center movement change before pinch activates (screen px)
 const PINCH_ACTIVATE_THRESHOLD = 8;
 
+// Per-frame outlier thresholds. A real intentional gesture stays well below
+// these; exceeding any of them in a single frame is almost always a palm-induced
+// touch-set change rather than a deliberate movement, so we rebase the pinch
+// baseline and drop the offending frame instead of passing the jump through.
+const PINCH_OUTLIER_ROTATION = Math.PI / 6; // 30° per frame
+const PINCH_OUTLIER_SCALE_HI = 1.5;         // >1.5× distance ratio in one frame
+const PINCH_OUTLIER_SCALE_LO = 1 / 1.5;     // <0.67× distance ratio in one frame
+const PINCH_OUTLIER_PAN = 150;              // 150 px center jump in one frame
+
 export interface InputCallbacks {
   onStrokeStart: (point: StrokePoint) => void;
   onStrokeMove: (points: StrokePoint[], predicted: StrokePoint[]) => void;
@@ -18,6 +27,11 @@ export interface InputCallbacks {
   onPanEnd: () => void;
   onPinchMove: (centerX: number, centerY: number, scale: number, panDx: number, panDy: number, rotationDelta: number) => void;
   onPinchEnd: () => void;
+  // Fired when the pinch baseline has been re-anchored mid-gesture (touch-set
+  // change or outlier rejection). Consumers should reset any cached "start of
+  // pinch" camera state so the next onPinchMove re-anchors at the current
+  // camera position.
+  onPinchRebase: () => void;
   onTwoFingerTap: () => void;
   onThreeFingerTap: () => void;
   onHover?: (x: number, y: number, pointerType: string, twist: number) => void;
@@ -52,6 +66,13 @@ export class InputManager {
   private lastPinchCenterX = 0;
   private lastPinchCenterY = 0;
   private isPinchActive = false;
+  // IDs of the two touches the current pinch baseline was captured against.
+  // If the surviving touches[0]/touches[1] no longer match these, the baseline
+  // is stale and must be rebased to avoid a rotation/scale jump.
+  private pinchTouchIds: [number, number] | null = null;
+  // Last cumulative deltas we passed through, used to detect per-frame outliers.
+  private lastRotationDelta = 0;
+  private lastScale = 1;
   private isPanning = false;
   private lastPanX = 0;
   private lastPanY = 0;
@@ -307,6 +328,9 @@ export class InputManager {
         );
         this.lastPinchCenterX = (touches[0].x + touches[1].x) / 2;
         this.lastPinchCenterY = (touches[0].y + touches[1].y) / 2;
+        this.pinchTouchIds = [touches[0].id, touches[1].id];
+        this.lastRotationDelta = 0;
+        this.lastScale = 1;
         this.isPinchActive = false;
       }
     }
@@ -357,14 +381,19 @@ export class InputManager {
         // Don't activate pinch until distance changes meaningfully
         if (!this.isPinchActive) {
           const distDelta = Math.abs(currentDistance - this.initialPinchDistance);
-          const centerX = (touches[0].x + touches[1].x) / 2;
-          const centerY = (touches[0].y + touches[1].y) / 2;
-          const centerDx = centerX - this.lastPinchCenterX;
-          const centerDy = centerY - this.lastPinchCenterY;
+          const activationCenterX = (touches[0].x + touches[1].x) / 2;
+          const activationCenterY = (touches[0].y + touches[1].y) / 2;
+          const centerDx = activationCenterX - this.lastPinchCenterX;
+          const centerDy = activationCenterY - this.lastPinchCenterY;
           const centerDist = Math.sqrt(centerDx * centerDx + centerDy * centerDy);
 
           if (distDelta > PINCH_ACTIVATE_THRESHOLD || centerDist > PINCH_ACTIVATE_THRESHOLD) {
             this.isPinchActive = true;
+            // Rebase: the pinch begins from "now", not from where the touches
+            // first landed. This kills the palm-induced jump where touches
+            // drift while below threshold and then snap on activation.
+            this.rebasePinch(touches);
+            return;
           } else {
             return; // Below threshold — don't fire pinch
           }
@@ -377,8 +406,6 @@ export class InputManager {
 
         const panDx = centerX - this.lastPinchCenterX;
         const panDy = centerY - this.lastPinchCenterY;
-        this.lastPinchCenterX = centerX;
-        this.lastPinchCenterY = centerY;
 
         // Rotation delta from initial angle
         let rotationDelta = 0;
@@ -389,6 +416,27 @@ export class InputManager {
           );
           rotationDelta = currentAngle - this.initialPinchAngle;
         }
+
+        // Per-frame outlier check (defense in depth). A real intentional
+        // gesture stays well below these thresholds; exceeding any of them is
+        // almost always a palm-induced ID swap or sensor glitch.
+        const frameRotation = rotationDelta - this.lastRotationDelta;
+        const frameScaleRatio = scale / this.lastScale;
+        const framePanMag = Math.sqrt(panDx * panDx + panDy * panDy);
+        if (
+          Math.abs(frameRotation) > PINCH_OUTLIER_ROTATION ||
+          frameScaleRatio > PINCH_OUTLIER_SCALE_HI ||
+          frameScaleRatio < PINCH_OUTLIER_SCALE_LO ||
+          framePanMag > PINCH_OUTLIER_PAN
+        ) {
+          this.rebasePinch(touches);
+          return;
+        }
+
+        this.lastPinchCenterX = centerX;
+        this.lastPinchCenterY = centerY;
+        this.lastRotationDelta = rotationDelta;
+        this.lastScale = scale;
 
         this.callbacks.onPinchMove(centerX, centerY, scale, panDx, panDy, rotationDelta);
       }
@@ -446,6 +494,9 @@ export class InputManager {
         if (this.initialPinchDistance !== null) {
           this.initialPinchDistance = null;
           this.initialPinchAngle = null;
+          this.pinchTouchIds = null;
+          this.lastRotationDelta = 0;
+          this.lastScale = 1;
           if (this.isPinchActive) {
             this.isPinchActive = false;
             this.callbacks.onPinchEnd();
@@ -456,6 +507,9 @@ export class InputManager {
         // Went from pinch back to single touch → resume panning
         this.initialPinchDistance = null;
         this.initialPinchAngle = null;
+        this.pinchTouchIds = null;
+        this.lastRotationDelta = 0;
+        this.lastScale = 1;
         if (this.isPinchActive) {
           this.isPinchActive = false;
           this.callbacks.onPinchEnd();
@@ -464,6 +518,21 @@ export class InputManager {
         this.lastPanX = remaining.x;
         this.lastPanY = remaining.y;
         this.isPanning = true;
+      } else if (
+        this.initialPinchDistance !== null &&
+        this.pinchTouchIds !== null
+      ) {
+        // Still 2+ touches after this lift. If one of the original pinch pair
+        // lifted (3→2 with the wrong touch removed), the surviving pair has
+        // different identities than the baseline was captured against —
+        // rebase so we don't compute deltas between different physical fingers.
+        const touches = Array.from(this.activeTouches.values());
+        if (
+          touches[0].id !== this.pinchTouchIds[0] ||
+          touches[1].id !== this.pinchTouchIds[1]
+        ) {
+          this.rebasePinch(touches);
+        }
       }
     }
   }
@@ -493,7 +562,23 @@ export class InputManager {
         }
         this.initialPinchDistance = null;
         this.initialPinchAngle = null;
+        this.pinchTouchIds = null;
+        this.lastRotationDelta = 0;
+        this.lastScale = 1;
         this.touchStartCount = 0;
+      } else if (
+        this.initialPinchDistance !== null &&
+        this.pinchTouchIds !== null &&
+        this.activeTouches.size >= 2
+      ) {
+        // Same touch-set-change rebase as in pointerup.
+        const touches = Array.from(this.activeTouches.values());
+        if (
+          touches[0].id !== this.pinchTouchIds[0] ||
+          touches[1].id !== this.pinchTouchIds[1]
+        ) {
+          this.rebasePinch(touches);
+        }
       }
     }
   }
@@ -612,6 +697,30 @@ export class InputManager {
       }
     }
     return [];
+  }
+
+  /**
+   * Re-anchor the pinch baseline to the current finger positions and notify
+   * the consumer that any cached "start of pinch" camera state should be
+   * cleared. Used on activation crossing, touch-set changes, and outlier
+   * rejection.
+   *
+   * Caller is responsible for skipping the current frame's onPinchMove —
+   * the rebased deltas would all be ~zero anyway and we don't want a no-op
+   * frame to overwrite the consumer's re-anchored base.
+   */
+  private rebasePinch(touches: ActiveTouch[]): void {
+    this.initialPinchDistance = this.touchDistance(touches[0], touches[1]);
+    this.initialPinchAngle = Math.atan2(
+      touches[1].y - touches[0].y,
+      touches[1].x - touches[0].x,
+    );
+    this.lastPinchCenterX = (touches[0].x + touches[1].x) / 2;
+    this.lastPinchCenterY = (touches[0].y + touches[1].y) / 2;
+    this.pinchTouchIds = [touches[0].id, touches[1].id];
+    this.lastRotationDelta = 0;
+    this.lastScale = 1;
+    this.callbacks.onPinchRebase();
   }
 
   private touchDistance(a: ActiveTouch, b: ActiveTouch): number {

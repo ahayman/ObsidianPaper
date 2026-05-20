@@ -1740,6 +1740,15 @@ export class PaperView extends TextFileView {
         this.renderSelectionUI();
       },
 
+      onPinchRebase: () => {
+        // InputManager re-anchored the pinch baseline mid-gesture (touch-set
+        // change or outlier rejection). Forget our cached base zoom/rotation
+        // so the next onPinchMove re-anchors them at the current camera state,
+        // keeping the accumulated transform instead of jumping.
+        this.pinchBaseZoom = null;
+        this.pinchBaseRotation = null;
+      },
+
       onTwoFingerTap: () => {
         this.undo();
       },
