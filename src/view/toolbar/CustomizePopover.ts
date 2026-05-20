@@ -5,6 +5,7 @@ import { ColorPickerPanel } from "./ColorPickerPanel";
 import { DEFAULT_GRAIN_VALUE } from "../../stamp/GrainMapping";
 import { getInkPresetIds, getInkPreset } from "../../stamp/InkPresets";
 import type { InkPresetId } from "../../stamp/InkPresets";
+import { positionPopoverNextToToolbar } from "./PopoverPositioning";
 
 const PEN_TYPES: { type: PenType; label: string }[] = [
   { type: "ballpoint", label: "Ballpoint" },
@@ -103,7 +104,7 @@ export class CustomizePopover {
     });
 
     this.build();
-    this.positionRelativeTo(anchor);
+    positionPopoverNextToToolbar(this.el, anchor, this.position);
 
     // Escape key
     document.addEventListener("keydown", this.handleKeyDown);
@@ -548,44 +549,6 @@ export class CustomizePopover {
         this.position = pos.value;
         this.callbacks.onPositionChange(pos.value);
       });
-    }
-  }
-
-  // ─── Positioning ───────────────────────────────────────────
-
-  private positionRelativeTo(anchor: HTMLElement): void {
-    const anchorRect = anchor.getBoundingClientRect();
-
-    // Position popover adjacent to toolbar using CSS custom properties
-    switch (this.position) {
-      case "top":
-        this.el.setCssProps({
-          "--popover-top": `${anchorRect.bottom + 8}px`,
-          "--popover-left": `${anchorRect.left + anchorRect.width / 2}px`,
-        });
-        this.el.dataset.anchor = "top";
-        break;
-      case "bottom":
-        this.el.setCssProps({
-          "--popover-bottom": `${window.innerHeight - anchorRect.top + 8}px`,
-          "--popover-left": `${anchorRect.left + anchorRect.width / 2}px`,
-        });
-        this.el.dataset.anchor = "bottom";
-        break;
-      case "left":
-        this.el.setCssProps({
-          "--popover-left": `${anchorRect.right + 8}px`,
-          "--popover-top": `${anchorRect.top + anchorRect.height / 2}px`,
-        });
-        this.el.dataset.anchor = "left";
-        break;
-      case "right":
-        this.el.setCssProps({
-          "--popover-right": `${window.innerWidth - anchorRect.left + 8}px`,
-          "--popover-top": `${anchorRect.top + anchorRect.height / 2}px`,
-        });
-        this.el.dataset.anchor = "right";
-        break;
     }
   }
 

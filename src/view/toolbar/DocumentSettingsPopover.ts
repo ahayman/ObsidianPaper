@@ -13,6 +13,7 @@ import { PAGE_SIZE_PRESETS, PPI, CM_PER_INCH } from "../../types";
 import type { PaperSettings } from "../../settings/PaperSettings";
 import { worldUnitsToDisplay, displayToWorldUnits } from "../../settings/PaperSettings";
 import { resolvePageBackground } from "../../color/ColorUtils";
+import type { ToolbarPosition } from "./ToolbarTypes";
 
 const PAGE_SIZE_OPTIONS: { value: PageSizePreset; label: string }[] = [
   { value: "us-letter", label: "US Letter" },
@@ -37,8 +38,16 @@ const BG_COLOR_OPTIONS: { value: string; label: string }[] = [
   { value: "custom", label: "Custom" },
 ];
 
+const TOOLBAR_POSITION_OPTIONS: { value: ToolbarPosition; label: string }[] = [
+  { value: "top", label: "Top" },
+  { value: "bottom", label: "Bottom" },
+  { value: "left", label: "Left" },
+  { value: "right", label: "Right" },
+];
+
 export interface DocSettingsContext {
   renderPipeline: RenderPipeline;
+  toolbarPosition: ToolbarPosition;
   pageDefaults: PageDefaults;
   globalSettings: PaperSettings;
   spacingUnit: SpacingUnit;
@@ -47,6 +56,7 @@ export interface DocSettingsContext {
 
 export interface DocSettingsCallbacks {
   onRenderPipelineChange: (pipeline: RenderPipeline) => void;
+  onToolbarPositionChange: (position: ToolbarPosition) => void;
   onPageDefaultsChange: (defaults: PageDefaults) => void;
   /** Swap the current leaf to the markdown view. Optional: if omitted, the
    *  "View raw" action is hidden (e.g., embed modal where it doesn't apply). */
@@ -66,6 +76,7 @@ export class DocumentSettingsPopover {
 
   // Element refs
   private pipelineBtns: Map<string, HTMLElement> = new Map();
+  private toolbarPositionBtns: Map<ToolbarPosition, HTMLElement> = new Map();
   private pageSizeBtns: Map<string, HTMLElement> = new Map();
   private orientationBtns: Map<string, HTMLElement> = new Map();
   private customSizeSection: HTMLElement | null = null;
@@ -110,7 +121,10 @@ export class DocumentSettingsPopover {
     // 1. Rendering Pipeline
     this.buildRenderingSection(content);
 
-    // 2. Page Defaults header
+    // 2. Toolbar position
+    this.buildToolbarPositionSection(content);
+
+    // 3. Page Defaults header
     const headerSection = content.createEl("div", { cls: "paper-popover__section" });
     headerSection.createEl("div", { cls: "paper-popover__section-title", text: "New Page Defaults" });
     headerSection.createEl("div", { cls: "paper-doc-settings__subtitle", text: "Overrides for new pages in this document" });
@@ -179,6 +193,30 @@ export class DocumentSettingsPopover {
         for (const [, b] of this.pipelineBtns) b.removeClass("is-active");
         btn.addClass("is-active");
         this.callbacks.onRenderPipelineChange(opt.value);
+      });
+    }
+  }
+
+  // ─── Toolbar Position ────────────────────────────────────
+
+  private buildToolbarPositionSection(parent: HTMLElement): void {
+    const section = parent.createEl("div", { cls: "paper-popover__section" });
+    section.createEl("div", { cls: "paper-popover__section-title", text: "Toolbar position" });
+    const row = section.createEl("div", { cls: "paper-popover__positions" });
+
+    for (const opt of TOOLBAR_POSITION_OPTIONS) {
+      const btn = row.createEl("button", {
+        cls: "paper-popover__position-btn",
+        text: opt.label,
+      });
+      if (opt.value === this.context.toolbarPosition) btn.addClass("is-active");
+      this.toolbarPositionBtns.set(opt.value, btn);
+
+      btn.addEventListener("click", () => {
+        for (const [, b] of this.toolbarPositionBtns) b.removeClass("is-active");
+        btn.addClass("is-active");
+        this.context.toolbarPosition = opt.value;
+        this.callbacks.onToolbarPositionChange(opt.value);
       });
     }
   }

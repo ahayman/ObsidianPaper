@@ -360,6 +360,7 @@ export class EmbeddedPaperModal extends Modal {
     this.docSettingsPopover = new DocumentSettingsPopover(
       {
         renderPipeline: this.getResolvedPipeline(),
+        toolbarPosition: this.deviceSettings.toolbarPosition,
         pageDefaults: this.document.pageDefaults ?? {},
         globalSettings: this.settings,
         spacingUnit: this.settings.spacingUnit,
@@ -368,6 +369,11 @@ export class EmbeddedPaperModal extends Modal {
       this.toolbar!.getDocSettingsAnchor(),
       {
         onRenderPipelineChange: (pipeline) => this.updateRenderPipeline(pipeline),
+        onToolbarPositionChange: (position) => {
+          this.deviceSettings.toolbarPosition = position;
+          this.toolbar?.setPosition(position);
+          this.onDeviceSettingsChanged?.({ toolbarPosition: position });
+        },
         onPageDefaultsChange: (defaults) => this.updatePageDefaults(defaults),
         onDismiss: () => {
           this.docSettingsPopover?.destroy();

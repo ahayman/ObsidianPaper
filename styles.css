@@ -325,7 +325,7 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   pointer-events: auto;
   touch-action: manipulation;
-  transition: opacity 0.2s, transform 0.2s;
+  transition: opacity 0.2s;
 }
 
 /* Position variants */
@@ -599,24 +599,16 @@
   transition: opacity 0.2s;
 }
 
-/* Position variants — left/top set by JS to anchor to the current pen button */
-.paper-recent-colors[data-position="top"] {
-  top: 72px;
-  flex-direction: row;
-}
-
+/* Position variants — top/bottom/left/right all set by JS to clear stale
+   values from the previous position and to size the offset to the actual
+   toolbar bounds. */
+.paper-recent-colors[data-position="top"],
 .paper-recent-colors[data-position="bottom"] {
-  bottom: 72px;
   flex-direction: row;
 }
 
-.paper-recent-colors[data-position="left"] {
-  left: 72px;
-  flex-direction: column;
-}
-
+.paper-recent-colors[data-position="left"],
 .paper-recent-colors[data-position="right"] {
-  right: 72px;
   flex-direction: column;
 }
 
@@ -906,30 +898,6 @@
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
   pointer-events: auto;
   touch-action: manipulation;
-}
-
-.paper-popover[data-anchor="top"] {
-  top: var(--popover-top);
-  left: var(--popover-left);
-  transform: translateX(-50%);
-}
-
-.paper-popover[data-anchor="bottom"] {
-  bottom: var(--popover-bottom);
-  left: var(--popover-left);
-  transform: translateX(-50%);
-}
-
-.paper-popover[data-anchor="left"] {
-  left: var(--popover-left);
-  top: var(--popover-top);
-  transform: translateY(-50%);
-}
-
-.paper-popover[data-anchor="right"] {
-  right: var(--popover-right);
-  top: var(--popover-top);
-  transform: translateY(-50%);
 }
 
 .paper-popover[data-anchor="fixed"] {

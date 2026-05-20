@@ -1,6 +1,7 @@
 import { setIcon } from "obsidian";
 import type { ToolbarPosition } from "./ToolbarTypes";
 import { ColorPickerPanel } from "./ColorPickerPanel";
+import { positionPopoverNextToToolbar } from "./PopoverPositioning";
 
 export interface ColorWheelPopoverCallbacks {
   onColorChange: (colorId: string) => void;
@@ -70,7 +71,7 @@ export class ColorWheelPopover {
       this.updatePinButton();
     });
 
-    this.positionRelativeTo(anchor, position);
+    positionPopoverNextToToolbar(this.el, anchor, position);
 
     // Escape key
     document.addEventListener("keydown", this.handleKeyDown);
@@ -92,41 +93,6 @@ export class ColorWheelPopover {
       this.callbacks.onDismiss();
     }
   };
-
-  private positionRelativeTo(anchor: HTMLElement, position: ToolbarPosition): void {
-    const anchorRect = anchor.getBoundingClientRect();
-
-    switch (position) {
-      case "top":
-        this.el.setCssProps({
-          "--popover-top": `${anchorRect.bottom + 8}px`,
-          "--popover-left": `${anchorRect.left + anchorRect.width / 2}px`,
-        });
-        this.el.dataset.anchor = "top";
-        break;
-      case "bottom":
-        this.el.setCssProps({
-          "--popover-bottom": `${window.innerHeight - anchorRect.top + 8}px`,
-          "--popover-left": `${anchorRect.left + anchorRect.width / 2}px`,
-        });
-        this.el.dataset.anchor = "bottom";
-        break;
-      case "left":
-        this.el.setCssProps({
-          "--popover-left": `${anchorRect.right + 8}px`,
-          "--popover-top": `${anchorRect.top + anchorRect.height / 2}px`,
-        });
-        this.el.dataset.anchor = "left";
-        break;
-      case "right":
-        this.el.setCssProps({
-          "--popover-right": `${window.innerWidth - anchorRect.left + 8}px`,
-          "--popover-top": `${anchorRect.top + anchorRect.height / 2}px`,
-        });
-        this.el.dataset.anchor = "right";
-        break;
-    }
-  }
 
   setSelectedColor(colorId: string): void {
     this.currentColorId = colorId;

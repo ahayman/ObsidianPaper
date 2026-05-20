@@ -601,23 +601,41 @@ export class Toolbar {
   }
 
   /**
-   * Position the recent color strip so it's anchored to the current pen button.
+   * Position the recent color strip so its parallel-to-toolbar edge sits
+   * just outside the toolbar and the perpendicular edge aligns with the
+   * current pen button. Both axes are written every call so previous-position
+   * values never leak across a `setPosition` change.
    */
   private positionRecentStrip(): void {
     if (!this.recentColorStrip || !this.currentPenBtn) return;
     const stripEl = this.recentColorStrip.el;
     const containerRect = this.container.getBoundingClientRect();
+    const toolbarRect = this.el.getBoundingClientRect();
     const penRect = this.currentPenBtn.el.getBoundingClientRect();
-    const isVertical = this.position === "left" || this.position === "right";
+    const gap = 8;
 
-    if (isVertical) {
-      const top = penRect.top - containerRect.top;
-      stripEl.style.top = `${top}px`;
-      stripEl.style.transform = "none";
-    } else {
-      const left = penRect.left - containerRect.left;
-      stripEl.style.left = `${left}px`;
-      stripEl.style.transform = "none";
+    stripEl.style.top = "";
+    stripEl.style.bottom = "";
+    stripEl.style.left = "";
+    stripEl.style.right = "";
+
+    switch (this.position) {
+      case "left":
+        stripEl.style.left = `${toolbarRect.right - containerRect.left + gap}px`;
+        stripEl.style.top = `${penRect.top - containerRect.top}px`;
+        break;
+      case "right":
+        stripEl.style.right = `${containerRect.right - toolbarRect.left + gap}px`;
+        stripEl.style.top = `${penRect.top - containerRect.top}px`;
+        break;
+      case "top":
+        stripEl.style.top = `${toolbarRect.bottom - containerRect.top + gap}px`;
+        stripEl.style.left = `${penRect.left - containerRect.left}px`;
+        break;
+      case "bottom":
+        stripEl.style.bottom = `${containerRect.bottom - toolbarRect.top + gap}px`;
+        stripEl.style.left = `${penRect.left - containerRect.left}px`;
+        break;
     }
   }
 
