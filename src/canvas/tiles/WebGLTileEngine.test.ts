@@ -159,7 +159,6 @@ function setGrain(engine: WebGLTileEngine, generator: any): void {
     grainStrengthOverrides: new Map(),
     stampManager: null,
     inkStampManager: null,
-    markerStampManager: null,
     pipeline: "basic",
   });
   engine.syncGrainTexture();

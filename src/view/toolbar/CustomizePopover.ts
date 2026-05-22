@@ -485,8 +485,8 @@ export class CustomizePopover {
   private updateInkDepletionVisibility(): void {
     if (!this.inkDepletionSection) return;
     const penConfig = getPenConfig(this.state.penType);
-    const hasMarkerStamp = penConfig.markerStamp !== null;
-    this.inkDepletionSection.toggleClass("is-hidden", !hasMarkerStamp);
+    const hasMarker = penConfig.markerScatter !== null;
+    this.inkDepletionSection.toggleClass("is-hidden", !hasMarker);
   }
 
   // ─── Nib Visibility ────────────────────────────────────────

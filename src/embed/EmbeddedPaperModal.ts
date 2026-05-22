@@ -782,7 +782,7 @@ export class EmbeddedPaperModal extends Modal {
     if (penConfig.inkStamp) {
       style.inkPreset = this.currentInkPreset;
     }
-    if (penConfig.markerStamp) {
+    if (penConfig.markerScatter) {
       style.inkDepletion = this.currentInkDepletion;
     }
     return style;

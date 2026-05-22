@@ -106,8 +106,8 @@ export class PresetManager {
     if (penConfig.inkStamp) {
       preset.inkPreset = state.inkPreset;
     }
-    // Include ink depletion for marker stamps (felt-tip)
-    if (penConfig.markerStamp) {
+    // Include ink depletion for the felt-tip marker
+    if (penConfig.markerScatter) {
       preset.inkDepletion = state.inkDepletion;
     }
     if (state.nibAngle !== undefined) preset.nibAngle = state.nibAngle;

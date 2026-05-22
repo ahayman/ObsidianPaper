@@ -106,36 +106,75 @@ void main() {
 }
 `;
 
-// ─── Marker Stamp Program (Instanced, Rotated) ─────────────────────
-// Draws rotated rectangular textured quads for felt-tip marker stamps.
-// Per-instance data: [x, y, width, height, rotation, opacity] (6 floats, stride 24).
-// Uses 3 attribute locations for the 3 vec2 components.
+// ─── Streak Program (Instanced) ─────────────────────────────────────
+// Curved capsules (thick circular arcs, round ends) for felt-tip fibres.
+// Per-instance data: a_streak0 [cx, cy, halfLen, radius],
+//                    a_streak1 [cos, sin, opacity, curvature].
+// curvature is signed (1/world-units); 0 = a straight capsule.
 
-export const MARKER_STAMP_VERT = `#version 300 es
+export const STAMP_STREAK_VERT = `#version 300 es
 precision highp float;
 uniform mat3 u_transform;
 in vec2 a_position;      // unit quad [-0.5, 0.5]
-in vec2 a_texcoord;      // [0, 1] UVs
-in vec2 a_stampPos;      // [x, y] world position (per instance)
-in vec2 a_stampSize;     // [width, height] (per instance)
-in vec2 a_stampRotOp;    // [rotation, opacity] (per instance)
-out vec2 v_texcoord;
-out float v_opacity;
+in vec4 a_streak0;       // [cx, cy, halfLen, radius] per instance
+in vec4 a_streak1;       // [cos, sin, opacity, curvature] per instance
+out vec2 v_local;        // fibre-local, axis-aligned, world units
+flat out vec3 v_dims;    // [halfLen, radius, curvature]
+flat out float v_opacity;
 void main() {
-  float rot = a_stampRotOp.x;
-  float c = cos(rot);
-  float s = sin(rot);
-  vec2 scaled = a_position * a_stampSize;
-  vec2 rotated = vec2(scaled.x * c - scaled.y * s, scaled.x * s + scaled.y * c);
-  vec2 worldPos = a_stampPos + rotated;
-  vec3 pos = u_transform * vec3(worldPos, 1.0);
+  float halfLen = a_streak0.z;
+  float radius = a_streak0.w;
+  float curv = a_streak1.w;
+  float ac = abs(curv);
+  // Expand the quad's cross-axis by the arc sagitta so a curved fibre fits.
+  float sagitta = (ac > 1e-4) ? (1.0 / ac) * (1.0 - cos(halfLen * ac)) : 0.0;
+  vec2 local = a_position * vec2(2.0 * (halfLen + radius), 2.0 * (radius + sagitta));
+  float c = a_streak1.x;
+  float s = a_streak1.y;
+  vec2 rotated = vec2(local.x * c - local.y * s, local.x * s + local.y * c);
+  vec3 pos = u_transform * vec3(a_streak0.xy + rotated, 1.0);
   gl_Position = vec4(pos.xy, 0.0, 1.0);
-  v_texcoord = a_texcoord;
-  v_opacity = a_stampRotOp.y;
+  v_local = local;
+  v_dims = vec3(halfLen, radius, curv);
+  v_opacity = a_streak1.z;
 }
 `;
 
-// Reuses STAMP_FRAG for the fragment shader (same texture sampling + opacity).
+// Thick-arc SDF (round ends), straight-capsule branch for curv ~ 0.
+// Hard edge — mirrors the disc's discard (tile MSAA resolves it crisp).
+export const STAMP_STREAK_FRAG = `#version 300 es
+precision highp float;
+uniform float u_alpha;
+uniform vec3 u_color;
+in vec2 v_local;
+flat in vec3 v_dims;
+flat in float v_opacity;
+out vec4 fragColor;
+void main() {
+  float halfLen = v_dims.x;
+  float radius = v_dims.y;
+  float curv = v_dims.z;
+  float ac = abs(curv);
+  float d;
+  if (ac < 1e-4) {
+    // Straight capsule.
+    float dx = max(abs(v_local.x) - halfLen, 0.0);
+    d = length(vec2(dx, v_local.y)) - radius;
+  } else {
+    // Thick circular arc. Fold the curvature sign, then iq's arc SDF:
+    // circle centre at (0,R), arc symmetric about +y, midpoint (0,R).
+    float R = 1.0 / ac;
+    vec2 p = vec2(v_local.x, v_local.y * sign(curv));
+    vec2 q = vec2(abs(p.x), R - p.y);
+    float ap = halfLen * ac;
+    vec2 sc = vec2(sin(ap), cos(ap));
+    float da = (sc.y * q.x > sc.x * q.y) ? length(q - sc * R) : abs(length(q) - R);
+    d = da - radius;
+  }
+  if (d > 0.0) discard;
+  fragColor = vec4(u_color * v_opacity * u_alpha, v_opacity * u_alpha);
+}
+`;
 
 // ─── Grain Program ──────────────────────────────────────────────────
 // Fullscreen quad with tiled grain texture. Used with destination-out blend.

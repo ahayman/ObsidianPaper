@@ -26,8 +26,8 @@ import { generateItalicOutlineSides } from "../stroke/ItalicOutlineGenerator";
 import { resolveColor } from "../color/ColorPalette";
 import { computeAllStamps } from "../stamp/StampRenderer";
 import { computeAllInkStamps } from "../stamp/InkStampRenderer";
-import { computeAllMarkerStamps } from "../stamp/MarkerStampRenderer";
-import { packStampsToFloat32, packInkStampsToFloat32, packMarkerStampsToFloat32 } from "../stamp/StampPacking";
+import { computeAllMarkerScatter } from "../stamp/MarkerScatterRenderer";
+import { packStampsToFloat32, packInkStampsToFloat32, packStreaksToFloat32 } from "../stamp/StampPacking";
 import { getInkPreset } from "../stamp/InkPresets";
 import { DEFAULT_GRAIN_VALUE, grainToTextureStrength } from "../stamp/GrainMapping";
 import { detectInkPools } from "../stroke/InkPooling";
@@ -54,8 +54,10 @@ export function prepareStrokeData(
   const color = resolveColor(style.color, useDarkColors);
   const cacheKey = lodCacheKey(stroke.id, lod);
   const needsVertices = materialNeedsVertices(material);
-  const needsStamps = material.body.type === "stampDiscs" || material.body.type === "inkShading";
-  const needsMarkerStamps = material.body.type === "markerStamps";
+  const needsStamps =
+    material.body.type === "stampDiscs" ||
+    material.body.type === "stampStreaks" ||
+    material.body.type === "inkShading";
 
   // Decode points (lazy — only if we need to generate outline or stamps)
   let decodedPoints: StrokePoint[] | undefined;
@@ -106,20 +108,14 @@ export function prepareStrokeData(
     if (material.body.type === "stampDiscs" && penConfig.stamp) {
       const stamps = computeAllStamps(points, style, penConfig, penConfig.stamp);
       stampData = packStampsToFloat32(stamps);
+    } else if (material.body.type === "stampStreaks" && penConfig.markerScatter) {
+      const streaks = computeAllMarkerScatter(points, style, penConfig, penConfig.markerScatter);
+      stampData = packStreaksToFloat32(streaks);
     } else if (material.body.type === "inkShading" && penConfig.inkStamp) {
       const presetConfig = getInkPreset(style.inkPreset);
       const stamps = computeAllInkStamps(points, style, penConfig, penConfig.inkStamp, presetConfig);
       stampData = packInkStampsToFloat32(stamps);
     }
-  }
-
-  // ── Marker stamp data ─────────────────────────────────
-  let markerStampData: Float32Array | undefined;
-
-  if (needsMarkerStamps && penConfig.markerStamp) {
-    const points = getPoints();
-    const stamps = computeAllMarkerStamps(points, style, penConfig, penConfig.markerStamp);
-    markerStampData = packMarkerStampsToFloat32(stamps);
   }
 
   // ── Grain data ────────────────────────────────────────
@@ -136,22 +132,14 @@ export function prepareStrokeData(
     ];
   }
 
-  // ── Fiber anchor (per-stroke offset for unique fiber patterns) ──
-  let fiberAnchor: [number, number] | undefined;
-  if (hasEffect(material, "fiberOverlay")) {
-    fiberAnchor = [stroke.bbox[0], stroke.bbox[1]];
-  }
-
   return {
     vertices,
     italic,
     color,
     bbox: stroke.bbox,
     stampData,
-    markerStampData,
     grainAnchor,
     grainStrength,
-    fiberAnchor,
     strokeWidth: style.width,
   };
 }
@@ -172,8 +160,10 @@ export function prepareActiveStrokeData(
 ): StrokeRenderData {
   const color = resolveColor(style.color, useDarkColors);
   const needsVertices = materialNeedsVertices(material);
-  const needsStamps = material.body.type === "stampDiscs" || material.body.type === "inkShading";
-  const needsMarkerStamps = material.body.type === "markerStamps";
+  const needsStamps =
+    material.body.type === "stampDiscs" ||
+    material.body.type === "stampStreaks" ||
+    material.body.type === "inkShading";
 
   // ── Vertices ──────────────────────────────────────────
   let vertices: Float32Array | null = null;
@@ -205,20 +195,14 @@ export function prepareActiveStrokeData(
     if (material.body.type === "stampDiscs" && penConfig.stamp) {
       const stamps = computeAllStamps(qPoints, style, penConfig, penConfig.stamp);
       stampData = packStampsToFloat32(stamps);
+    } else if (material.body.type === "stampStreaks" && penConfig.markerScatter) {
+      const streaks = computeAllMarkerScatter(qPoints, style, penConfig, penConfig.markerScatter);
+      stampData = packStreaksToFloat32(streaks);
     } else if (material.body.type === "inkShading" && penConfig.inkStamp) {
       const presetConfig = getInkPreset(style.inkPreset);
       const stamps = computeAllInkStamps(qPoints, style, penConfig, penConfig.inkStamp, presetConfig);
       stampData = packInkStampsToFloat32(stamps);
     }
-  }
-
-  // ── Marker stamp data ─────────────────────────────────
-  let markerStampData: Float32Array | undefined;
-
-  if (needsMarkerStamps && penConfig.markerStamp) {
-    const qPoints = quantizePoints(points);
-    const stamps = computeAllMarkerStamps(qPoints, style, penConfig, penConfig.markerStamp);
-    markerStampData = packMarkerStampsToFloat32(stamps);
   }
 
   // ── Grain data ────────────────────────────────────────
@@ -232,22 +216,14 @@ export function prepareActiveStrokeData(
     resolvedGrainAnchor = grainAnchor ?? [bbox[0], bbox[1]];
   }
 
-  // ── Fiber anchor (per-stroke offset for unique fiber patterns) ──
-  let fiberAnchor: [number, number] | undefined;
-  if (hasEffect(material, "fiberOverlay")) {
-    fiberAnchor = [bbox[0], bbox[1]];
-  }
-
   return {
     vertices,
     italic,
     color,
     bbox,
     stampData,
-    markerStampData,
     grainAnchor: resolvedGrainAnchor,
     grainStrength,
-    fiberAnchor,
     strokeWidth: style.width,
   };
 }

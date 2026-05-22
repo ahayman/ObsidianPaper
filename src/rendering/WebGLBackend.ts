@@ -84,12 +84,12 @@ export class WebGLBackend implements DrawingBackend {
     this.engine.drawStampDiscs(color, data);
   }
 
-  drawStamps(texture: TextureRef, data: Float32Array): void {
-    this.engine.drawStamps(texture as TextureHandle, data);
+  drawStampStreaks(color: string, data: Float32Array): void {
+    this.engine.drawStampStreaks(color, data);
   }
 
-  drawMarkerStamps(texture: TextureRef, data: Float32Array): void {
-    this.engine.drawMarkerStamps(texture as TextureHandle, data);
+  drawStamps(texture: TextureRef, data: Float32Array): void {
+    this.engine.drawStamps(texture as TextureHandle, data);
   }
 
   // ── Grain texture ────────────────────────────────────────

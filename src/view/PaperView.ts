@@ -1305,8 +1305,8 @@ export class PaperView extends TextFileView {
     if (penConfig.inkStamp) {
       style.inkPreset = this.currentInkPreset;
     }
-    // Store ink depletion for marker stamp pens (felt-tip)
-    if (penConfig.markerStamp) {
+    // Store ink depletion for the felt-tip marker
+    if (penConfig.markerScatter) {
       style.inkDepletion = this.currentInkDepletion;
     }
     return style;

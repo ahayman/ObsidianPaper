@@ -25,15 +25,15 @@ export interface StampDiscsBody {
   readonly type: "stampDiscs";
 }
 
+export interface StampStreaksBody {
+  readonly type: "stampStreaks";
+}
+
 export interface InkShadingBody {
   readonly type: "inkShading";
 }
 
-export interface MarkerStampsBody {
-  readonly type: "markerStamps";
-}
-
-export type StrokeBody = FillBody | StampDiscsBody | InkShadingBody | MarkerStampsBody;
+export type StrokeBody = FillBody | StampDiscsBody | StampStreaksBody | InkShadingBody;
 
 // ─── Effect Types ───────────────────────────────────────────
 
@@ -49,13 +49,7 @@ export interface InkPoolingEffect {
   readonly type: "inkPooling";
 }
 
-export interface FiberOverlayEffect {
-  readonly type: "fiberOverlay";
-  /** Fiber erasure strength (0-1). Computed from penConfig.markerStamp.fiberDensity. */
-  readonly strength: number;
-}
-
-export type MaterialEffect = GrainEffect | OutlineMaskEffect | InkPoolingEffect | FiberOverlayEffect;
+export type MaterialEffect = GrainEffect | OutlineMaskEffect | InkPoolingEffect;
 
 // ─── Material ───────────────────────────────────────────────
 
@@ -138,22 +132,16 @@ export function resolveMaterial(
     };
   }
 
-  // Marker stamp rendering (felt-tip chisel stamps with outline mask)
-  // Same approach as fountain pen ink shading: stamps provide texture,
-  // outline mask clips to the stroke path to hide individual stamp edges.
-  // Fiber overlay is applied BEFORE the mask to add visible felt-tip streaks.
-  if (isAdvancedLod0 && penConfig.markerStamp) {
-    const effects: MaterialEffect[] = [];
-    if (penConfig.markerStamp.fiberDensity > 0) {
-      effects.push({ type: "fiberOverlay", strength: 0.7 * penConfig.markerStamp.fiberDensity });
-    }
-    effects.push({ type: "outlineMask" });
+  // Felt-tip marker — a particle flow brush (see MarkerScatterRenderer).
+  // Renders through the stampStreaks path: oriented capsule fibres composited
+  // source-over with NO isolation, so ink builds up on self-overlap.
+  if (isAdvancedLod0 && penConfig.markerScatter) {
     return {
-      body: { type: "markerStamps" },
+      body: { type: "stampStreaks" },
       blending: "source-over",
-      bodyOpacity: style.opacity,
-      isolation: true,
-      effects,
+      bodyOpacity: 1,
+      isolation: false,
+      effects: [],
     };
   }
 

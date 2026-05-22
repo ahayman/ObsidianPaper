@@ -8,10 +8,9 @@ import type { TileGridConfig } from "./TileTypes";
 import { StrokePathCache } from "../../stroke/OutlineGenerator";
 import { selectLodLevel } from "../../stroke/StrokeSimplifier";
 import { resolvePageBackground } from "../../color/ColorUtils";
-import { renderStrokeToContext, renderStrokeToEngine, getFiberOverlay } from "../StrokeRenderCore";
+import { renderStrokeToContext, renderStrokeToEngine } from "../StrokeRenderCore";
 import type { GrainRenderContext, StampRenderContext, EngineGrainContext, EngineStampContext } from "../StrokeRenderCore";
 import { InkStampTextureManager } from "../../stamp/InkStampTextureManager";
-import { MarkerStampTextureManager } from "../../stamp/MarkerStampTextureManager";
 import { renderDeskFill, renderPageBackground, renderDeskFillEngine, renderPageBackgroundEngine } from "../BackgroundRenderer";
 import type { RenderEngine, TextureHandle } from "../engine/RenderEngine";
 import { Canvas2DEngine } from "../engine/Canvas2DEngine";
@@ -46,8 +45,6 @@ export class TileRenderer {
   private engine: RenderEngine | null = null;
   /** Grain texture handle for engine-based rendering. */
   private engineGrainTexture: TextureHandle | null = null;
-  /** Fiber overlay texture handle for engine-based rendering. */
-  private engineFiberTexture: TextureHandle | null = null;
 
   constructor(grid: TileGrid, config: TileGridConfig, pathCache: StrokePathCache, useEngine = false) {
     this.grid = grid;
@@ -59,7 +56,6 @@ export class TileRenderer {
       grainStrengthOverrides: new Map(),
       stampManager: null,
       inkStampManager: null,
-      markerStampManager: null,
       pipeline: "basic",
     };
   }
@@ -133,7 +129,7 @@ export class TileRenderer {
 
     const strokeIdSet = new Set(strokeIds);
     const grainCtx = this.getGrainRenderContext(tilePhysical, tilePhysical);
-    const hasAnyStampManager = this.resources.stampManager || this.resources.inkStampManager || this.resources.markerStampManager;
+    const hasAnyStampManager = this.resources.stampManager || this.resources.inkStampManager;
     const stampCtx: StampRenderContext | null = hasAnyStampManager
       ? {
           getCache: (gv) => this.resources.stampManager!.getCache(gv),
@@ -143,9 +139,6 @@ export class TileRenderer {
             }
             return this.resources.inkStampManager.getCache(presetId);
           },
-          getMarkerCache: this.resources.markerStampManager
-            ? () => this.resources.markerStampManager!.getCache()
-            : undefined,
         }
       : null;
 
@@ -301,15 +294,8 @@ export class TileRenderer {
   }
 
   private getEngineGrainContext(canvasWidth: number, canvasHeight: number): EngineGrainContext {
-    // Lazily create fiber overlay texture for felt-tip fiber streaks
-    if (!this.engineFiberTexture && this.resources.markerStampManager && this.engine) {
-      const fiberCanvas = getFiberOverlay();
-      this.engineFiberTexture = this.engine.createTexture(fiberCanvas);
-    }
-
     return {
       grainTexture: this.engineGrainTexture,
-      fiberOverlayTexture: this.engineFiberTexture,
       strengthOverrides: this.resources.grainStrengthOverrides,
       pipeline: this.resources.pipeline,
       canvasWidth,
@@ -320,7 +306,7 @@ export class TileRenderer {
   private getEngineStampContext(): EngineStampContext | null {
     if (!this.engine) return null;
     // Need stamp context if any stamp-based pen is available
-    if (!this.resources.stampManager && !this.resources.markerStampManager) return null;
+    if (!this.resources.stampManager) return null;
     const engine = this.engine;
     const stampManager = this.resources.stampManager;
     // Cache of engine textures created from stamp image sources
@@ -346,20 +332,6 @@ export class TileRenderer {
         let tex = textureCache.get(key);
         if (!tex) {
           const cache = this.resources.inkStampManager.getCache(presetId);
-          const colored = cache.getColored(color);
-          tex = engine.createTexture(colored);
-          textureCache.set(key, tex);
-        }
-        return tex;
-      },
-      getMarkerStampTexture: (color: string): TextureHandle | null => {
-        if (!this.resources.markerStampManager) {
-          this.resources.markerStampManager = new MarkerStampTextureManager();
-        }
-        const key = `marker-${color}`;
-        let tex = textureCache.get(key);
-        if (!tex) {
-          const cache = this.resources.markerStampManager.getCache();
           const colored = cache.getColored(color);
           tex = engine.createTexture(colored);
           textureCache.set(key, tex);
@@ -394,10 +366,6 @@ export class TileRenderer {
     if (this.engineGrainTexture && this.engine) {
       this.engine.deleteTexture(this.engineGrainTexture);
       this.engineGrainTexture = null;
-    }
-    if (this.engineFiberTexture && this.engine) {
-      this.engine.deleteTexture(this.engineFiberTexture);
-      this.engineFiberTexture = null;
     }
     this.engine?.destroy();
     this.engine = null;

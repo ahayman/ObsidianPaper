@@ -11,6 +11,7 @@ import type {
   OffscreenRef,
   BackendBlendMode,
 } from "./DrawingBackend";
+import { strokeFibre } from "../stamp/StreakRenderer";
 
 // ─── Internal Types ─────────────────────────────────────────
 
@@ -132,6 +133,21 @@ export class Canvas2DBackend implements DrawingBackend {
     ctx.globalAlpha = 1;
   }
 
+  drawStampStreaks(color: string, data: Float32Array): void {
+    const ctx = this.activeCtx;
+    ctx.strokeStyle = color;
+    for (let i = 0; i < data.length; i += 8) {
+      const opacity = data[i + 6]!;
+      if (opacity < 0.012) continue;
+      ctx.globalAlpha = opacity;
+      strokeFibre(
+        ctx, data[i]!, data[i + 1]!, data[i + 4]!, data[i + 5]!,
+        data[i + 2]!, data[i + 3]!, data[i + 7]!,
+      );
+    }
+    ctx.globalAlpha = 1;
+  }
+
   drawStamps(texture: TextureRef, data: Float32Array): void {
     const tex = texture as Canvas2DTextureRef;
     const ctx = this.activeCtx;
@@ -145,26 +161,6 @@ export class Canvas2DBackend implements DrawingBackend {
       const half = size * 0.5;
       ctx.drawImage(tex.source, x - half, y - half, size, size);
       ctx.globalAlpha = prevAlpha;
-    }
-  }
-
-  drawMarkerStamps(texture: TextureRef, data: Float32Array): void {
-    const tex = texture as Canvas2DTextureRef;
-    const ctx = this.activeCtx;
-    for (let i = 0; i < data.length; i += 6) {
-      const x = data[i]!;
-      const y = data[i + 1]!;
-      const w = data[i + 2]!;
-      const h = data[i + 3]!;
-      const rotation = data[i + 4]!;
-      const opacity = data[i + 5]!;
-      if (opacity < 0.05) continue;
-      ctx.save();
-      ctx.globalAlpha = opacity;
-      ctx.translate(x, y);
-      ctx.rotate(rotation);
-      ctx.drawImage(tex.source, -w * 0.5, -h * 0.5, w, h);
-      ctx.restore();
     }
   }
 

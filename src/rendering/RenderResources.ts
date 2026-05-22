@@ -14,7 +14,6 @@ import type { PenType, RenderPipeline } from "../types";
 import type { GrainTextureGenerator } from "../canvas/GrainTextureGenerator";
 import type { StampTextureManager } from "../stamp/StampTextureManager";
 import type { InkStampTextureManager } from "../stamp/InkStampTextureManager";
-import type { MarkerStampTextureManager } from "../stamp/MarkerStampTextureManager";
 
 /**
  * All rendering resources shared between the Renderer, TileRenderer,
@@ -25,6 +24,5 @@ export interface RenderResources {
   grainStrengthOverrides: Map<PenType, number>;
   stampManager: StampTextureManager | null;
   inkStampManager: InkStampTextureManager | null;
-  markerStampManager: MarkerStampTextureManager | null;
   pipeline: RenderPipeline;
 }

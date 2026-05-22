@@ -37,13 +37,19 @@ export class RecordingContext2D {
   readonly calls: RecordedCall[] = [];
 
   private _fillStyle: string | CanvasPattern = "";
+  private _strokeStyle: string | CanvasPattern = "";
   private _globalAlpha = 1;
   private _globalCompositeOperation = "source-over";
+  private _lineWidth = 1;
+  private _lineCap = "butt";
   private transformStack: DOMMatrix[] = [];
   private stateStack: Array<{
     fillStyle: string | CanvasPattern;
+    strokeStyle: string | CanvasPattern;
     globalAlpha: number;
     globalCompositeOperation: string;
+    lineWidth: number;
+    lineCap: string;
   }> = [];
   private currentTransform = new DOMMatrix();
 
@@ -85,14 +91,45 @@ export class RecordingContext2D {
     this.calls.push({ method: "set:globalCompositeOperation", args: [value] });
   }
 
+  get strokeStyle(): string | CanvasPattern {
+    return this._strokeStyle;
+  }
+
+  set strokeStyle(value: string | CanvasPattern) {
+    this._strokeStyle = value;
+    const recorded = typeof value === "string" ? value : "CanvasPattern";
+    this.calls.push({ method: "set:strokeStyle", args: [recorded] });
+  }
+
+  get lineWidth(): number {
+    return this._lineWidth;
+  }
+
+  set lineWidth(value: number) {
+    this._lineWidth = value;
+    this.calls.push({ method: "set:lineWidth", args: [value] });
+  }
+
+  get lineCap(): string {
+    return this._lineCap;
+  }
+
+  set lineCap(value: string) {
+    this._lineCap = value;
+    this.calls.push({ method: "set:lineCap", args: [value] });
+  }
+
   // --- Transform stack ---
 
   save(): void {
     this.transformStack.push(DOMMatrix.fromMatrix(this.currentTransform));
     this.stateStack.push({
       fillStyle: this._fillStyle,
+      strokeStyle: this._strokeStyle,
       globalAlpha: this._globalAlpha,
       globalCompositeOperation: this._globalCompositeOperation,
+      lineWidth: this._lineWidth,
+      lineCap: this._lineCap,
     });
     this.calls.push({ method: "save", args: [] });
   }
@@ -105,8 +142,11 @@ export class RecordingContext2D {
     const prevState = this.stateStack.pop();
     if (prevState) {
       this._fillStyle = prevState.fillStyle;
+      this._strokeStyle = prevState.strokeStyle;
       this._globalAlpha = prevState.globalAlpha;
       this._globalCompositeOperation = prevState.globalCompositeOperation;
+      this._lineWidth = prevState.lineWidth;
+      this._lineCap = prevState.lineCap;
     }
     this.calls.push({ method: "restore", args: [] });
   }
@@ -138,6 +178,10 @@ export class RecordingContext2D {
         args: pathOrRule != null ? [pathOrRule] : [],
       });
     }
+  }
+
+  stroke(): void {
+    this.calls.push({ method: "stroke", args: [] });
   }
 
   clip(pathOrRule?: unknown): void {
@@ -219,8 +263,11 @@ export class RecordingContext2D {
     this.stateStack.length = 0;
     this.currentTransform = new DOMMatrix();
     this._fillStyle = "";
+    this._strokeStyle = "";
     this._globalAlpha = 1;
     this._globalCompositeOperation = "source-over";
+    this._lineWidth = 1;
+    this._lineCap = "butt";
   }
 
   snapshot(): RecordedCall[] {

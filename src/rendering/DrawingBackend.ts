@@ -75,16 +75,17 @@ export interface DrawingBackend {
   drawStampDiscs(color: string, data: Float32Array): void;
 
   /**
+   * Draw a batch of felt-tip streak particles as hard-edged capsules.
+   * Data: Float32Array of [cx, cy, halfLen, radius, cos, sin, opacity, _]
+   * tuples (8 floats per streak).
+   */
+  drawStampStreaks(color: string, data: Float32Array): void;
+
+  /**
    * Draw a batch of textured stamps.
    * Data: Float32Array of [x, y, size, opacity] tuples.
    */
   drawStamps(texture: TextureRef, data: Float32Array): void;
-
-  /**
-   * Draw a batch of rotated rectangular stamps (marker/felt-tip).
-   * Data: Float32Array of [x, y, width, height, rotation, opacity] tuples.
-   */
-  drawMarkerStamps(texture: TextureRef, data: Float32Array): void;
 
   // ── Grain texture ────────────────────────────────────────
 

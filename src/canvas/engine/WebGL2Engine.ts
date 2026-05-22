@@ -27,7 +27,7 @@ import {
   SOLID_VERT, SOLID_FRAG,
   TEXTURE_VERT, TEXTURE_FRAG,
   STAMP_VERT, STAMP_FRAG, STAMP_DISC_FRAG,
-  MARKER_STAMP_VERT,
+  STAMP_STREAK_VERT, STAMP_STREAK_FRAG,
   GRAIN_VERT, GRAIN_FRAG,
   CIRCLE_VERT, CIRCLE_FRAG,
   LINE_VERT, LINE_FRAG,
@@ -114,7 +114,7 @@ export class WebGL2Engine implements RenderEngine {
   private textureProg!: ShaderProgram;
   private stampProg!: ShaderProgram;
   private stampDiscProg!: ShaderProgram;
-  private markerStampProg!: ShaderProgram;
+  private streakProg!: ShaderProgram;
   private grainProg!: ShaderProgram;
   private circleProg!: ShaderProgram;
   private lineProg!: ShaderProgram;
@@ -134,7 +134,7 @@ export class WebGL2Engine implements RenderEngine {
   private solidVAO!: WebGLVertexArrayObject;
   private textureVAO!: WebGLVertexArrayObject;
   private stampVAO!: WebGLVertexArrayObject;
-  private markerStampVAO!: WebGLVertexArrayObject;
+  private streakVAO!: WebGLVertexArrayObject;
   private grainVAO!: WebGLVertexArrayObject;
   private circleVAO!: WebGLVertexArrayObject;
   private lineVAO!: WebGLVertexArrayObject;
@@ -280,6 +280,7 @@ export class WebGL2Engine implements RenderEngine {
     deleteShaderProgram(gl, this.textureProg);
     deleteShaderProgram(gl, this.stampProg);
     deleteShaderProgram(gl, this.stampDiscProg);
+    deleteShaderProgram(gl, this.streakProg);
     deleteShaderProgram(gl, this.grainProg);
     deleteShaderProgram(gl, this.circleProg);
     deleteShaderProgram(gl, this.lineProg);
@@ -297,6 +298,7 @@ export class WebGL2Engine implements RenderEngine {
     gl.deleteVertexArray(this.solidVAO);
     gl.deleteVertexArray(this.textureVAO);
     gl.deleteVertexArray(this.stampVAO);
+    gl.deleteVertexArray(this.streakVAO);
     gl.deleteVertexArray(this.grainVAO);
     gl.deleteVertexArray(this.circleVAO);
     gl.deleteVertexArray(this.lineVAO);
@@ -1051,62 +1053,52 @@ export class WebGL2Engine implements RenderEngine {
     gl.vertexAttribDivisor(instanceLoc, 0);
   }
 
-  drawMarkerStamps(texture: TextureHandle, data: Float32Array): void {
+  drawStampStreaks(color: string, data: Float32Array): void {
     if (data.length === 0) return;
     const gl = this.gl;
-    const prog = this.markerStampProg;
-    const tex = texture as GLTextureHandle;
-    const STRIDE = 6; // [x, y, width, height, rotation, opacity]
-    const STRIDE_BYTES = STRIDE * 4; // 24 bytes
-    const stampCount = data.length / STRIDE;
+    const prog = this.streakProg;
+    const streakCount = data.length / 8;
 
     const combined = mat3Multiply(this.projection, this.currentTransform);
+
+    // Parse hex color to RGB floats
+    const r = parseInt(color.slice(1, 3), 16) / 255;
+    const g = parseInt(color.slice(3, 5), 16) / 255;
+    const b = parseInt(color.slice(5, 7), 16) / 255;
 
     this.state.useProgram(prog.program);
     gl.uniformMatrix3fv(prog.uniforms.get("u_transform")!, false, combined);
     gl.uniform1f(prog.uniforms.get("u_alpha")!, this.currentAlpha);
-    gl.uniform1i(prog.uniforms.get("u_texture")!, 0);
+    gl.uniform3f(prog.uniforms.get("u_color")!, r, g, b);
 
-    this.state.bindTexture(tex.glTexture);
-    this.state.bindVAO(this.markerStampVAO);
+    this.state.bindVAO(this.streakVAO);
 
-    // Upload instance data
+    // Upload instance data ([cx, cy, halfLen, radius, cos, sin, opacity, _] x N)
     this.instanceBuffer.upload(data);
 
-    // Bind 3 instance attributes from the interleaved buffer
+    // Two vec4 instance attributes interleaved in one buffer (stride 32 bytes).
+    const s0Loc = prog.attributes.get("a_streak0")!;
+    const s1Loc = prog.attributes.get("a_streak1")!;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.instanceBuffer.buffer);
+    gl.vertexAttribPointer(s0Loc, 4, gl.FLOAT, false, 32, 0);
+    gl.enableVertexAttribArray(s0Loc);
+    gl.vertexAttribDivisor(s0Loc, 1);
+    gl.vertexAttribPointer(s1Loc, 4, gl.FLOAT, false, 32, 16);
+    gl.enableVertexAttribArray(s1Loc);
+    gl.vertexAttribDivisor(s1Loc, 1);
 
-    const posLoc = prog.attributes.get("a_stampPos")!;
-    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, STRIDE_BYTES, 0);
-    gl.enableVertexAttribArray(posLoc);
-    gl.vertexAttribDivisor(posLoc, 1);
-
-    const sizeLoc = prog.attributes.get("a_stampSize")!;
-    gl.vertexAttribPointer(sizeLoc, 2, gl.FLOAT, false, STRIDE_BYTES, 8);
-    gl.enableVertexAttribArray(sizeLoc);
-    gl.vertexAttribDivisor(sizeLoc, 1);
-
-    const rotOpLoc = prog.attributes.get("a_stampRotOp")!;
-    gl.vertexAttribPointer(rotOpLoc, 2, gl.FLOAT, false, STRIDE_BYTES, 16);
-    gl.enableVertexAttribArray(rotOpLoc);
-    gl.vertexAttribDivisor(rotOpLoc, 1);
-
-    // Bind unit quad
+    // Bind unit quad (position only)
     gl.bindBuffer(gl.ARRAY_BUFFER, this.unitQuadVBO);
-    const quadPosLoc = prog.attributes.get("a_position")!;
-    const tcLoc = prog.attributes.get("a_texcoord")!;
-    gl.vertexAttribPointer(quadPosLoc, 2, gl.FLOAT, false, 16, 0);
-    gl.enableVertexAttribArray(quadPosLoc);
-    gl.vertexAttribPointer(tcLoc, 2, gl.FLOAT, false, 16, 8);
-    gl.enableVertexAttribArray(tcLoc);
+    const posLoc = prog.attributes.get("a_position")!;
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(posLoc);
 
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.unitQuadIBO);
-    gl.drawElementsInstanced(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0, stampCount);
+    gl.drawElementsInstanced(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0, streakCount);
 
     // Clean up divisors
-    gl.vertexAttribDivisor(posLoc, 0);
-    gl.vertexAttribDivisor(sizeLoc, 0);
-    gl.vertexAttribDivisor(rotOpLoc, 0);
+    gl.vertexAttribDivisor(s0Loc, 0);
+    gl.vertexAttribDivisor(s1Loc, 0);
   }
 
   // --- Grain texture ---
@@ -1352,7 +1344,7 @@ export class WebGL2Engine implements RenderEngine {
     this.textureProg = createShaderProgram(gl, TEXTURE_VERT, TEXTURE_FRAG);
     this.stampProg = createShaderProgram(gl, STAMP_VERT, STAMP_FRAG);
     this.stampDiscProg = createShaderProgram(gl, STAMP_VERT, STAMP_DISC_FRAG);
-    this.markerStampProg = createShaderProgram(gl, MARKER_STAMP_VERT, STAMP_FRAG);
+    this.streakProg = createShaderProgram(gl, STAMP_STREAK_VERT, STAMP_STREAK_FRAG);
     this.grainProg = createShaderProgram(gl, GRAIN_VERT, GRAIN_FRAG);
     this.circleProg = createShaderProgram(gl, CIRCLE_VERT, CIRCLE_FRAG);
     this.lineProg = createShaderProgram(gl, LINE_VERT, LINE_FRAG);
@@ -1372,7 +1364,7 @@ export class WebGL2Engine implements RenderEngine {
     this.solidVAO = gl.createVertexArray()!;
     this.textureVAO = gl.createVertexArray()!;
     this.stampVAO = gl.createVertexArray()!;
-    this.markerStampVAO = gl.createVertexArray()!;
+    this.streakVAO = gl.createVertexArray()!;
     this.grainVAO = gl.createVertexArray()!;
     this.circleVAO = gl.createVertexArray()!;
     this.lineVAO = gl.createVertexArray()!;

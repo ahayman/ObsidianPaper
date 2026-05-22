@@ -17,11 +17,10 @@ import { selectLodLevel } from "../stroke/StrokeSimplifier";
 import { BackgroundRenderer, DESK_COLORS } from "./BackgroundRenderer";
 import type { BackgroundConfig } from "./BackgroundRenderer";
 import { resolvePageBackground } from "../color/ColorUtils";
-import { renderStrokeToContext, getFiberOverlay } from "./StrokeRenderCore";
+import { renderStrokeToContext } from "./StrokeRenderCore";
 import type { GrainRenderContext, StampRenderContext } from "./StrokeRenderCore";
 import { StampTextureManager } from "../stamp/StampTextureManager";
 import { InkStampTextureManager } from "../stamp/InkStampTextureManager";
-import { MarkerStampTextureManager } from "../stamp/MarkerStampTextureManager";
 import { DEFAULT_GRAIN_VALUE } from "../stamp/GrainMapping";
 import { resolveMaterial } from "../rendering/StrokeMaterial";
 import type { StrokeMaterial } from "../rendering/StrokeMaterial";
@@ -109,7 +108,6 @@ export class Renderer {
   // Stamp-based rendering
   private stampManager: StampTextureManager | null = null;
   private inkStampManager: InkStampTextureManager | null = null;
-  private markerStampManager: MarkerStampTextureManager | null = null;
   /** Number of stamps already drawn on the active canvas (for incremental draw) */
   private activeStampCount: number = 0;
   /** Current ink preset for fountain pen (tracked for active stroke rendering) */
@@ -590,7 +588,7 @@ export class Renderer {
       grainOverride,
     );
 
-    if (!data.vertices && !data.stampData && !data.markerStampData) {
+    if (!data.vertices && !data.stampData) {
       this.camera.resetContext(ctx);
       return;
     }
@@ -669,8 +667,8 @@ export class Renderer {
     if (this.pipeline === "advanced" && penConfig.inkStamp && !this.inkStampManager) {
       this.initInkStamps();
     }
-    // Ensure marker stamp manager is initialized for felt-tip
-    if (this.pipeline === "advanced" && penConfig.markerStamp && !this.markerStampManager) {
+    // Ensure stamp infrastructure is initialized for felt-tip
+    if (this.pipeline === "advanced" && penConfig.markerScatter && !this.stampManager) {
       this.initMarkerStamps();
     }
 
@@ -700,7 +698,7 @@ export class Renderer {
         grainOverride,
       );
 
-      if (data.vertices || data.stampData || data.markerStampData) {
+      if (data.vertices || data.stampData) {
         const resources = this.buildCanvas2DResources(
           material, style, data.color,
           this.activeCanvas.width, this.activeCanvas.height,
@@ -961,11 +959,12 @@ export class Renderer {
   }
 
   /**
-   * Initialize the marker stamp texture manager for felt-tip stamp rendering.
+   * Ensure stamp infrastructure is initialized for the felt-tip flow brush.
+   * The felt pen renders through the shared stampDiscs path, so it reuses the
+   * pencil's StampTextureManager — no marker-specific texture is needed.
    */
   initMarkerStamps(): void {
-    this.markerStampManager = new MarkerStampTextureManager();
-    this.syncResourcesToTiledLayer();
+    if (!this.stampManager) this.initStamps();
   }
 
   /**
@@ -1005,8 +1004,6 @@ export class Renderer {
     this.stampManager = null;
     this.inkStampManager?.clear();
     this.inkStampManager = null;
-    this.markerStampManager?.clear();
-    this.markerStampManager = null;
     this.activeStampCount = 0;
     this.engineOverlay?.remove();
     this.engineOverlay = null;
@@ -1242,7 +1239,7 @@ export class Renderer {
   }
 
   private getStampRenderContext(): StampRenderContext | null {
-    if (!this.stampManager && !this.inkStampManager && !this.markerStampManager) return null;
+    if (!this.stampManager && !this.inkStampManager) return null;
     return {
       getCache: (gv) => this.stampManager!.getCache(gv),
       getInkCache: (presetId) => {
@@ -1251,9 +1248,6 @@ export class Renderer {
         }
         return this.inkStampManager!.getCache(presetId);
       },
-      getMarkerCache: this.markerStampManager
-        ? () => this.markerStampManager!.getCache()
-        : undefined,
     };
   }
 
@@ -1280,8 +1274,7 @@ export class Renderer {
    */
   private getEffectivePipeline(penConfig: PenConfig): RenderPipeline {
     if (penConfig.inkStamp && !this.inkStampManager) return "basic";
-    if (penConfig.stamp && !this.stampManager) return "basic";
-    if (penConfig.markerStamp && !this.markerStampManager) return "basic";
+    if ((penConfig.stamp || penConfig.markerScatter) && !this.stampManager) return "basic";
     return this.pipeline;
   }
 
@@ -1298,8 +1291,6 @@ export class Renderer {
     const resources: ExecutorResources = {
       grainTexture: null,
       inkStampTexture: null,
-      markerStampTexture: null,
-      fiberOverlayTexture: null,
       canvasWidth,
       canvasHeight,
     };
@@ -1323,23 +1314,6 @@ export class Renderer {
       );
     }
 
-    // Marker stamp texture from manager
-    if (material.body.type === "markerStamps" && this.markerStampManager) {
-      const markerCache = this.markerStampManager.getCache();
-      const stampTexture = markerCache.getColored(color);
-      resources.markerStampTexture = Canvas2DBackend.createTexture(
-        stampTexture, stampTexture.width, stampTexture.height,
-      );
-    }
-
-    // Fiber overlay texture for felt-tip fiber streaks
-    if (material.effects.some(e => e.type === "fiberOverlay")) {
-      const fiberCanvas = getFiberOverlay();
-      resources.fiberOverlayTexture = Canvas2DBackend.createTexture(
-        fiberCanvas, fiberCanvas.width, fiberCanvas.height,
-      );
-    }
-
     return resources;
   }
 
@@ -1354,7 +1328,6 @@ export class Renderer {
       grainStrengthOverrides: this.grainStrengthOverrides,
       stampManager: this.stampManager,
       inkStampManager: this.inkStampManager,
-      markerStampManager: this.markerStampManager,
       pipeline: this.pipeline,
     };
   }
@@ -1540,7 +1513,6 @@ class TiledStaticLayer {
     grainStrengthOverrides: new Map(),
     stampManager: null,
     inkStampManager: null,
-    markerStampManager: null,
     pipeline: "basic",
   };
 

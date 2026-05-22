@@ -40,22 +40,27 @@ export interface InkStampConfig {
   stampSizeFraction: number;
 }
 
-export interface MarkerStampConfig {
-  /** Stamp texture size in pixels (default 128) */
-  textureSize: number;
-  /** Spacing between stamps as fraction of stamp minor axis (default 0.15) */
+export interface MarkerScatterConfig {
+  /** Fibre cross-thickness in world units, at the pen's base width. */
+  streakWidth: number;
+  /** Fibre length along the direction of travel, in world units, at base width. */
+  streakLength: number;
+  /** Step between footprints as a fraction of streakLength (<1 → fibres overlap). */
   spacing: number;
-  /** Stamp size multiplier relative to stroke width (default 2.0). Stamps are oversized
-   *  so the outline mask can clip them to a clean edge. */
-  stampSizeFraction: number;
-  /** Aspect ratio: major/minor axis (e.g. 3.0 = chisel is 3x wide as tall) */
-  aspectRatio: number;
-  /** Corner radius as fraction of minor axis (0-1, default 0.3) */
-  cornerRadius: number;
-  /** Fiber texture density (0-1, default 0.5) */
-  fiberDensity: number;
-  /** Edge fuzziness amount (0-1, default 0.3) */
-  edgeFuzziness: number;
+  /** Nib width as a fraction of stroke width. */
+  footprintScale: number;
+  /** Fibre count per footprint = density × nibWidth / streakWidth. */
+  density: number;
+  /** Base per-fibre alpha (flow). Low → ink builds up gradually on overlap. */
+  flow: number;
+  /** World-space scale of the marker grain features. */
+  grainScale: number;
+  /** Streak depth, 0-1: fibres in grain "gaps" dip to (1 - grainStrength) of full ink. */
+  grainStrength: number;
+  /** Amplitude of the (world-anchored, coherent) fibre-angle wobble, radians. */
+  streakAngleJitter: number;
+  /** Half-window, in world units, over which the fibre tangent is averaged. */
+  tangentSmoothing: number;
   /** Base ink depletion rate. Scaled by style.inkDepletion (0 = off, 0.003 = moderate). */
   inkDepletionRate: number;
 }
@@ -101,8 +106,8 @@ export interface PenConfig {
   stamp: PenStampConfig | null;
   /** Ink stamp configuration for fountain pen, null = not supported */
   inkStamp: InkStampConfig | null;
-  /** Marker stamp configuration for felt-tip, null = not supported */
-  markerStamp: MarkerStampConfig | null;
+  /** Marker scatter configuration for felt-tip, null = not supported */
+  markerScatter: MarkerScatterConfig | null;
   /** Tilt-based scatter configuration, null = no tilt scatter */
   tiltConfig: PenTiltConfig | null;
   /** Outline generation strategy. "standard" = perfect-freehand, "italic" = nib-projected. */
@@ -130,7 +135,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     grain: null,
     stamp: null,
     inkStamp: null,
-    markerStamp: null,
+    markerScatter: null,
     tiltConfig: null,
     outlineStrategy: "standard",
   },
@@ -155,14 +160,17 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     grain: null,
     stamp: null,
     inkStamp: null,
-    markerStamp: {
-      textureSize: 128,
-      spacing: 0.05,
-      stampSizeFraction: 5.0,
-      aspectRatio: 3.0,
-      cornerRadius: 0.3,
-      fiberDensity: 0.5,
-      edgeFuzziness: 0.3,
+    markerScatter: {
+      streakWidth: 1.15,
+      streakLength: 7.5,
+      spacing: 0.28,
+      footprintScale: 0.95,
+      density: 1.1,
+      flow: 0.3,
+      grainScale: 7,
+      grainStrength: 0.5,
+      streakAngleJitter: 0.1,
+      tangentSmoothing: 8,
       inkDepletionRate: 0.003,
     },
     tiltConfig: { tolerance: 40, transitionRange: 20, crossAxisMultiplier: 2.0, alongAxisMultiplier: 1.3, opacityReduction: 0.2, maxSkewOffset: 0.3 },
@@ -189,7 +197,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     grain: { enabled: true, strength: 0.5 },
     stamp: { textureSize: 48, spacing: 0.5, rotationJitter: Math.PI / 12 },
     inkStamp: null,
-    markerStamp: null,
+    markerScatter: null,
     tiltConfig: { tolerance: 40, transitionRange: 20, crossAxisMultiplier: 3.5, alongAxisMultiplier: 1.5, opacityReduction: 0.4, maxSkewOffset: 0.4 },
     outlineStrategy: "standard",
   },
@@ -214,7 +222,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     grain: null,
     stamp: null,
     inkStamp: { textureSize: 64, spacing: 0.15, stampSizeFraction: 2.0 },
-    markerStamp: null,
+    markerScatter: null,
     tiltConfig: null,
     outlineStrategy: "italic",
   },
@@ -239,7 +247,7 @@ export const PEN_CONFIGS: Record<PenType, PenConfig> = {
     grain: null,
     stamp: null,
     inkStamp: null,
-    markerStamp: null,
+    markerScatter: null,
     tiltConfig: null,
     outlineStrategy: "standard",
   },

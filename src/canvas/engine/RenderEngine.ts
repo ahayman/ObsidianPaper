@@ -163,11 +163,12 @@ export interface RenderEngine {
   drawStampDiscs(color: string, data: Float32Array): void;
 
   /**
-   * Draw a batch of rotated rectangular stamps (marker/felt-tip).
-   * Data is a Float32Array of [x, y, width, height, rotation, opacity] tuples.
-   * WebGL uses instanced drawing with per-stamp rotation; Canvas2D uses save/rotate/drawImage.
+   * Draw a batch of felt-tip streak particles as hard-edged capsules.
+   * Data is a Float32Array of [cx, cy, halfLen, radius, cos, sin, opacity, _]
+   * tuples (8 floats per streak). WebGL uses an instanced capsule SDF;
+   * Canvas2D loops capsule fills.
    */
-  drawMarkerStamps(texture: TextureHandle, data: Float32Array): void;
+  drawStampStreaks(color: string, data: Float32Array): void;
 
   // --- Grain texture ---
   /**

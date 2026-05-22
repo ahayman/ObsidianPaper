@@ -270,10 +270,10 @@ export class RecordingEngine implements RenderEngine {
     });
   }
 
-  drawMarkerStamps(texture: TextureHandle, data: Float32Array): void {
+  drawStampStreaks(color: string, data: Float32Array): void {
     this.calls.push({
-      method: "drawMarkerStamps",
-      args: [{ w: texture.width, h: texture.height }, Array.from(data)],
+      method: "drawStampStreaks",
+      args: [color, Array.from(data)],
     });
   }
 
