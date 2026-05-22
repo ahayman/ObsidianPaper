@@ -38,6 +38,8 @@ import { detectInkPools } from "../../../stroke/InkPooling";
 import { zoomBandBaseZoom } from "../TileTypes";
 import { generateStampTexture } from "../../../stamp/StampTexture";
 import { computeAllStamps, drawStamps } from "../../../stamp/StampRenderer";
+import { computeAllMarkerScatter } from "../../../stamp/MarkerScatterRenderer";
+import { drawStreaks } from "../../../stamp/StreakRenderer";
 import { computeAllInkStamps, drawInkShadingStamps } from "../../../stamp/InkStampRenderer";
 import { getInkPreset } from "../../../stamp/InkPresets";
 import { generateInkStampTexture } from "../../../stamp/InkStampTexture";
@@ -634,6 +636,16 @@ function renderStroke(
     const points = decodePoints(stroke.pts);
     const stamps = computeAllStamps(points, style, penConfig, penConfig.stamp);
     drawStamps(ctx, stamps, color, ctx.getTransform(), style.opacity);
+    return;
+  }
+
+  // Marker scatter (felt-tip flow brush) at LOD 0
+  if (stampEnabled && renderPipeline === "advanced" && penConfig.markerScatter && lod === 0) {
+    const color = resolveColor(style.color, useDarkColors);
+    const points = decodePoints(stroke.pts);
+    const streaks = computeAllMarkerScatter(points, style, penConfig, penConfig.markerScatter);
+    // style.opacity is already folded into per-fibre alpha by computeAllMarkerScatter.
+    drawStreaks(ctx, streaks, color, ctx.getTransform(), 1);
     return;
   }
 
